@@ -1,3 +1,4 @@
+using Microsoft.EntityFrameworkCore;
 using NIBRAS.API.DTOs;
 using NIBRAS.Models;
 
@@ -5,18 +6,18 @@ namespace NIBRAS.API.Services;
 
 public class OfferStatusService : IOfferStatusService
 {
-    private readonly IRepository<OfferStatus> _offerStatusRepository;
+    private readonly NebrasdbContext _context;
     private readonly ILogger<OfferStatusService> _logger;
 
-    public OfferStatusService(IRepository<OfferStatus> offerStatusRepository, ILogger<OfferStatusService> logger)
+    public OfferStatusService(NebrasdbContext context, ILogger<OfferStatusService> logger)
     {
-        _offerStatusRepository = offerStatusRepository;
+        _context = context;
         _logger = logger;
     }
 
     public async Task<List<OfferStatusDto>> GetAllAsync()
     {
-        var statuses = await _offerStatusRepository.GetAllAsync();
+        var statuses = await _context.OfferStatuses.ToListAsync();
         var result = new List<OfferStatusDto>();
 
         foreach (var status in statuses)
@@ -33,7 +34,7 @@ public class OfferStatusService : IOfferStatusService
 
     public async Task<OfferStatusDto?> GetByIdAsync(int id)
     {
-        var status = await _offerStatusRepository.GetByIdAsync(id);
+        var status = await _context.OfferStatuses.FindAsync(id);
         if (status == null) return null;
 
         return new OfferStatusDto
@@ -49,8 +50,8 @@ public class OfferStatusService : IOfferStatusService
         {
             NameStatus = request.Name
         };
-        await _offerStatusRepository.AddAsync(status);
-        await _offerStatusRepository.SaveChangesAsync();
+        _context.OfferStatuses.Add(status);
+        await _context.SaveChangesAsync();
         return new OfferStatusDto
         {
             Id = status.Id,
@@ -60,20 +61,20 @@ public class OfferStatusService : IOfferStatusService
 
     public async Task<bool> UpdateAsync(int id, UpdateOfferStatusRequest request)
     {
-        var status = await _offerStatusRepository.GetByIdAsync(id);
+        var status = await _context.OfferStatuses.FindAsync(id);
         if (status == null) return false;
 
         status.NameStatus = request.Name;
-
-        await _offerStatusRepository.SaveChangesAsync();
+        await _context.SaveChangesAsync();
         return true;
     }
 
     public async Task<bool> DeleteAsync(int id)
     {
-        var result = await _offerStatusRepository.DeleteAsync(id);
-        if (result == false) return false;
-        await _offerStatusRepository.SaveChangesAsync();
+        var status = await _context.OfferStatuses.FindAsync(id);
+        if (status == null) return false;
+        _context.OfferStatuses.Remove(status);
+        await _context.SaveChangesAsync();
         return true;
     }
 }

@@ -1,4 +1,5 @@
 using Mapster;
+using Microsoft.EntityFrameworkCore;
 using NIBRAS.API.DTOs;
 using NIBRAS.Models;
 
@@ -6,18 +7,18 @@ namespace NIBRAS.API.Services;
 
 public class LandCriterionService : ILandCriterionService
 {
-    private readonly IRepository<LandCriterion> _repository;
+    private readonly NebrasdbContext _context;
     private readonly ILogger<LandCriterionService> _logger;
 
-    public LandCriterionService(IRepository<LandCriterion> repository, ILogger<LandCriterionService> logger)
+    public LandCriterionService(NebrasdbContext context, ILogger<LandCriterionService> logger)
     {
-        _repository = repository;
+        _context = context;
         _logger = logger;
     }
 
     public async Task<List<LandCriterionDto>> GetAllAsync()
     {
-        var items = await _repository.GetAllAsync();
+        var items = await _context.LandCriteria.ToListAsync();
         var result = new List<LandCriterionDto>();
         foreach (var item in items) result.Add(item.Adapt<LandCriterionDto>());
         return result;
@@ -25,7 +26,7 @@ public class LandCriterionService : ILandCriterionService
 
     public async Task<LandCriterionDto?> GetByIdAsync(int id)
     {
-        var item = await _repository.GetByIdAsync(id);
+        var item = await _context.LandCriteria.FindAsync(id);
         if (item == null) return null;
         return item.Adapt<LandCriterionDto>();
     }
@@ -33,14 +34,14 @@ public class LandCriterionService : ILandCriterionService
     public async Task<LandCriterionDto> CreateAsync(CreateLandCriterionRequest request)
     {
         var item = request.Adapt<LandCriterion>();
-        await _repository.AddAsync(item);
-        await _repository.SaveChangesAsync();
+        _context.LandCriteria.Add(item);
+        await _context.SaveChangesAsync();
         return item.Adapt<LandCriterionDto>();
     }
 
     public async Task<bool> UpdateAsync(int id, UpdateLandCriterionRequest request)
     {
-        var item = await _repository.GetByIdAsync(id);
+        var item = await _context.LandCriteria.FindAsync(id);
         if (item == null) return false;
         item.MinAreaDonum = request.MinAreaDonum;
         item.MaxSlopePct = request.MaxSlopePct;
@@ -48,15 +49,16 @@ public class LandCriterionService : ILandCriterionService
         item.MinSolarIrradiance = request.MinSolarIrradiance;
         item.MinElevationM = request.MinElevationM;
         item.UpdatedById = request.UpdatedById;
-        await _repository.SaveChangesAsync();
+        await _context.SaveChangesAsync();
         return true;
     }
 
     public async Task<bool> DeleteAsync(int id)
     {
-        var result = await _repository.DeleteAsync(id);
-        if (result == false) return false;
-        await _repository.SaveChangesAsync();
+        var item = await _context.LandCriteria.FindAsync(id);
+        if (item == null) return false;
+        _context.LandCriteria.Remove(item);
+        await _context.SaveChangesAsync();
         return true;
     }
 }

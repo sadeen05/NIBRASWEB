@@ -1,4 +1,5 @@
 using Mapster;
+using Microsoft.EntityFrameworkCore;
 using NIBRAS.API.DTOs;
 using NIBRAS.Models;
 
@@ -6,31 +7,27 @@ namespace NIBRAS.API.Services;
 
 public class RegionService : IRegionService
 {
-    private readonly IRepository<Region> _regionRepository;
+    private readonly NebrasdbContext _context;
     private readonly ILogger<RegionService> _logger;
 
-    public RegionService(IRepository<Region> regionRepository, ILogger<RegionService> logger)
+    public RegionService(NebrasdbContext context, ILogger<RegionService> logger)
     {
-        _regionRepository = regionRepository;
+        _context = context;
         _logger = logger;
     }
 
     public async Task<List<RegionDto>> GetAllAsync()
     {
-        var regions = await _regionRepository.GetAllAsync();
+        var regions = await _context.Regions.ToListAsync();
         var result = new List<RegionDto>();
-
         foreach (var region in regions)
-        {
             result.Add(region.Adapt<RegionDto>());
-        }
-
         return result;
     }
 
     public async Task<RegionDto?> GetByIdAsync(int id)
     {
-        var region = await _regionRepository.GetByIdAsync(id);
+        var region = await _context.Regions.FindAsync(id);
         if (region == null) return null;
         return region.Adapt<RegionDto>();
     }
@@ -38,28 +35,32 @@ public class RegionService : IRegionService
     public async Task<RegionDto> CreateAsync(CreateRegionRequest request)
     {
         var region = request.Adapt<Region>();
-        await _regionRepository.AddAsync(region);
-        await _regionRepository.SaveChangesAsync();
+        _context.Regions.Add(region);
+        await _context.SaveChangesAsync();
         return region.Adapt<RegionDto>();
     }
 
     public async Task<bool> UpdateAsync(int id, UpdateRegionRequest request)
     {
-        var region = await _regionRepository.GetByIdAsync(id);
+        var region = await _context.Regions.FindAsync(id);
         if (region == null) return false;
 
         region.NameAr = request.NameAr;
         region.NameEn = request.NameEn;
+        region.PeakSunHoursPerDay = request.PeakSunHoursPerDay;
+        region.WheelingFeePerKwh = request.WheelingFeePerKwh;
+        region.LossPercentage = request.LossPercentage;
 
-        await _regionRepository.SaveChangesAsync();
+        await _context.SaveChangesAsync();
         return true;
     }
 
     public async Task<bool> DeleteAsync(int id)
     {
-        var result = await _regionRepository.DeleteAsync(id);
-        if (result == false) return false;
-        await _regionRepository.SaveChangesAsync();
+        var region = await _context.Regions.FindAsync(id);
+        if (region == null) return false;
+        _context.Regions.Remove(region);
+        await _context.SaveChangesAsync();
         return true;
     }
 }
