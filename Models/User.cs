@@ -43,4 +43,5 @@ public partial class User
 
     public DateTime? DatefoBirth { get; set; }
 
+    public virtual ICollection<Contract> CancellationRequestedContracts { get; set; } = new List<Contract>();
 }

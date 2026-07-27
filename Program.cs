@@ -30,6 +30,9 @@ builder.Services.AddScoped<ILandStatusHistoryService, LandStatusHistoryService>(
 builder.Services.AddScoped<IContractReviewService, ContractReviewService>();
 builder.Services.AddScoped<IDeletionRequestService, DeletionRequestService>();
 builder.Services.AddScoped<IGridCapacityReservationService, GridCapacityReservationService>();
+builder.Services.AddScoped<ITariffBracketService, TariffBracketService>();
+
+builder.Services.AddHostedService<ContractCancellationBackgroundService>();
 
 builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
 builder.Services.AddProblemDetails();

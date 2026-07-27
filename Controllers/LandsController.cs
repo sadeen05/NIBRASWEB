@@ -67,4 +67,28 @@ public class LandsController : ControllerBase
 
         return NoContent();
     }
+
+    [HttpPost("{id}/submit")]
+    public async Task<IActionResult> Submit(int id)
+    {
+        var result = await _landService.SubmitAsync(id);
+        if (!result) return NotFound();
+        return Ok(new { message = "Land submitted for verification." });
+    }
+
+    [HttpPost("{id}/verify")]
+    public async Task<IActionResult> Verify(int id, [FromQuery] int adminId)
+    {
+        var result = await _landService.VerifyAsync(id, adminId);
+        if (!result) return NotFound();
+        return Ok(new { message = "Land verified successfully." });
+    }
+
+    [HttpPost("{id}/reject")]
+    public async Task<IActionResult> Reject(int id, [FromQuery] int adminId, [FromQuery] string reason)
+    {
+        var result = await _landService.RejectAsync(id, adminId, reason);
+        if (!result) return NotFound();
+        return Ok(new { message = "Land rejected." });
+    }
 }

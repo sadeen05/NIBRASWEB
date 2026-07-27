@@ -113,7 +113,7 @@ public class OfferService : IOfferService
             }
         }
 
-        // خفّض الأرض إذا قبل
+        // خفّض الأرض إذا قبل + ثبت الإصدار
         if (newStatus.Id == acceptedStatus.Id)
         {
             var land = await _context.Lands.FindAsync(offer.LandId);
@@ -121,6 +121,16 @@ public class OfferService : IOfferService
             {
                 var underOfferStatus = await _context.LandStatuses.FirstAsync(s => s.Name == "UnderOffer");
                 land.LandStatusId = underOfferStatus.Id;
+            }
+
+            // ثبت أحدث إصدار كـ AcceptedVersion
+            var latestVersion = await _context.OfferVersions
+                .Where(v => v.OfferId == id)
+                .OrderByDescending(v => v.VersionNumber)
+                .FirstOrDefaultAsync();
+            if (latestVersion != null)
+            {
+                offer.AcceptedVersionId = latestVersion.Id;
             }
         }
 

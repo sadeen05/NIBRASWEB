@@ -89,6 +89,13 @@ public class UserService : IUserService
         if (hasContracts)
             throw new InvalidOperationException("Cannot delete user who has contracts.");
 
+        var hasPendingCancellations = await _context.Contracts.AnyAsync(c =>
+            (c.LandlordId == id || c.InvestorId == id)
+            && c.CancellationRequestedById != null
+            && (c.CancellationEffectiveDate >= DateTime.UtcNow || c.DisputeFlagged));
+        if (hasPendingCancellations)
+            throw new InvalidOperationException("Cannot delete user with pending contract cancellations.");
+
         var user = await _context.Users.FindAsync(id);
         if (user == null)
         {

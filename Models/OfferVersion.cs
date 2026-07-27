@@ -19,6 +19,14 @@ public partial class OfferVersion
 
     public decimal? InstallationCost { get; set; }
 
+    public decimal? SolarCellCapacityKw { get; set; }
+
+    public decimal? ExpectedAnnualRevenue { get; set; }
+
+    public decimal? EffectiveCostPerKw { get; set; }
+
+    public decimal? PaybackPeriodMonths { get; set; }
+
     public int CreatedById { get; set; }
 
     public string? RejectionReason { get; set; }

@@ -6,5 +6,6 @@ public class UpdateOfferVersionRequest
     public int? DurationYears { get; set; }
     public DateOnly? StartDate { get; set; }
     public decimal? InstallationCost { get; set; }
+    public decimal? SolarCellCapacityKw { get; set; }
     public string? RejectionReason { get; set; }
 }

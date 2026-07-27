@@ -55,6 +55,8 @@ public partial class NebrasdbContext : DbContext
 
     public virtual DbSet<Role> Roles { get; set; }
 
+    public virtual DbSet<TariffBracket> TariffBrackets { get; set; }
+
     public virtual DbSet<User> Users { get; set; }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -82,6 +84,22 @@ public partial class NebrasdbContext : DbContext
             entity.Property(e => e.StatusId)
                 .HasDefaultValue(1)
                 .HasColumnName("STATUS_ID");
+            entity.Property(e => e.OfferVersionId).HasColumnName("OFFER_VERSION_ID");
+            entity.Property(e => e.NoticePeriodDays)
+                .HasDefaultValue(90)
+                .HasColumnName("NOTICE_PERIOD_DAYS");
+            entity.Property(e => e.CancellationRequestedById).HasColumnName("CANCELLATION_REQUESTED_BY_ID");
+            entity.Property(e => e.CancellationRequestedAt).HasColumnName("CANCELLATION_REQUESTED_AT");
+            entity.Property(e => e.CancellationEffectiveDate).HasColumnName("CANCELLATION_EFFECTIVE_DATE");
+            entity.Property(e => e.InvestorPenaltyAmount)
+                .HasColumnType("decimal(14, 3)")
+                .HasColumnName("INVESTOR_PENALTY_AMOUNT");
+            entity.Property(e => e.DisputeFlagged)
+                .HasDefaultValue(false)
+                .HasColumnName("DISPUTE_FLAGGED");
+            entity.Property(e => e.CompensationAmount)
+                .HasColumnType("decimal(14, 3)")
+                .HasColumnName("COMPENSATION_AMOUNT");
 
             entity.HasOne(d => d.Investor).WithMany(p => p.ContractInvestors)
                 .HasForeignKey(d => d.InvestorId)
@@ -107,6 +125,18 @@ public partial class NebrasdbContext : DbContext
                 .HasForeignKey(d => d.StatusId)
                 .OnDelete(DeleteBehavior.ClientSetNull)
                 .HasConstraintName("FK_CONTRACTS_STATUS");
+
+            entity.HasOne(d => d.OfferVersion)
+                .WithMany()
+                .HasForeignKey(d => d.OfferVersionId)
+                .OnDelete(DeleteBehavior.ClientSetNull)
+                .HasConstraintName("FK_CONTRACTS_OFFER_VERSION");
+
+            entity.HasOne(d => d.CancellationRequestedBy)
+                .WithMany(p => p.CancellationRequestedContracts)
+                .HasForeignKey(d => d.CancellationRequestedById)
+                .OnDelete(DeleteBehavior.ClientSetNull)
+                .HasConstraintName("FK_CONTRACTS_CANCELLATION_REQUESTER");
         });
 
         modelBuilder.Entity<ContractReview>(entity =>
@@ -283,6 +313,10 @@ public partial class NebrasdbContext : DbContext
             entity.Property(e => e.SolarIrradiance)
                 .HasColumnType("decimal(10, 2)")
                 .HasColumnName("SOLAR_IRRADIANCE");
+            entity.Property(e => e.DocumentStorageLocation)
+                .HasMaxLength(500)
+                .HasColumnName("DOCUMENT_STORAGE_LOCATION");
+            entity.Property(e => e.VerifiedAgainstCriterionId).HasColumnName("VERIFIED_AGAINST_CRITERION_ID");
 
             entity.HasOne(d => d.LandStatus).WithMany(p => p.Lands)
                 .HasForeignKey(d => d.LandStatusId)
@@ -298,6 +332,12 @@ public partial class NebrasdbContext : DbContext
                 .HasForeignKey(d => d.RegionId)
                 .OnDelete(DeleteBehavior.ClientSetNull)
                 .HasConstraintName("FK_LANDS_REGIONS");
+
+            entity.HasOne(d => d.VerifiedAgainstCriterion)
+                .WithMany()
+                .HasForeignKey(d => d.VerifiedAgainstCriterionId)
+                .OnDelete(DeleteBehavior.ClientSetNull)
+                .HasConstraintName("FK_LANDS_VERIFIED_CRITERION");
         });
 
         modelBuilder.Entity<LandCriterion>(entity =>
@@ -426,6 +466,7 @@ public partial class NebrasdbContext : DbContext
             entity.Property(e => e.StatusId)
                 .HasDefaultValue(1)
                 .HasColumnName("STATUS_ID");
+            entity.Property(e => e.AcceptedVersionId).HasColumnName("ACCEPTED_VERSION_ID");
 
             entity.HasOne(d => d.Investor).WithMany(p => p.Offers)
                 .HasForeignKey(d => d.InvestorId)
@@ -441,6 +482,12 @@ public partial class NebrasdbContext : DbContext
                 .HasForeignKey(d => d.StatusId)
                 .OnDelete(DeleteBehavior.ClientSetNull)
                 .HasConstraintName("FK_OFFERS_STATUS");
+
+            entity.HasOne(d => d.AcceptedVersion)
+                .WithMany()
+                .HasForeignKey(d => d.AcceptedVersionId)
+                .OnDelete(DeleteBehavior.ClientSetNull)
+                .HasConstraintName("FK_OFFERS_ACCEPTED_VERSION");
         });
 
         modelBuilder.Entity<OfferStatus>(entity =>
@@ -479,6 +526,18 @@ public partial class NebrasdbContext : DbContext
                 .HasColumnName("REJECTION_REASON");
             entity.Property(e => e.StartDate).HasColumnName("START_DATE");
             entity.Property(e => e.VersionNumber).HasColumnName("VERSION_NUMBER");
+            entity.Property(e => e.SolarCellCapacityKw)
+                .HasColumnType("decimal(10, 2)")
+                .HasColumnName("SOLAR_CELL_CAPACITY_KW");
+            entity.Property(e => e.ExpectedAnnualRevenue)
+                .HasColumnType("decimal(14, 3)")
+                .HasColumnName("EXPECTED_ANNUAL_REVENUE");
+            entity.Property(e => e.EffectiveCostPerKw)
+                .HasColumnType("decimal(10, 3)")
+                .HasColumnName("EFFECTIVE_COST_PER_KWH");
+            entity.Property(e => e.PaybackPeriodMonths)
+                .HasColumnType("decimal(8, 2)")
+                .HasColumnName("PAYBACK_PERIOD_MONTHS");
 
             entity.HasOne(d => d.CreatedBy).WithMany(p => p.OfferVersions)
                 .HasForeignKey(d => d.CreatedById)
@@ -504,6 +563,18 @@ public partial class NebrasdbContext : DbContext
             entity.Property(e => e.NameEn)
                 .HasMaxLength(100)
                 .HasColumnName("NAME_EN");
+            entity.Property(e => e.PeakSunHoursPerDay)
+                .HasColumnType("decimal(5, 2)")
+                .HasDefaultValue(5.5m)
+                .HasColumnName("PEAK_SUN_HOURS_PER_DAY");
+            entity.Property(e => e.WheelingFeePerKwh)
+                .HasColumnType("decimal(10, 3)")
+                .HasDefaultValue(0m)
+                .HasColumnName("WHEELING_FEE_PER_KWH");
+            entity.Property(e => e.LossPercentage)
+                .HasColumnType("decimal(5, 2)")
+                .HasDefaultValue(0m)
+                .HasColumnName("LOSS_PERCENTAGE");
         });
 
         modelBuilder.Entity<Role>(entity =>
@@ -516,6 +587,28 @@ public partial class NebrasdbContext : DbContext
             entity.Property(e => e.Name)
                 .HasMaxLength(50)
                 .HasColumnName("NAME");
+        });
+
+        modelBuilder.Entity<TariffBracket>(entity =>
+        {
+            entity.HasKey(e => e.Id).HasName("PK__TARIFF_BRACKETS");
+
+            entity.ToTable("TARIFF_BRACKETS");
+
+            entity.Property(e => e.Id).HasColumnName("ID");
+            entity.Property(e => e.RegionId).HasColumnName("REGION_ID");
+            entity.Property(e => e.FromKwh).HasColumnName("FROM_KWH");
+            entity.Property(e => e.ToKwh).HasColumnName("TO_KWH");
+            entity.Property(e => e.RatePerKwh)
+                .HasColumnType("decimal(10, 3)")
+                .HasColumnName("RATE_PER_KWH");
+            entity.Property(e => e.EffectiveFrom).HasColumnName("EFFECTIVE_FROM");
+            entity.Property(e => e.EffectiveTo).HasColumnName("EFFECTIVE_TO");
+
+            entity.HasOne(d => d.Region).WithMany(p => p.TariffBrackets)
+                .HasForeignKey(d => d.RegionId)
+                .OnDelete(DeleteBehavior.ClientSetNull)
+                .HasConstraintName("FK_TB_REGIONS");
         });
 
         modelBuilder.Entity<User>(entity =>
@@ -552,6 +645,40 @@ public partial class NebrasdbContext : DbContext
                 .OnDelete(DeleteBehavior.ClientSetNull)
                 .HasConstraintName("FK_USERS_ROLES");
         });
+
+        // === SEED DATA ===
+        modelBuilder.Entity<Role>().HasData(
+            new Role { Id = 1, Name = RoleNames.Landlord },
+            new Role { Id = 2, Name = RoleNames.Investor },
+            new Role { Id = 3, Name = RoleNames.Admin },
+            new Role { Id = 4, Name = RoleNames.SuperAdmin }
+        );
+
+        modelBuilder.Entity<User>().HasData(new User
+        {
+            Id = -1,
+            RoleId = 4,
+            FullName = "System",
+            Email = "system@nibras.internal",
+            Phone = "0000000000",
+            PasswordHash = "N/A",
+            IsDeleted = false,
+            CreatedAt = new DateTime(2025, 1, 1, 0, 0, 0, DateTimeKind.Utc)
+        });
+
+        modelBuilder.Entity<LandStatus>().HasData(
+            new LandStatus { Id = 1, Name = LandStatusNames.Draft },
+            new LandStatus { Id = 2, Name = LandStatusNames.PendingVerification },
+            new LandStatus { Id = 3, Name = LandStatusNames.Verified },
+            new LandStatus { Id = 4, Name = LandStatusNames.Rejected }
+        );
+
+        modelBuilder.Entity<ContractStatus>().HasData(
+            new ContractStatus { Id = 1, Name = ContractStatusNames.PendingSignatures },
+            new ContractStatus { Id = 2, Name = ContractStatusNames.Active },
+            new ContractStatus { Id = 3, Name = ContractStatusNames.Terminated },
+            new ContractStatus { Id = 4, Name = ContractStatusNames.Rejected }
+        );
 
         OnModelCreatingPartial(modelBuilder);
     }

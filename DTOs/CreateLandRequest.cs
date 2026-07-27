@@ -10,4 +10,5 @@ public class CreateLandRequest
     public decimal DistanceToGridKm { get; set; }
     public decimal SolarIrradiance { get; set; }
     public decimal ElevationM { get; set; }
+    public string? DocumentStorageLocation { get; set; }
 }

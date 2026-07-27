@@ -29,6 +29,10 @@ public partial class Land
 
     public bool DataVerifiedByAdmin { get; set; }
 
+    public string? DocumentStorageLocation { get; set; }
+
+    public int? VerifiedAgainstCriterionId { get; set; }
+
     public virtual ICollection<Contract> Contracts { get; set; } = new List<Contract>();
 
     public virtual ICollection<DeletionRequest> DeletionRequests { get; set; } = new List<DeletionRequest>();
@@ -44,4 +48,6 @@ public partial class Land
     public virtual ICollection<Offer> Offers { get; set; } = new List<Offer>();
 
     public virtual Region Region { get; set; } = null!;
+
+    public virtual LandCriterion? VerifiedAgainstCriterion { get; set; }
 }

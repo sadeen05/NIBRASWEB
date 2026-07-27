@@ -8,5 +8,6 @@ public class CreateOfferVersionRequest
     public int? DurationYears { get; set; }
     public DateOnly? StartDate { get; set; }
     public decimal? InstallationCost { get; set; }
+    public decimal? SolarCellCapacityKw { get; set; }
     public int CreatedById { get; set; }
 }

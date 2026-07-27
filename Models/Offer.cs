@@ -19,6 +19,10 @@ public partial class Offer
 
     public bool IsDeleted { get; set; }
 
+    public int? AcceptedVersionId { get; set; }
+
+    public virtual OfferVersion? AcceptedVersion { get; set; }
+
     public virtual Contract? Contract { get; set; }
 
     public virtual User Investor { get; set; } = null!;

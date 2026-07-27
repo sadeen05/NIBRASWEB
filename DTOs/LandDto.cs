@@ -14,4 +14,6 @@ public class LandDto
     public bool IsDeleted { get; set; }
     public int LandStatusId { get; set; }
     public bool DataVerifiedByAdmin { get; set; }
+    public string? DocumentStorageLocation { get; set; }
+    public int? VerifiedAgainstCriterionId { get; set; }
 }

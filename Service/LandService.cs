@@ -148,9 +148,18 @@ public class LandService : ILandService
             throw new InvalidOperationException("No approved title deed document found.");
 
         // التحقق من المعايير
+        var criteria = await _context.LandCriteria
+            .OrderByDescending(c => c.UpdatedAt)
+            .FirstOrDefaultAsync();
+        if (criteria == null)
+            throw new InvalidOperationException("No eligibility criteria configured.");
+
         var eligibility = await CheckEligibilityAsync(landId);
         if (!eligibility)
             throw new InvalidOperationException("Land does not meet eligibility criteria.");
+
+        // تسجيل المعيار الذي تم التحقق بناءً عليه (لقطة تاريخية فقط — لا تؤثر على إعادة التحقق لاحقًا)
+        land.VerifiedAgainstCriterionId = criteria.Id;
 
         var verifiedStatus = await _context.LandStatuses.FirstAsync(s => s.Name == "Verified");
         land.DataVerifiedByAdmin = true;
