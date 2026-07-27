@@ -450,7 +450,7 @@ public partial class NebrasdbContext : DbContext
             entity.ToTable("OFFER_STATUSES");
 
             entity.Property(e => e.Id).HasColumnName("ID");
-            entity.Property(e => e.Name)
+            entity.Property(e => e.NameStatus)
                 .HasMaxLength(50)
                 .HasColumnName("NAME");
         });

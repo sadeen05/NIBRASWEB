@@ -1,6 +1,5 @@
 using NIBRAS.API.DTOs;
 namespace NIBRAS.API.Services;
-namespace NIBRAS.API.DTOs;
 
 public interface IGridService
 {
