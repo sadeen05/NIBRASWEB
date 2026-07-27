@@ -144,8 +144,9 @@ public class OfferVersionService : IOfferVersionService
         {
             if (remainingKwh <= 0) break;
 
-            var bracketSize = (bracket.ToKwh.HasValue ? bracket.ToKwh.Value : int.MaxValue) - bracket.FromKwh + 1;
-            var kwhInBracket = Math.Min(bracketSize, remainingKwh);
+            var kwhInBracket = bracket.ToKwh.HasValue
+                ? Math.Min(bracket.ToKwh.Value - bracket.FromKwh + 1, remainingKwh)
+                : remainingKwh;
             if (kwhInBracket <= 0) continue;
 
             monthlyRevenue += kwhInBracket * bracket.RatePerKwh / FilsToDinar;
