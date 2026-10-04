@@ -3,17 +3,20 @@ using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using NIBRAS.Models;
 
 #nullable disable
 
-namespace NIBRAS.API.Migrations
+namespace NibrasWeb.Migrations
 {
     [DbContext(typeof(NebrasdbContext))]
-    partial class NebrasdbContextModelSnapshot : ModelSnapshot
+    [Migration("20260801231939_DropRegulatoryTariffSettings")]
+    partial class DropRegulatoryTariffSettings
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -760,10 +763,6 @@ namespace NIBRAS.API.Migrations
                     b.Property<decimal?>("InstallationCost")
                         .HasColumnType("decimal(12, 2)")
                         .HasColumnName("INSTALLATION_COST");
-
-                    b.Property<bool>("IsCurrent")
-                        .HasColumnType("bit")
-                        .HasColumnName("IS_CURRENT");
 
                     b.Property<decimal?>("LandlordSharePct")
                         .HasColumnType("decimal(5, 2)")

@@ -3,17 +3,20 @@ using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using NIBRAS.Models;
 
 #nullable disable
 
-namespace NIBRAS.API.Migrations
+namespace NibrasWeb.Migrations
 {
     [DbContext(typeof(NebrasdbContext))]
-    partial class NebrasdbContextModelSnapshot : ModelSnapshot
+    [Migration("20260801212633_DropOfferStatusTable")]
+    partial class DropOfferStatusTable
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -293,7 +296,7 @@ namespace NIBRAS.API.Migrations
 
                     SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
 
-                    b.Property<int?>("ContractId")
+                    b.Property<int>("ContractId")
                         .HasColumnType("int")
                         .HasColumnName("CONTRACT_ID");
 
@@ -307,15 +310,6 @@ namespace NIBRAS.API.Migrations
                         .HasColumnType("int")
                         .HasColumnName("GRID_ID");
 
-                    b.Property<int>("OfferId")
-                        .HasColumnType("int")
-                        .HasColumnName("OFFER_ID");
-
-                    b.Property<string>("ReservationType")
-                        .HasMaxLength(20)
-                        .HasColumnType("nvarchar(20)")
-                        .HasColumnName("RESERVATION_TYPE");
-
                     b.Property<decimal>("ReservedMw")
                         .HasColumnType("decimal(10, 2)")
                         .HasColumnName("RESERVED_MW");
@@ -323,13 +317,9 @@ namespace NIBRAS.API.Migrations
                     b.HasKey("Id")
                         .HasName("PK__GRID_CAP__3214EC27C682FA92");
 
-                    b.HasIndex("ContractId")
-                        .IsUnique()
-                        .HasFilter("[CONTRACT_ID] IS NOT NULL");
-
                     b.HasIndex("GridId");
 
-                    b.HasIndex(new[] { "OfferId" }, "UQ__GRID_CAP__OFFER_ID")
+                    b.HasIndex(new[] { "ContractId" }, "UQ__GRID_CAP__3F5DFF15DEC96C5D")
                         .IsUnique();
 
                     b.ToTable("GRID_CAPACITY_RESERVATIONS", (string)null);
@@ -364,10 +354,6 @@ namespace NIBRAS.API.Migrations
                     b.Property<decimal>("ElevationM")
                         .HasColumnType("decimal(10, 2)")
                         .HasColumnName("ELEVATION_M");
-
-                    b.Property<int>("GridId")
-                        .HasColumnType("int")
-                        .HasColumnName("GRID_ID");
 
                     b.Property<bool>("IsDeleted")
                         .HasColumnType("bit")
@@ -405,8 +391,6 @@ namespace NIBRAS.API.Migrations
 
                     b.HasKey("Id")
                         .HasName("PK__LANDS__3214EC278FA5F43E");
-
-                    b.HasIndex("GridId");
 
                     b.HasIndex("LandStatusId");
 
@@ -624,10 +608,6 @@ namespace NIBRAS.API.Migrations
                         .HasColumnType("int")
                         .HasColumnName("ACCEPTED_VERSION_ID");
 
-                    b.Property<int>("ConnectionMechanism")
-                        .HasColumnType("int")
-                        .HasColumnName("CONNECTION_MECHANISM");
-
                     b.Property<DateTime?>("CreatedAt")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("datetime2")
@@ -635,8 +615,7 @@ namespace NIBRAS.API.Migrations
                         .HasDefaultValueSql("(getdate())");
 
                     b.Property<decimal>("CurrentAmount")
-                        .HasColumnType("decimal(14, 3)")
-                        .HasColumnName("CURRENT_AMOUNT");
+                        .HasColumnType("decimal(18,2)");
 
                     b.Property<int>("InvestorId")
                         .HasColumnType("int")
@@ -647,12 +626,7 @@ namespace NIBRAS.API.Migrations
                         .HasColumnName("LAND_ID");
 
                     b.Property<int>("LastProposedById")
-                        .HasColumnType("int")
-                        .HasColumnName("LAST_PROPOSED_BY_ID");
-
-                    b.Property<int?>("RelatedToRejectedOfferId")
-                        .HasColumnType("int")
-                        .HasColumnName("RELATED_TO_REJECTED_OFFER_ID");
+                        .HasColumnType("int");
 
                     b.Property<decimal>("RequiredCapacityMw")
                         .HasColumnType("decimal(10, 2)")
@@ -662,9 +636,8 @@ namespace NIBRAS.API.Migrations
                         .HasColumnType("int")
                         .HasColumnName("STATUS_ID");
 
-                    b.Property<DateTime?>("UpdatedAt")
-                        .HasColumnType("datetime2")
-                        .HasColumnName("UPDATED_AT");
+                    b.Property<DateTime?>("apdateAt")
+                        .HasColumnType("datetime2");
 
                     b.HasKey("Id")
                         .HasName("PK__OFFERS__3214EC277FE0E225");
@@ -675,55 +648,7 @@ namespace NIBRAS.API.Migrations
 
                     b.HasIndex("LandId");
 
-                    b.HasIndex("RelatedToRejectedOfferId");
-
                     b.ToTable("OFFERS", (string)null);
-                });
-
-            modelBuilder.Entity("NIBRAS.Models.OfferNegotiationHistory", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("int")
-                        .HasColumnName("ID");
-
-                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
-
-                    b.Property<int>("ActionType")
-                        .HasColumnType("int")
-                        .HasColumnName("ACTION_TYPE");
-
-                    b.Property<int>("ActorId")
-                        .HasColumnType("int")
-                        .HasColumnName("ACTOR_ID");
-
-                    b.Property<decimal?>("Amount")
-                        .HasColumnType("decimal(14, 3)")
-                        .HasColumnName("AMOUNT");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("datetime2")
-                        .HasColumnName("CREATED_AT")
-                        .HasDefaultValueSql("(getdate())");
-
-                    b.Property<string>("Message")
-                        .HasMaxLength(500)
-                        .HasColumnType("nvarchar(500)")
-                        .HasColumnName("MESSAGE");
-
-                    b.Property<int>("OfferId")
-                        .HasColumnType("int")
-                        .HasColumnName("OFFER_ID");
-
-                    b.HasKey("Id")
-                        .HasName("PK__OFFER_NEG_HISTORY");
-
-                    b.HasIndex("ActorId");
-
-                    b.HasIndex("OfferId");
-
-                    b.ToTable("OFFER_NEGOTIATION_HISTORY", (string)null);
                 });
 
             modelBuilder.Entity("NIBRAS.Models.OfferVersion", b =>
@@ -761,18 +686,9 @@ namespace NIBRAS.API.Migrations
                         .HasColumnType("decimal(12, 2)")
                         .HasColumnName("INSTALLATION_COST");
 
-                    b.Property<bool>("IsCurrent")
-                        .HasColumnType("bit")
-                        .HasColumnName("IS_CURRENT");
-
                     b.Property<decimal?>("LandlordSharePct")
                         .HasColumnType("decimal(5, 2)")
                         .HasColumnName("LANDLORD_SHARE_PCT");
-
-                    b.Property<string>("Message")
-                        .HasMaxLength(500)
-                        .HasColumnType("nvarchar(500)")
-                        .HasColumnName("MESSAGE");
 
                     b.Property<int>("OfferId")
                         .HasColumnType("int")
@@ -895,6 +811,47 @@ namespace NIBRAS.API.Migrations
                             Id = 4,
                             Name = "SuperAdmin"
                         });
+                });
+
+            modelBuilder.Entity("NIBRAS.Models.TariffBracket", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int")
+                        .HasColumnName("ID");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<DateTime>("EffectiveFrom")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("EFFECTIVE_FROM");
+
+                    b.Property<DateTime?>("EffectiveTo")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("EFFECTIVE_TO");
+
+                    b.Property<int>("FromKwh")
+                        .HasColumnType("int")
+                        .HasColumnName("FROM_KWH");
+
+                    b.Property<decimal>("RatePerKwh")
+                        .HasColumnType("decimal(10, 3)")
+                        .HasColumnName("RATE_PER_KWH");
+
+                    b.Property<int>("RegionId")
+                        .HasColumnType("int")
+                        .HasColumnName("REGION_ID");
+
+                    b.Property<int?>("ToKwh")
+                        .HasColumnType("int")
+                        .HasColumnName("TO_KWH");
+
+                    b.HasKey("Id")
+                        .HasName("PK__TARIFF_BRACKETS");
+
+                    b.HasIndex("RegionId");
+
+                    b.ToTable("TARIFF_BRACKETS", (string)null);
                 });
 
             modelBuilder.Entity("NIBRAS.Models.User", b =>
@@ -1077,6 +1034,7 @@ namespace NIBRAS.API.Migrations
                     b.HasOne("NIBRAS.Models.Contract", "Contract")
                         .WithOne("GridCapacityReservation")
                         .HasForeignKey("NIBRAS.Models.GridCapacityReservation", "ContractId")
+                        .IsRequired()
                         .HasConstraintName("FK_GCR_CONTRACTS");
 
                     b.HasOne("NIBRAS.Models.Grid", "Grid")
@@ -1085,27 +1043,13 @@ namespace NIBRAS.API.Migrations
                         .IsRequired()
                         .HasConstraintName("FK_GCR_GRIDS");
 
-                    b.HasOne("NIBRAS.Models.Offer", "Offer")
-                        .WithOne("GridCapacityReservation")
-                        .HasForeignKey("NIBRAS.Models.GridCapacityReservation", "OfferId")
-                        .IsRequired()
-                        .HasConstraintName("FK_GCR_OFFERS");
-
                     b.Navigation("Contract");
 
                     b.Navigation("Grid");
-
-                    b.Navigation("Offer");
                 });
 
             modelBuilder.Entity("NIBRAS.Models.Land", b =>
                 {
-                    b.HasOne("NIBRAS.Models.Grid", "Grid")
-                        .WithMany("Lands")
-                        .HasForeignKey("GridId")
-                        .IsRequired()
-                        .HasConstraintName("FK_LANDS_GRIDS");
-
                     b.HasOne("NIBRAS.Models.LandStatus", "LandStatus")
                         .WithMany("Lands")
                         .HasForeignKey("LandStatusId")
@@ -1128,8 +1072,6 @@ namespace NIBRAS.API.Migrations
                         .WithMany()
                         .HasForeignKey("VerifiedAgainstCriterionId")
                         .HasConstraintName("FK_LANDS_VERIFIED_CRITERION");
-
-                    b.Navigation("Grid");
 
                     b.Navigation("LandStatus");
 
@@ -1216,37 +1158,11 @@ namespace NIBRAS.API.Migrations
                         .IsRequired()
                         .HasConstraintName("FK_OFFERS_LANDS");
 
-                    b.HasOne("NIBRAS.Models.Offer", "RelatedToRejectedOffer")
-                        .WithMany()
-                        .HasForeignKey("RelatedToRejectedOfferId")
-                        .HasConstraintName("FK_OFFERS_RELATED_REJECTED");
-
                     b.Navigation("AcceptedVersion");
 
                     b.Navigation("Investor");
 
                     b.Navigation("Land");
-
-                    b.Navigation("RelatedToRejectedOffer");
-                });
-
-            modelBuilder.Entity("NIBRAS.Models.OfferNegotiationHistory", b =>
-                {
-                    b.HasOne("NIBRAS.Models.User", "Actor")
-                        .WithMany("OfferNegotiationHistories")
-                        .HasForeignKey("ActorId")
-                        .IsRequired()
-                        .HasConstraintName("FK_ONH_USERS");
-
-                    b.HasOne("NIBRAS.Models.Offer", "Offer")
-                        .WithMany("OfferNegotiationHistories")
-                        .HasForeignKey("OfferId")
-                        .IsRequired()
-                        .HasConstraintName("FK_ONH_OFFERS");
-
-                    b.Navigation("Actor");
-
-                    b.Navigation("Offer");
                 });
 
             modelBuilder.Entity("NIBRAS.Models.OfferVersion", b =>
@@ -1266,6 +1182,17 @@ namespace NIBRAS.API.Migrations
                     b.Navigation("CreatedBy");
 
                     b.Navigation("Offer");
+                });
+
+            modelBuilder.Entity("NIBRAS.Models.TariffBracket", b =>
+                {
+                    b.HasOne("NIBRAS.Models.Region", "Region")
+                        .WithMany("TariffBrackets")
+                        .HasForeignKey("RegionId")
+                        .IsRequired()
+                        .HasConstraintName("FK_TB_REGIONS");
+
+                    b.Navigation("Region");
                 });
 
             modelBuilder.Entity("NIBRAS.Models.User", b =>
@@ -1294,8 +1221,6 @@ namespace NIBRAS.API.Migrations
             modelBuilder.Entity("NIBRAS.Models.Grid", b =>
                 {
                     b.Navigation("GridCapacityReservations");
-
-                    b.Navigation("Lands");
                 });
 
             modelBuilder.Entity("NIBRAS.Models.Land", b =>
@@ -1320,10 +1245,6 @@ namespace NIBRAS.API.Migrations
                 {
                     b.Navigation("Contract");
 
-                    b.Navigation("GridCapacityReservation");
-
-                    b.Navigation("OfferNegotiationHistories");
-
                     b.Navigation("OfferVersions");
                 });
 
@@ -1332,6 +1253,8 @@ namespace NIBRAS.API.Migrations
                     b.Navigation("Grids");
 
                     b.Navigation("Lands");
+
+                    b.Navigation("TariffBrackets");
                 });
 
             modelBuilder.Entity("NIBRAS.Models.Role", b =>
@@ -1356,8 +1279,6 @@ namespace NIBRAS.API.Migrations
                     b.Navigation("LandStatusHistories");
 
                     b.Navigation("Lands");
-
-                    b.Navigation("OfferNegotiationHistories");
 
                     b.Navigation("OfferVersions");
 

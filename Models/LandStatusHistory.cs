@@ -20,4 +20,7 @@ public partial class LandStatusHistory
     public virtual User ChangedBy { get; set; } = null!;
 
     public virtual Land Land { get; set; } = null!;
+
+    public int LandStatusId { get; set; }
+    public virtual LandStatus LandStatus { get; set; } = null!;
 }

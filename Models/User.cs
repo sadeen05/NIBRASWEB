@@ -37,6 +37,8 @@ public partial class User
 
     public virtual ICollection<Offer> Offers { get; set; } = new List<Offer>();
 
+    public virtual ICollection<OfferNegotiationHistory> OfferNegotiationHistories { get; set; } = new List<OfferNegotiationHistory>();
+
     public virtual Role Role { get; set; } = null!;
 
     public DateTime CreatedAt { get; set; } = DateTime.Now;

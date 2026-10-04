@@ -9,11 +9,13 @@ public class OfferVersionDto
     public int? DurationYears { get; set; }
     public DateOnly? StartDate { get; set; }
     public decimal? InstallationCost { get; set; }
-    public int CreatedById { get; set; }
-    public string? RejectionReason { get; set; }
+    public string CreatedByName { get; set; }
+    public string CreatedByRole { get; set; }
     public decimal? SolarCellCapacityKw { get; set; }
     public decimal? ExpectedAnnualRevenue { get; set; }
     public decimal? EffectiveCostPerKw { get; set; }
     public decimal? PaybackPeriodMonths { get; set; }
-    public DateTime? CreatedAt { get; set; }
+    public string? Message { get; set; }
+    public bool IsCurrent { get; set; }
+    public DateTime CreatedAt { get; set; }
 }

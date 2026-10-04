@@ -33,6 +33,18 @@ public class GridCapacityReservationService : IGridCapacityReservationService
 
     public async Task<GridCapacityReservationDto> CreateAsync(CreateGridCapacityReservationRequest request)
     {
+        var grid = await _context.Grids.FindAsync(request.GridId);
+        if (grid == null) throw new KeyNotFoundException("Grid not found.");
+
+        var totalReserved = await _context.GridCapacityReservations
+            .Where(r => r.GridId == request.GridId)
+            .SumAsync(r => (decimal?)r.ReservedMw) ?? 0;
+
+        if ((totalReserved + request.ReservedMw) > grid.CapacityMw)
+        {
+            throw new InvalidOperationException($"Reservation exceeds available capacity. Max grid capacity is {grid.CapacityMw} MW, and currently {totalReserved} MW is reserved.");
+        }
+
         var item = request.Adapt<GridCapacityReservation>();
         _context.GridCapacityReservations.Add(item);
         await _context.SaveChangesAsync();
@@ -43,9 +55,23 @@ public class GridCapacityReservationService : IGridCapacityReservationService
     {
         var item = await _context.GridCapacityReservations.FindAsync(id);
         if (item == null) return false;
+
+        var grid = await _context.Grids.FindAsync(request.GridId);
+        if (grid == null) throw new KeyNotFoundException("Grid not found.");
+
+        var totalReserved = await _context.GridCapacityReservations
+            .Where(r => r.GridId == request.GridId && r.Id != id)
+            .SumAsync(r => (decimal?)r.ReservedMw) ?? 0;
+
+        if ((totalReserved + request.ReservedMw) > grid.CapacityMw)
+        {
+            throw new InvalidOperationException($"Update exceeds available grid capacity ({grid.CapacityMw} MW).");
+        }
+
         item.GridId = request.GridId;
         item.ContractId = request.ContractId;
         item.ReservedMw = request.ReservedMw;
+
         await _context.SaveChangesAsync();
         return true;
     }
@@ -54,6 +80,7 @@ public class GridCapacityReservationService : IGridCapacityReservationService
     {
         var item = await _context.GridCapacityReservations.FindAsync(id);
         if (item == null) return false;
+
         _context.GridCapacityReservations.Remove(item);
         await _context.SaveChangesAsync();
         return true;

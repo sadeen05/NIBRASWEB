@@ -20,10 +20,24 @@ public class UserService : IUserService
     {
         _logger.LogInformation("Get all users");
 
-        var users = await _context.Users.ToListAsync();
-        var result = new List<UserDto>();
-        foreach (var user in users) result.Add(user.Adapt<UserDto>());
-        return result;
+        var pagesize = 10;
+        var pageIndex = 0;
+        var users = await _context.Users
+            .Skip(pageIndex * pagesize)
+            .Take(pagesize)
+            .ToListAsync();
+
+        var userDtos = users.Select(u => new UserDto(
+         u.Id,
+         u.FullName,
+         u.Email,
+         u.Phone,
+         u.Role != null ? u.Role.Name : string.Empty,
+         u.CreatedAt
+     )).ToList();
+
+        return userDtos;
+
     }
 
     public async Task<UserDto?> GetByIdAsync(int id)
@@ -39,7 +53,6 @@ public class UserService : IUserService
 
     public async Task<UserDto> CreateAsync(CreateUserRequest request)
     {
-        // البريد الإلكتروني فريد
         var emailExists = await _context.Users.AnyAsync(u => u.Email == request.Email);
         if (emailExists)
             throw new InvalidOperationException("Email already exists.");
@@ -62,7 +75,6 @@ public class UserService : IUserService
             return false;
         }
 
-        // لو تغير الإيميل → تأكد إنه فريد
         if (user.Email != request.Email)
         {
             var emailExists = await _context.Users.AnyAsync(u => u.Email == request.Email && u.Id != id);
@@ -80,12 +92,11 @@ public class UserService : IUserService
 
     public async Task<bool> DeleteAsync(int id)
     {
-        // ما ينحذف وعنده Land أو Contract
         var hasLands = await _context.Lands.AnyAsync(l => l.LandlordId == id && !l.IsDeleted);
         if (hasLands)
             throw new InvalidOperationException("Cannot delete user who owns lands.");
 
-        var hasContracts = await _context.Contracts.AnyAsync(c => c.InvestorId == id || c.LandlordId == id);
+        var hasContracts = await _context.Contracts.AnyAsync(c => (c.InvestorId == id || c.LandlordId == id));
         if (hasContracts)
             throw new InvalidOperationException("Cannot delete user who has contracts.");
 
@@ -99,11 +110,13 @@ public class UserService : IUserService
         var user = await _context.Users.FindAsync(id);
         if (user == null)
         {
-            _logger.LogWarning("User not found for delete");
+            _logger.LogWarning("User not found or already deleted");
             return false;
         }
 
-        _context.Users.Remove(user);
+        user.IsDeleted = true;
+
+        _context.Users.Update(user);
         await _context.SaveChangesAsync();
         return true;
     }

@@ -1,7 +1,9 @@
+
 using Microsoft.EntityFrameworkCore;
 using NIBRAS;
 using NIBRAS.API.Services;
 using NIBRAS.Models;
+using NibrasWeb.Service;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -16,24 +18,9 @@ builder.Services.AddScoped<IUserService, UserService>();
 builder.Services.AddScoped<IRoleService, RoleService>();
 builder.Services.AddScoped<IRegionService, RegionService>();
 builder.Services.AddScoped<IOfferService, OfferService>();
-builder.Services.AddScoped<IOfferStatusService, OfferStatusService>();
-builder.Services.AddScoped<IOfferVersionService, OfferVersionService>();
 builder.Services.AddScoped<IGridService, GridService>();
 builder.Services.AddScoped<ILandService, LandService>();
-builder.Services.AddScoped<IContractService, ContractService>();
-builder.Services.AddScoped<ILandStatusService, LandStatusService>();
-builder.Services.AddScoped<IContractStatusService, ContractStatusService>();
-builder.Services.AddScoped<IDocumentTypeService, DocumentTypeService>();
-builder.Services.AddScoped<ILandCriterionService, LandCriterionService>();
-builder.Services.AddScoped<ILandDocumentService, LandDocumentService>();
-builder.Services.AddScoped<ILandStatusHistoryService, LandStatusHistoryService>();
-builder.Services.AddScoped<IContractReviewService, ContractReviewService>();
-builder.Services.AddScoped<IDeletionRequestService, DeletionRequestService>();
 builder.Services.AddScoped<IGridCapacityReservationService, GridCapacityReservationService>();
-builder.Services.AddScoped<ITariffBracketService, TariffBracketService>();
-
-builder.Services.AddHostedService<ContractCancellationBackgroundService>();
-
 builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
 builder.Services.AddProblemDetails();
 builder.Services.AddEndpointsApiExplorer();

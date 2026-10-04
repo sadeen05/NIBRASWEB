@@ -3,17 +3,20 @@ using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using NIBRAS.Models;
 
 #nullable disable
 
-namespace NIBRAS.API.Migrations
+namespace NibrasWeb.Migrations
 {
     [DbContext(typeof(NebrasdbContext))]
-    partial class NebrasdbContextModelSnapshot : ModelSnapshot
+    [Migration("20260801231103_DropOfferFinancialColumns")]
+    partial class DropOfferFinancialColumns
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -735,6 +738,11 @@ namespace NIBRAS.API.Migrations
 
                     SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
 
+                    b.Property<string>("ComplianceIssues")
+                        .HasMaxLength(1000)
+                        .HasColumnType("nvarchar(1000)")
+                        .HasColumnName("COMPLIANCE_ISSUES");
+
                     b.Property<DateTime?>("CreatedAt")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("datetime2")
@@ -761,9 +769,9 @@ namespace NIBRAS.API.Migrations
                         .HasColumnType("decimal(12, 2)")
                         .HasColumnName("INSTALLATION_COST");
 
-                    b.Property<bool>("IsCurrent")
+                    b.Property<bool?>("IsCompliant")
                         .HasColumnType("bit")
-                        .HasColumnName("IS_CURRENT");
+                        .HasColumnName("IS_COMPLIANT");
 
                     b.Property<decimal?>("LandlordSharePct")
                         .HasColumnType("decimal(5, 2)")
@@ -852,6 +860,163 @@ namespace NIBRAS.API.Migrations
                         .HasName("PK__REGIONS__3214EC27BEC00DCF");
 
                     b.ToTable("REGIONS", (string)null);
+                });
+
+            modelBuilder.Entity("NIBRAS.Models.RegulatoryTariffSettings", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int")
+                        .HasColumnName("ID");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<decimal>("AnnualLicenseFeePerKwhSelfConsumed")
+                        .HasColumnType("decimal(10, 4)")
+                        .HasColumnName("ANNUAL_LICENSE_FEE_PER_KWH_SELF");
+
+                    b.Property<decimal>("AnnualLicenseFeePerKwhSold")
+                        .HasColumnType("decimal(10, 4)")
+                        .HasColumnName("ANNUAL_LICENSE_FEE_PER_KWH_SOLD");
+
+                    b.Property<decimal>("AnnualLicenseFeePerMw")
+                        .HasColumnType("decimal(10, 2)")
+                        .HasColumnName("ANNUAL_LICENSE_FEE_PER_MW");
+
+                    b.Property<DateTime>("EffectiveFrom")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("EFFECTIVE_FROM");
+
+                    b.Property<decimal>("GridFeePerKwAcPerMonth")
+                        .HasColumnType("decimal(10, 2)")
+                        .HasColumnName("GRID_FEE_PER_KWAC_MONTH");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("bit")
+                        .HasColumnName("IS_ACTIVE");
+
+                    b.Property<bool>("IsGridFeeExempt")
+                        .HasColumnType("bit")
+                        .HasColumnName("IS_GRID_FEE_EXEMPT");
+
+                    b.Property<int>("Mechanism")
+                        .HasColumnType("int")
+                        .HasColumnName("MECHANISM");
+
+                    b.Property<decimal>("SalePricePerKwhOffPeak")
+                        .HasColumnType("decimal(10, 4)")
+                        .HasColumnName("SALE_PRICE_OFF_PEAK");
+
+                    b.Property<decimal>("SalePricePerKwhPartialPeak")
+                        .HasColumnType("decimal(10, 4)")
+                        .HasColumnName("SALE_PRICE_PARTIAL_PEAK");
+
+                    b.Property<decimal>("SalePricePerKwhPeak")
+                        .HasColumnType("decimal(10, 4)")
+                        .HasColumnName("SALE_PRICE_PEAK");
+
+                    b.Property<string>("SectorCategory")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("nvarchar(50)")
+                        .HasColumnName("SECTOR_CATEGORY");
+
+                    b.Property<string>("SourceReference")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)")
+                        .HasColumnName("SOURCE_REFERENCE");
+
+                    b.Property<decimal>("SpecificYieldKwhPerKwp")
+                        .HasColumnType("decimal(8, 2)")
+                        .HasColumnName("SPECIFIC_YIELD_KWH_PER_KWP");
+
+                    b.Property<decimal>("TaxRatePct")
+                        .HasColumnType("decimal(5, 2)")
+                        .HasColumnName("TAX_RATE_PCT");
+
+                    b.HasKey("Id")
+                        .HasName("PK__REG_TARIFF_SETTINGS");
+
+                    b.ToTable("REGULATORY_TARIFF_SETTINGS", (string)null);
+
+                    b.HasData(
+                        new
+                        {
+                            Id = 1,
+                            AnnualLicenseFeePerKwhSelfConsumed = 0m,
+                            AnnualLicenseFeePerKwhSold = 0.001m,
+                            AnnualLicenseFeePerMw = 0m,
+                            EffectiveFrom = new DateTime(2024, 7, 1, 0, 0, 0, 0, DateTimeKind.Utc),
+                            GridFeePerKwAcPerMonth = 13m,
+                            IsActive = true,
+                            IsGridFeeExempt = false,
+                            Mechanism = 1,
+                            SalePricePerKwhOffPeak = 0.0705m,
+                            SalePricePerKwhPartialPeak = 0.0800m,
+                            SalePricePerKwhPeak = 0.1000m,
+                            SectorCategory = "Commercial",
+                            SourceReference = "Bylaw 58/2024 - Buy-All/Sell-All commercial",
+                            SpecificYieldKwhPerKwp = 1900m,
+                            TaxRatePct = 0m
+                        },
+                        new
+                        {
+                            Id = 2,
+                            AnnualLicenseFeePerKwhSelfConsumed = 0.001m,
+                            AnnualLicenseFeePerKwhSold = 0m,
+                            AnnualLicenseFeePerMw = 0m,
+                            EffectiveFrom = new DateTime(2024, 7, 1, 0, 0, 0, 0, DateTimeKind.Utc),
+                            GridFeePerKwAcPerMonth = 13m,
+                            IsActive = true,
+                            IsGridFeeExempt = false,
+                            Mechanism = 2,
+                            SalePricePerKwhOffPeak = 0.0705m,
+                            SalePricePerKwhPartialPeak = 0.0800m,
+                            SalePricePerKwhPeak = 0.1000m,
+                            SectorCategory = "Commercial",
+                            SourceReference = "Bylaw 58/2024 - Self-Consumption Net Billing commercial",
+                            SpecificYieldKwhPerKwp = 1900m,
+                            TaxRatePct = 0m
+                        },
+                        new
+                        {
+                            Id = 3,
+                            AnnualLicenseFeePerKwhSelfConsumed = 0m,
+                            AnnualLicenseFeePerKwhSold = 0m,
+                            AnnualLicenseFeePerMw = 0m,
+                            EffectiveFrom = new DateTime(2024, 7, 1, 0, 0, 0, 0, DateTimeKind.Utc),
+                            GridFeePerKwAcPerMonth = 13m,
+                            IsActive = true,
+                            IsGridFeeExempt = false,
+                            Mechanism = 3,
+                            SalePricePerKwhOffPeak = 0m,
+                            SalePricePerKwhPartialPeak = 0m,
+                            SalePricePerKwhPeak = 0m,
+                            SectorCategory = "Commercial",
+                            SourceReference = "Bylaw 58/2024 - Zero-Export commercial",
+                            SpecificYieldKwhPerKwp = 1900m,
+                            TaxRatePct = 0m
+                        },
+                        new
+                        {
+                            Id = 4,
+                            AnnualLicenseFeePerKwhSelfConsumed = 0m,
+                            AnnualLicenseFeePerKwhSold = 0m,
+                            AnnualLicenseFeePerMw = 0m,
+                            EffectiveFrom = new DateTime(2024, 7, 1, 0, 0, 0, 0, DateTimeKind.Utc),
+                            GridFeePerKwAcPerMonth = 13m,
+                            IsActive = true,
+                            IsGridFeeExempt = false,
+                            Mechanism = 4,
+                            SalePricePerKwhOffPeak = 0.0705m,
+                            SalePricePerKwhPartialPeak = 0.0705m,
+                            SalePricePerKwhPeak = 0.0705m,
+                            SectorCategory = "Commercial",
+                            SourceReference = "Bylaw 58/2024 - Full-Netting commercial",
+                            SpecificYieldKwhPerKwp = 1900m,
+                            TaxRatePct = 0m
+                        });
                 });
 
             modelBuilder.Entity("NIBRAS.Models.Role", b =>

@@ -2,6 +2,7 @@ using Mapster;
 using Microsoft.EntityFrameworkCore;
 using NIBRAS.API.DTOs;
 using NIBRAS.Models;
+using NibrasWeb.Enums;
 
 namespace NIBRAS.API.Services;
 
@@ -16,10 +17,19 @@ public class LandService : ILandService
         _logger = logger;
     }
 
-    public async Task<List<LandDto>> GetAllAsync()
+    public async Task<List<LandDto>> GetAllAsync(int pageNumber, int pageSize)
     {
+        if (pageNumber < 1) pageNumber = 1;
+        if (pageSize < 1) pageSize = 10;
+        if (pageSize > 50) pageSize = 50;
+
         var lands = await _context.Lands
             .Include(l => l.LandStatus)
+            .Include(l => l.Region)
+            .Include(l => l.Landlord)
+            .Where(l => !l.IsDeleted)
+            .Skip((pageNumber - 1) * pageSize)
+            .Take(pageSize)
             .ToListAsync();
 
         var result = new List<LandDto>();
@@ -27,6 +37,7 @@ public class LandService : ILandService
         {
             result.Add(land.Adapt<LandDto>());
         }
+
         return result;
     }
 
@@ -34,7 +45,9 @@ public class LandService : ILandService
     {
         var land = await _context.Lands
             .Include(l => l.LandStatus)
-            .FirstOrDefaultAsync(l => l.Id == id);
+            .Include(l => l.Region)
+            .Include(l => l.Landlord)
+            .FirstOrDefaultAsync(l => l.Id == id && !l.IsDeleted);
 
         if (land == null) return null;
         return land.Adapt<LandDto>();
@@ -42,54 +55,91 @@ public class LandService : ILandService
 
     public async Task<LandDto> CreateAsync(CreateLandRequest request)
     {
-        // 1. المستخدم موجود ودوره Landlord
         var user = await _context.Users.Include(u => u.Role)
             .FirstOrDefaultAsync(u => u.Id == request.LandlordId);
         if (user == null)
-            throw new InvalidOperationException("User not found.");
+            throw new KeyNotFoundException("User not found.");
         if (user.Role.Name != "Landlord")
-            throw new InvalidOperationException("Only landlords can register land.");
+            throw new KeyNotFoundException("Only landlords can register land.");
 
-        // 2. التحقق من عدم التكرار
         var exists = await _context.Lands.AnyAsync(l =>
-            l.LandNumber == request.LandNumber && l.RegionId == request.RegionId);
+            l.LandNumber == request.LandNumber && l.RegionId == request.RegionId && !l.IsDeleted);
         if (exists)
             throw new InvalidOperationException("Land number already exists in this region.");
 
-        // 3. إنشاء الأرض بحالة Draft
-        var draftStatus = await _context.LandStatuses.FirstAsync(s => s.Name == "Draft");
+        var criterion = await _context.LandCriteria
+            .OrderByDescending(c => c.UpdatedAt)
+            .FirstOrDefaultAsync();
 
+        var standardErrors = ValidateRegisterStandards(request, criterion);
+        if (standardErrors.Any())
+            throw new InvalidOperationException($"Land does not meet registration standards: {string.Join(";", standardErrors)}");
+        var grid = await _context.Grids
+            .Include(g => g.GridCapacityReservations)
+            .FirstOrDefaultAsync(g => g.Id == request.GridId);
+
+        if (grid == null)
+            throw new KeyNotFoundException("Grid not found for this region.");
+
+        var totalReservedMw = grid.GridCapacityReservations.Sum(r => r.ReservedMw);
+        if (totalReservedMw >= grid.CapacityMw)
+            throw new InvalidOperationException("No capacity left in this electrical grid.");
+
+        var draftStatus = await _context.LandStatuses.FirstAsync(s => s.Name == "Draft");
         var land = request.Adapt<Land>();
         land.LandStatusId = draftStatus.Id;
         land.DataVerifiedByAdmin = false;
         land.IsDeleted = false;
+        land.GridId = request.GridId;
 
-        _context.Lands.Add(land);
+        _context.Add(land);
         await _context.SaveChangesAsync();
 
-        // 4. تسجيل أول حالة في السجل
         _context.LandStatusHistories.Add(new LandStatusHistory
         {
             LandId = land.Id,
             StatusId = draftStatus.Id,
             ChangedById = request.LandlordId,
-            ChangedAt = DateTime.UtcNow
+            ChangedAt = DateTime.UtcNow,
+            Reason = "Land created as Draft."
         });
+
         await _context.SaveChangesAsync();
 
         return land.Adapt<LandDto>();
+    }
+
+    private List<string> ValidateRegisterStandards(CreateLandRequest request, LandCriterion? criterion)
+    {
+        var errors = new List<string>();
+        if (request.AreaDonum <= 0)
+            errors.Add("Land area must be greater than zero.");
+        if (string.IsNullOrWhiteSpace(request.LandNumber))
+            errors.Add("Land number is required.");
+        if (request.RegionId <= 0)
+            errors.Add("A valid RegionId is required.");
+
+        if (criterion != null)
+        {
+            if (request.AreaDonum < criterion.MinAreaDonum)
+                errors.Add($"Land area is less than the minimum required ({criterion.MinAreaDonum} Donums).");
+            if (request.SlopePercentage > criterion.MaxSlopePct)
+                errors.Add($"Land slope exceeds the maximum allowed limit ({criterion.MaxSlopePct}%).");
+            if (request.DistanceToGridKm > criterion.MaxGridDistanceKm)
+                errors.Add($"Land distance to grid exceeds the maximum allowed limit ({criterion.MaxGridDistanceKm} km).");
+        }
+
+        return errors;
     }
 
     public async Task<bool> UpdateAsync(int id, UpdateLandRequest request)
     {
         var land = await _context.Lands
             .Include(l => l.Contracts)
-            .FirstOrDefaultAsync(l => l.Id == id);
+            .FirstOrDefaultAsync(l => l.Id == id && !l.IsDeleted);
 
         if (land == null) return false;
-
-        // الأرض تحت عقد لا يمكن تعديلها
-        if (land.Contracts.Any(c => c.StatusId == 2)) // Active
+        if (land.Contracts.Any(c => c.Status == ContractStatus.Active))
             throw new InvalidOperationException("Cannot edit a land that has an active contract.");
 
         land.LandNumber = request.LandNumber;
@@ -106,23 +156,29 @@ public class LandService : ILandService
 
     public async Task<bool> DeleteAsync(int id)
     {
-        // الحذف المباشر ممنوع — يتم فقط عبر DeletionRequest
-        throw new InvalidOperationException("Direct deletion is not allowed. Use a deletion request instead.");
+        throw new InvalidOperationException("Direct deletion is not allowed.");
     }
 
-    public async Task<bool> SubmitAsync(int landId)
+    public async Task<bool> SubmitAsync(int landId, int landlordId)
     {
-        var land = await _context.Lands.FindAsync(landId);
+        var land = await _context.Lands
+            .Include(l => l.LandStatus)
+            .Include(l => l.LandDocuments)
+            .FirstOrDefaultAsync(l => l.Id == landId && !l.IsDeleted);
+
         if (land == null)
             throw new KeyNotFoundException("Land not found.");
 
+        if (land.LandlordId != landlordId)
+            throw new UnauthorizedAccessException("You are not the owner of this land.");
+
         var draftStatus = await _context.LandStatuses.FirstAsync(s => s.Name == "Draft");
+        if (land.LandStatusId != draftStatus.Id)
+            throw new InvalidOperationException("Only lands in Draft status can be submitted.");
+
         var pendingStatus = await _context.LandStatuses.FirstAsync(s => s.Name == "PendingVerification");
 
-        if (land.LandStatusId != draftStatus.Id)
-            throw new InvalidOperationException($"Cannot submit land in status '{land.LandStatus.Name}'. Must be 'Draft'.");
-
-        await ChangeStatusAsync(land, pendingStatus.Id, land.LandlordId, "Submitted for verification");
+        await ChangeStatusAsync(land, pendingStatus.Id, landlordId, "Submitted for admin verification.");
         return true;
     }
 
@@ -131,7 +187,7 @@ public class LandService : ILandService
         var land = await _context.Lands
             .Include(l => l.LandDocuments)
             .ThenInclude(ld => ld.DocumentType)
-            .FirstOrDefaultAsync(l => l.Id == landId);
+            .FirstOrDefaultAsync(l => l.Id == landId && !l.IsDeleted);
 
         if (land == null)
             throw new KeyNotFoundException("Land not found.");
@@ -141,13 +197,11 @@ public class LandService : ILandService
         if (land.LandStatusId != pendingStatus.Id)
             throw new InvalidOperationException("Land is not pending verification.");
 
-        // التحقق من المستندات
         var hasTitleDeed = land.LandDocuments.Any(d =>
             d.DocumentType.Name == "TitleDeed" && d.Status == "Approved");
         if (!hasTitleDeed)
             throw new InvalidOperationException("No approved title deed document found.");
 
-        // التحقق من المعايير
         var criteria = await _context.LandCriteria
             .OrderByDescending(c => c.UpdatedAt)
             .FirstOrDefaultAsync();
@@ -158,7 +212,6 @@ public class LandService : ILandService
         if (!eligibility)
             throw new InvalidOperationException("Land does not meet eligibility criteria.");
 
-        // تسجيل المعيار الذي تم التحقق بناءً عليه (لقطة تاريخية فقط — لا تؤثر على إعادة التحقق لاحقًا)
         land.VerifiedAgainstCriterionId = criteria.Id;
 
         var verifiedStatus = await _context.LandStatuses.FirstAsync(s => s.Name == "Verified");
@@ -171,7 +224,7 @@ public class LandService : ILandService
     public async Task<bool> RejectAsync(int landId, int adminId, string reason)
     {
         var land = await _context.Lands.FindAsync(landId);
-        if (land == null)
+        if (land == null || land.IsDeleted)
             throw new KeyNotFoundException("Land not found.");
 
         var pendingStatus = await _context.LandStatuses.FirstAsync(s => s.Name == "PendingVerification");
@@ -183,71 +236,38 @@ public class LandService : ILandService
         return true;
     }
 
-    public async Task<bool> AddDocumentAsync(int landId, CreateLandDocumentRequest request)
-    {
-        var land = await _context.Lands.FindAsync(landId);
-        if (land == null)
-            throw new KeyNotFoundException("Land not found.");
-
-        var docType = await _context.DocumentTypes.FindAsync(request.DocumentTypeId);
-        if (docType == null)
-            throw new KeyNotFoundException("Document type not found.");
-
-        var latestVersion = await _context.LandDocuments
-            .Where(d => d.LandId == landId && d.DocumentTypeId == request.DocumentTypeId)
-            .OrderByDescending(d => d.Version)
-            .Select(d => (int?)d.Version)
-            .FirstOrDefaultAsync();
-
-        var doc = new LandDocument
-        {
-            LandId = landId,
-            DocumentTypeId = request.DocumentTypeId,
-            FilePath = request.FilePath,
-            Version = (latestVersion ?? 0) + 1,
-            Status = "Pending",
-            UploadedAt = DateTime.UtcNow
-        };
-
-        _context.LandDocuments.Add(doc);
-        await _context.SaveChangesAsync();
-        return true;
-    }
-
-    public async Task<List<LandDocumentDto>> GetDocumentsAsync(int landId)
-    {
-        var docs = await _context.LandDocuments
-            .Where(d => d.LandId == landId)
-            .ToListAsync();
-
-        var result = new List<LandDocumentDto>();
-        foreach (var doc in docs)
-        {
-            result.Add(doc.Adapt<LandDocumentDto>());
-        }
-        return result;
-    }
-
     public async Task<bool> CheckEligibilityAsync(int landId)
     {
-        var land = await _context.Lands.FindAsync(landId);
-        if (land == null)
-            throw new KeyNotFoundException("Land not found.");
+        var land = await _context.Lands.FirstOrDefaultAsync(l => l.Id == landId);
+        if (land == null) return false;
 
-        var criteria = await _context.LandCriteria
-            .OrderByDescending(c => c.UpdatedAt)
-            .FirstOrDefaultAsync();
+        var criteria = await _context.LandCriteria.OrderByDescending(c => c.UpdatedAt).FirstOrDefaultAsync();
+        if (criteria == null) return true;
 
-        if (criteria == null)
-            throw new InvalidOperationException("No eligibility criteria configured.");
-
-        if (land.AreaDonum < criteria.MinAreaDonum) return false;
-        if (land.SlopePercentage > criteria.MaxSlopePct) return false;
-        if (land.DistanceToGridKm > criteria.MaxGridDistanceKm) return false;
-        if (land.SolarIrradiance < criteria.MinSolarIrradiance) return false;
-        if (land.ElevationM < criteria.MinElevationM) return false;
+        if (land.AreaDonum < criteria.MinAreaDonum ||
+            land.SlopePercentage > criteria.MaxSlopePct ||
+            land.DistanceToGridKm > criteria.MaxGridDistanceKm)
+        {
+            return false;
+        }
 
         return true;
+    }
+
+    public async Task<List<LandStatusHistoryDto>> GetAllStatusHistoryAsync(int landId)
+    {
+        var history = await _context.LandStatusHistories
+            .Include(h => h.LandStatus)
+            .Where(h => h.LandId == landId)
+            .OrderByDescending(h => h.ChangedAt)
+            .ToListAsync();
+
+        var result = new List<LandStatusHistoryDto>();
+        foreach (var h in history)
+        {
+            result.Add(h.Adapt<LandStatusHistoryDto>());
+        }
+        return result;
     }
 
     private async Task ChangeStatusAsync(Land land, int newStatusId, int changedById, string? reason)

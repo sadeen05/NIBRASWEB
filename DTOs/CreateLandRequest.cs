@@ -11,4 +11,5 @@ public class CreateLandRequest
     public decimal SolarIrradiance { get; set; }
     public decimal ElevationM { get; set; }
     public string? DocumentStorageLocation { get; set; }
+    public int GridId { get; set; }
 }

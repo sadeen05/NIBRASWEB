@@ -18,7 +18,7 @@ public class LandsController : ControllerBase
     [HttpGet]
     public async Task<ActionResult<List<LandDto>>> GetAll()
     {
-        var lands = await _landService.GetAllAsync();
+        var lands = await _landService.GetAllAsync(1, 10);
         return Ok(lands);
     }
 
@@ -69,9 +69,9 @@ public class LandsController : ControllerBase
     }
 
     [HttpPost("{id}/submit")]
-    public async Task<IActionResult> Submit(int id)
+    public async Task<IActionResult> Submit(int id, [FromQuery] int landlordId)
     {
-        var result = await _landService.SubmitAsync(id);
+        var result = await _landService.SubmitAsync(id, landlordId);
         if (!result) return NotFound();
         return Ok(new { message = "Land submitted for verification." });
     }

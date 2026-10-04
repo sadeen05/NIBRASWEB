@@ -11,6 +11,10 @@ public partial class Land
 
     public int RegionId { get; set; }
 
+    public int GridId { get; set; }
+
+    public virtual Grid Grid { get; set; } = null!;
+
     public string LandNumber { get; set; } = null!;
 
     public decimal AreaDonum { get; set; }
