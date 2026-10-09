@@ -12,7 +12,7 @@ public class LandDto
     public decimal SolarIrradiance { get; set; }
     public decimal ElevationM { get; set; }
     public bool IsDeleted { get; set; }
-    public int LandStatusId { get; set; }
+    public string Status { get; set; } = "";
     public bool DataVerifiedByAdmin { get; set; }
     public string? DocumentStorageLocation { get; set; }
     public int? VerifiedAgainstCriterionId { get; set; }

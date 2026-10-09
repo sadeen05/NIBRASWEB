@@ -35,13 +35,11 @@ public class OfferService : IOfferService
     {
         // 1. الأرض موجودة وحالتها Verified
         var land = await _context.Lands
-            .Include(l => l.LandStatus)
             .FirstOrDefaultAsync(l => l.Id == request.LandId);
         if (land == null)
             throw new KeyNotFoundException("Land not found.");
 
-        var verifiedStatus = await _context.LandStatuses.FirstAsync(s => s.Name == "Verified");
-        if (land.LandStatusId != verifiedStatus.Id)
+        if (land.Status != LandStatus.Verified)
             throw new InvalidOperationException("Land is not available for offers.");
 
         // 2. الأرض ما عليها Contract Active
@@ -119,8 +117,7 @@ public class OfferService : IOfferService
             var land = await _context.Lands.FindAsync(offer.LandId);
             if (land != null)
             {
-                var underOfferStatus = await _context.LandStatuses.FirstAsync(s => s.Name == "UnderOffer");
-                land.LandStatusId = underOfferStatus.Id;
+                land.Status = LandStatus.UnderContract;
             }
 
             // ثبت أحدث إصدار كـ AcceptedVersion

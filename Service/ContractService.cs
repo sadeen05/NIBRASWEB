@@ -375,9 +375,7 @@ public class ContractService : IContractService
             _context.GridCapacityReservations.Remove(contract.GridCapacityReservation);
         }
 
-        var verifiedStatus = await _context.LandStatuses
-            .FirstAsync(s => s.Name == LandStatusNames.Verified);
-        contract.Land.LandStatusId = verifiedStatus.Id;
+        contract.Land.Status = LandStatus.Verified;
 
         if (compensationOverride.HasValue)
         {
@@ -439,9 +437,7 @@ public class ContractService : IContractService
         }
 
         // إعادة حالة الأرض إلى Verified
-        var verifiedStatus = await _context.LandStatuses
-            .FirstAsync(s => s.Name == LandStatusNames.Verified);
-        contract.Land.LandStatusId = verifiedStatus.Id;
+        contract.Land.Status = LandStatus.Verified;
 
         _context.ContractReviews.Add(new ContractReview
         {

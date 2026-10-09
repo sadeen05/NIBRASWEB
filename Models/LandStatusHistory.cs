@@ -9,7 +9,7 @@ public partial class LandStatusHistory
 
     public int LandId { get; set; }
 
-    public int StatusId { get; set; }
+    public LandStatus Status { get; set; }
 
     public int ChangedById { get; set; }
 

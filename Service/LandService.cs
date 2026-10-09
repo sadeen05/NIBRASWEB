@@ -19,7 +19,6 @@ public class LandService : ILandService
     public async Task<List<LandDto>> GetAllAsync()
     {
         var lands = await _context.Lands
-            .Include(l => l.LandStatus)
             .ToListAsync();
 
         var result = new List<LandDto>();
@@ -33,7 +32,6 @@ public class LandService : ILandService
     public async Task<LandDto?> GetByIdAsync(int id)
     {
         var land = await _context.Lands
-            .Include(l => l.LandStatus)
             .FirstOrDefaultAsync(l => l.Id == id);
 
         if (land == null) return null;
@@ -57,10 +55,8 @@ public class LandService : ILandService
             throw new InvalidOperationException("Land number already exists in this region.");
 
         // 3. إنشاء الأرض بحالة Draft
-        var draftStatus = await _context.LandStatuses.FirstAsync(s => s.Name == "Draft");
-
         var land = request.Adapt<Land>();
-        land.LandStatusId = draftStatus.Id;
+        land.Status = LandStatus.Draft;
         land.DataVerifiedByAdmin = false;
         land.IsDeleted = false;
 
@@ -68,13 +64,7 @@ public class LandService : ILandService
         await _context.SaveChangesAsync();
 
         // 4. تسجيل أول حالة في السجل
-        _context.LandStatusHistories.Add(new LandStatusHistory
-        {
-            LandId = land.Id,
-            StatusId = draftStatus.Id,
-            ChangedById = request.LandlordId,
-            ChangedAt = DateTime.UtcNow
-        });
+        await ChangeStatusAsync(land, LandStatus.Draft, request.LandlordId, null);
         await _context.SaveChangesAsync();
 
         return land.Adapt<LandDto>();
@@ -116,13 +106,10 @@ public class LandService : ILandService
         if (land == null)
             throw new KeyNotFoundException("Land not found.");
 
-        var draftStatus = await _context.LandStatuses.FirstAsync(s => s.Name == "Draft");
-        var pendingStatus = await _context.LandStatuses.FirstAsync(s => s.Name == "PendingVerification");
+        if (land.Status != LandStatus.Draft)
+            throw new InvalidOperationException($"Cannot submit land in status '{land.Status}'. Must be 'Draft'.");
 
-        if (land.LandStatusId != draftStatus.Id)
-            throw new InvalidOperationException($"Cannot submit land in status '{land.LandStatus.Name}'. Must be 'Draft'.");
-
-        await ChangeStatusAsync(land, pendingStatus.Id, land.LandlordId, "Submitted for verification");
+        await ChangeStatusAsync(land, LandStatus.PendingVerification, land.LandlordId, "Submitted for verification");
         return true;
     }
 
@@ -136,9 +123,7 @@ public class LandService : ILandService
         if (land == null)
             throw new KeyNotFoundException("Land not found.");
 
-        var pendingStatus = await _context.LandStatuses.FirstAsync(s => s.Name == "PendingVerification");
-
-        if (land.LandStatusId != pendingStatus.Id)
+        if (land.Status != LandStatus.PendingVerification)
             throw new InvalidOperationException("Land is not pending verification.");
 
         // التحقق من المستندات
@@ -161,10 +146,9 @@ public class LandService : ILandService
         // تسجيل المعيار الذي تم التحقق بناءً عليه (لقطة تاريخية فقط — لا تؤثر على إعادة التحقق لاحقًا)
         land.VerifiedAgainstCriterionId = criteria.Id;
 
-        var verifiedStatus = await _context.LandStatuses.FirstAsync(s => s.Name == "Verified");
         land.DataVerifiedByAdmin = true;
 
-        await ChangeStatusAsync(land, verifiedStatus.Id, adminId, "Verified by admin");
+        await ChangeStatusAsync(land, LandStatus.Verified, adminId, "Verified by admin");
         return true;
     }
 
@@ -174,12 +158,10 @@ public class LandService : ILandService
         if (land == null)
             throw new KeyNotFoundException("Land not found.");
 
-        var pendingStatus = await _context.LandStatuses.FirstAsync(s => s.Name == "PendingVerification");
-        if (land.LandStatusId != pendingStatus.Id)
+        if (land.Status != LandStatus.PendingVerification)
             throw new InvalidOperationException("Land is not pending verification.");
 
-        var rejectedStatus = await _context.LandStatuses.FirstAsync(s => s.Name == "Rejected");
-        await ChangeStatusAsync(land, rejectedStatus.Id, adminId, reason);
+        await ChangeStatusAsync(land, LandStatus.Rejected, adminId, reason);
         return true;
     }
 
@@ -250,14 +232,13 @@ public class LandService : ILandService
         return true;
     }
 
-    private async Task ChangeStatusAsync(Land land, int newStatusId, int changedById, string? reason)
+    private async Task ChangeStatusAsync(Land land, LandStatus newStatus, int changedById, string? reason)
     {
-        land.LandStatusId = newStatusId;
-
+        land.Status = newStatus;
         _context.LandStatusHistories.Add(new LandStatusHistory
         {
             LandId = land.Id,
-            StatusId = newStatusId,
+            Status = newStatus,
             ChangedById = changedById,
             Reason = reason,
             ChangedAt = DateTime.UtcNow

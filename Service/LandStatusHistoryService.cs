@@ -43,7 +43,7 @@ public class LandStatusHistoryService : ILandStatusHistoryService
     {
         var item = await _context.LandStatusHistories.FindAsync(id);
         if (item == null) return false;
-        item.StatusId = request.StatusId;
+        item.Status = request.Status;
         item.Reason = request.Reason;
         await _context.SaveChangesAsync();
         return true;
