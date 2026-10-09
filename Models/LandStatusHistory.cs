@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using NibrasWeb.Enums;
 
 namespace NIBRAS.Models;
 
@@ -9,7 +10,7 @@ public partial class LandStatusHistory
 
     public int LandId { get; set; }
 
-    public int StatusId { get; set; }
+    public LandStatus Status { get; set; }
 
     public int ChangedById { get; set; }
 
@@ -21,6 +22,4 @@ public partial class LandStatusHistory
 
     public virtual Land Land { get; set; } = null!;
 
-    public int LandStatusId { get; set; }
-    public virtual LandStatus LandStatus { get; set; } = null!;
 }

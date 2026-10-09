@@ -24,7 +24,6 @@ public class LandService : ILandService
         if (pageSize > 50) pageSize = 50;
 
         var lands = await _context.Lands
-            .Include(l => l.LandStatus)
             .Include(l => l.Region)
             .Include(l => l.Landlord)
             .Where(l => !l.IsDeleted)
@@ -35,7 +34,7 @@ public class LandService : ILandService
         var result = new List<LandDto>();
         foreach (var land in lands)
         {
-            result.Add(land.Adapt<LandDto>());
+            result.Add(ToDto(land));
         }
 
         return result;
@@ -44,13 +43,12 @@ public class LandService : ILandService
     public async Task<LandDto?> GetByIdAsync(int id)
     {
         var land = await _context.Lands
-            .Include(l => l.LandStatus)
             .Include(l => l.Region)
             .Include(l => l.Landlord)
             .FirstOrDefaultAsync(l => l.Id == id && !l.IsDeleted);
 
         if (land == null) return null;
-        return land.Adapt<LandDto>();
+        return ToDto(land);
     }
 
     public async Task<LandDto> CreateAsync(CreateLandRequest request)
@@ -85,9 +83,8 @@ public class LandService : ILandService
         if (totalReservedMw >= grid.CapacityMw)
             throw new InvalidOperationException("No capacity left in this electrical grid.");
 
-        var draftStatus = await _context.LandStatuses.FirstAsync(s => s.Name == "Draft");
         var land = request.Adapt<Land>();
-        land.LandStatusId = draftStatus.Id;
+        land.Status = LandStatus.Draft;
         land.DataVerifiedByAdmin = false;
         land.IsDeleted = false;
         land.GridId = request.GridId;
@@ -95,18 +92,9 @@ public class LandService : ILandService
         _context.Add(land);
         await _context.SaveChangesAsync();
 
-        _context.LandStatusHistories.Add(new LandStatusHistory
-        {
-            LandId = land.Id,
-            StatusId = draftStatus.Id,
-            ChangedById = request.LandlordId,
-            ChangedAt = DateTime.UtcNow,
-            Reason = "Land created as Draft."
-        });
+        await ChangeStatusAsync(land, LandStatus.Draft, request.LandlordId, "Land created as Draft.");
 
-        await _context.SaveChangesAsync();
-
-        return land.Adapt<LandDto>();
+        return ToDto(land);
     }
 
     private List<string> ValidateRegisterStandards(CreateLandRequest request, LandCriterion? criterion)
@@ -162,7 +150,6 @@ public class LandService : ILandService
     public async Task<bool> SubmitAsync(int landId, int landlordId)
     {
         var land = await _context.Lands
-            .Include(l => l.LandStatus)
             .Include(l => l.LandDocuments)
             .FirstOrDefaultAsync(l => l.Id == landId && !l.IsDeleted);
 
@@ -172,13 +159,10 @@ public class LandService : ILandService
         if (land.LandlordId != landlordId)
             throw new UnauthorizedAccessException("You are not the owner of this land.");
 
-        var draftStatus = await _context.LandStatuses.FirstAsync(s => s.Name == "Draft");
-        if (land.LandStatusId != draftStatus.Id)
+        if (land.Status != LandStatus.Draft)
             throw new InvalidOperationException("Only lands in Draft status can be submitted.");
 
-        var pendingStatus = await _context.LandStatuses.FirstAsync(s => s.Name == "PendingVerification");
-
-        await ChangeStatusAsync(land, pendingStatus.Id, landlordId, "Submitted for admin verification.");
+        await ChangeStatusAsync(land, LandStatus.PendingVerification, landlordId, "Submitted for admin verification.");
         return true;
     }
 
@@ -192,9 +176,7 @@ public class LandService : ILandService
         if (land == null)
             throw new KeyNotFoundException("Land not found.");
 
-        var pendingStatus = await _context.LandStatuses.FirstAsync(s => s.Name == "PendingVerification");
-
-        if (land.LandStatusId != pendingStatus.Id)
+        if (land.Status != LandStatus.PendingVerification)
             throw new InvalidOperationException("Land is not pending verification.");
 
         var hasTitleDeed = land.LandDocuments.Any(d =>
@@ -214,10 +196,9 @@ public class LandService : ILandService
 
         land.VerifiedAgainstCriterionId = criteria.Id;
 
-        var verifiedStatus = await _context.LandStatuses.FirstAsync(s => s.Name == "Verified");
         land.DataVerifiedByAdmin = true;
 
-        await ChangeStatusAsync(land, verifiedStatus.Id, adminId, "Verified by admin");
+        await ChangeStatusAsync(land, LandStatus.Verified, adminId, "Verified by admin");
         return true;
     }
 
@@ -227,12 +208,10 @@ public class LandService : ILandService
         if (land == null || land.IsDeleted)
             throw new KeyNotFoundException("Land not found.");
 
-        var pendingStatus = await _context.LandStatuses.FirstAsync(s => s.Name == "PendingVerification");
-        if (land.LandStatusId != pendingStatus.Id)
+        if (land.Status != LandStatus.PendingVerification)
             throw new InvalidOperationException("Land is not pending verification.");
 
-        var rejectedStatus = await _context.LandStatuses.FirstAsync(s => s.Name == "Rejected");
-        await ChangeStatusAsync(land, rejectedStatus.Id, adminId, reason);
+        await ChangeStatusAsync(land, LandStatus.Rejected, adminId, reason);
         return true;
     }
 
@@ -257,7 +236,7 @@ public class LandService : ILandService
     public async Task<List<LandStatusHistoryDto>> GetAllStatusHistoryAsync(int landId)
     {
         var history = await _context.LandStatusHistories
-            .Include(h => h.LandStatus)
+            .Include(h => h.ChangedBy)
             .Where(h => h.LandId == landId)
             .OrderByDescending(h => h.ChangedAt)
             .ToListAsync();
@@ -265,24 +244,39 @@ public class LandService : ILandService
         var result = new List<LandStatusHistoryDto>();
         foreach (var h in history)
         {
-            result.Add(h.Adapt<LandStatusHistoryDto>());
+            result.Add(new LandStatusHistoryDto
+            {
+                id = h.Id,
+                LandId = h.LandId,
+                statusName = h.Status.ToString(),
+                ChangeByName = h.ChangedBy.FullName,
+                Reason = h.Reason,
+                ChangedAt = h.ChangedAt ?? DateTime.MinValue
+            });
         }
         return result;
     }
 
-    private async Task ChangeStatusAsync(Land land, int newStatusId, int changedById, string? reason)
+    private async Task ChangeStatusAsync(Land land, LandStatus newStatus, int changedById, string? reason)
     {
-        land.LandStatusId = newStatusId;
+        land.Status = newStatus;
 
         _context.LandStatusHistories.Add(new LandStatusHistory
         {
             LandId = land.Id,
-            StatusId = newStatusId,
+            Status = newStatus,
             ChangedById = changedById,
             Reason = reason,
             ChangedAt = DateTime.UtcNow
         });
 
         await _context.SaveChangesAsync();
+    }
+
+    private static LandDto ToDto(Land land)
+    {
+        var dto = land.Adapt<LandDto>();
+        dto.Status = land.Status.ToString();
+        return dto;
     }
 }

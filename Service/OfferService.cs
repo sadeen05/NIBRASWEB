@@ -118,11 +118,11 @@ namespace NibrasWeb.Service
             if (user.Role.Name != RoleNames.Investor)
                 throw new UnauthorizedAccessException("Only investors can create offers.");
 
-            var land = await _context.Lands.Include(l => l.LandStatus)
+            var land = await _context.Lands
                 .FirstOrDefaultAsync(l => l.Id == request.LandId)
                 ?? throw new KeyNotFoundException("Land not found.");
 
-            if (land.LandStatus.Name != "Verified")
+            if (land.Status != LandStatus.Verified)
                 throw new InvalidOperationException("Only verified lands can receive offers.");
 
             var hasBlockingOffer = await _context.Offers.AnyAsync(o =>

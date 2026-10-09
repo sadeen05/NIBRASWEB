@@ -32,7 +32,6 @@ public partial class NebrasdbContext : DbContext
     public virtual DbSet<Land> Lands { get; set; }
     public virtual DbSet<LandCriterion> LandCriteria { get; set; }
     public virtual DbSet<LandDocument> LandDocuments { get; set; }
-    public virtual DbSet<LandStatus> LandStatuses { get; set; }
     public virtual DbSet<LandStatusHistory> LandStatusHistories { get; set; }
     public virtual DbSet<Offer> Offers { get; set; }
     public virtual DbSet<OfferNegotiationHistory> OfferNegotiationHistories { get; set; }
@@ -228,7 +227,7 @@ public partial class NebrasdbContext : DbContext
             entity.Property(e => e.ElevationM).HasColumnType("decimal(10, 2)").HasColumnName("ELEVATION_M");
             entity.Property(e => e.IsDeleted).HasColumnName("IS_DELETED");
             entity.Property(e => e.LandNumber).HasMaxLength(50).HasColumnName("LAND_NUMBER");
-            entity.Property(e => e.LandStatusId).HasColumnName("LAND_STATUS_ID");
+            entity.Property(e => e.Status).HasColumnName("LAND_STATUS_ID");
             entity.Property(e => e.LandlordId).HasColumnName("LANDLORD_ID");
             entity.Property(e => e.RegionId).HasColumnName("REGION_ID");
             entity.Property(e => e.GridId).HasColumnName("GRID_ID");
@@ -236,11 +235,6 @@ public partial class NebrasdbContext : DbContext
             entity.Property(e => e.SolarIrradiance).HasColumnType("decimal(10, 2)").HasColumnName("SOLAR_IRRADIANCE");
             entity.Property(e => e.DocumentStorageLocation).HasMaxLength(500).HasColumnName("DOCUMENT_STORAGE_LOCATION");
             entity.Property(e => e.VerifiedAgainstCriterionId).HasColumnName("VERIFIED_AGAINST_CRITERION_ID");
-
-            entity.HasOne(d => d.LandStatus).WithMany(p => p.Lands)
-                .HasForeignKey(d => d.LandStatusId)
-                .OnDelete(DeleteBehavior.ClientSetNull)
-                .HasConstraintName("FK_LANDS_STATUS");
 
             entity.HasOne(d => d.Landlord).WithMany(p => p.Lands)
                 .HasForeignKey(d => d.LandlordId)
@@ -306,14 +300,6 @@ public partial class NebrasdbContext : DbContext
                 .HasConstraintName("FK_LD_LANDS");
         });
 
-        modelBuilder.Entity<LandStatus>(entity =>
-        {
-            entity.HasKey(e => e.Id).HasName("PK__LAND_STA__3214EC27D4FB7967");
-            entity.ToTable("LAND_STATUSES");
-            entity.Property(e => e.Id).HasColumnName("ID");
-            entity.Property(e => e.Name).HasMaxLength(50).HasColumnName("NAME");
-        });
-
         modelBuilder.Entity<LandStatusHistory>(entity =>
         {
             entity.HasKey(e => e.Id).HasName("PK__LAND_STA__3214EC27F466086B");
@@ -323,7 +309,7 @@ public partial class NebrasdbContext : DbContext
             entity.Property(e => e.ChangedById).HasColumnName("CHANGED_BY_ID");
             entity.Property(e => e.LandId).HasColumnName("LAND_ID");
             entity.Property(e => e.Reason).HasMaxLength(500).HasColumnName("REASON");
-            entity.Property(e => e.StatusId).HasColumnName("STATUS_ID");
+            entity.Property(e => e.Status).HasColumnName("STATUS_ID");
 
             entity.HasOne(d => d.ChangedBy).WithMany(p => p.LandStatusHistories)
                 .HasForeignKey(d => d.ChangedById)
@@ -493,13 +479,6 @@ public partial class NebrasdbContext : DbContext
             IsDeleted = false,
             CreatedAt = new DateTime(2025, 1, 1, 0, 0, 0, DateTimeKind.Utc)
         });
-
-        modelBuilder.Entity<LandStatus>().HasData(
-            new LandStatus { Id = 1, Name = LandStatusNames.Draft },
-            new LandStatus { Id = 2, Name = LandStatusNames.PendingVerification },
-            new LandStatus { Id = 3, Name = LandStatusNames.Verified },
-            new LandStatus { Id = 4, Name = LandStatusNames.Rejected }
-        );
 
         OnModelCreatingPartial(modelBuilder);
     }
