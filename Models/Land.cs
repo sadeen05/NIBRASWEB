@@ -18,6 +18,12 @@ public partial class Land
 
     public string LandNumber { get; set; } = null!;
 
+    public string? Village { get; set; }
+
+    public string? Basin { get; set; }
+
+    public string? ParcelNumber { get; set; }
+
     public decimal AreaDonum { get; set; }
 
     public decimal SlopePercentage { get; set; }

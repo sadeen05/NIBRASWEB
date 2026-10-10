@@ -28,6 +28,8 @@ public partial class Contract
 
     public int? OfferVersionId { get; set; }
 
+    public int? CriterionId { get; set; }
+
     public int NoticePeriodDays { get; set; }
 
     public int? CancellationRequestedById { get; set; }
@@ -57,6 +59,8 @@ public partial class Contract
     public virtual Offer Offer { get; set; } = null!;
 
     public virtual OfferVersion? OfferVersion { get; set; }
+
+    public virtual LandCriterion? Criterion { get; set; }
 
     public virtual User? CancellationRequestedBy { get; set; }
 }

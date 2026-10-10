@@ -109,11 +109,11 @@ public class LandService : ILandService
 
         if (criterion != null)
         {
-            if (request.AreaDonum < criterion.MinAreaDonum)
+            if (criterion.MinAreaDonum.HasValue && request.AreaDonum < criterion.MinAreaDonum.Value)
                 errors.Add($"Land area is less than the minimum required ({criterion.MinAreaDonum} Donums).");
-            if (request.SlopePercentage > criterion.MaxSlopePct)
+            if (criterion.MaxSlopePct.HasValue && request.SlopePercentage > criterion.MaxSlopePct.Value)
                 errors.Add($"Land slope exceeds the maximum allowed limit ({criterion.MaxSlopePct}%).");
-            if (request.DistanceToGridKm > criterion.MaxGridDistanceKm)
+            if (criterion.MaxGridDistanceKm.HasValue && request.DistanceToGridKm > criterion.MaxGridDistanceKm.Value)
                 errors.Add($"Land distance to grid exceeds the maximum allowed limit ({criterion.MaxGridDistanceKm} km).");
         }
 
@@ -223,9 +223,11 @@ public class LandService : ILandService
         var criteria = await _context.LandCriteria.OrderByDescending(c => c.UpdatedAt).FirstOrDefaultAsync();
         if (criteria == null) return true;
 
-        if (land.AreaDonum < criteria.MinAreaDonum ||
-            land.SlopePercentage > criteria.MaxSlopePct ||
-            land.DistanceToGridKm > criteria.MaxGridDistanceKm)
+        if ((criteria.MinAreaDonum.HasValue && land.AreaDonum < criteria.MinAreaDonum.Value) ||
+            (criteria.MaxSlopePct.HasValue && land.SlopePercentage > criteria.MaxSlopePct.Value) ||
+            (criteria.MaxGridDistanceKm.HasValue && land.DistanceToGridKm > criteria.MaxGridDistanceKm.Value) ||
+            (criteria.MinSolarIrradiance.HasValue && land.SolarIrradiance < criteria.MinSolarIrradiance.Value) ||
+            (criteria.MinElevationM.HasValue && land.ElevationM < criteria.MinElevationM.Value))
         {
             return false;
         }

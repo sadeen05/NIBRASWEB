@@ -67,6 +67,7 @@ public partial class NebrasdbContext : DbContext
                 .HasColumnName("STATUS_ID");
 
             entity.Property(e => e.OfferVersionId).HasColumnName("OFFER_VERSION_ID");
+            entity.Property(e => e.CriterionId).HasColumnName("CRITERION_ID");
             entity.Property(e => e.NoticePeriodDays)
                 .HasDefaultValue(90)
                 .HasColumnName("NOTICE_PERIOD_DAYS");
@@ -114,6 +115,12 @@ public partial class NebrasdbContext : DbContext
                 .HasForeignKey(d => d.CancellationRequestedById)
                 .OnDelete(DeleteBehavior.ClientSetNull)
                 .HasConstraintName("FK_CONTRACTS_CANCELLATION_REQUESTER");
+
+            entity.HasOne(d => d.Criterion)
+                .WithMany()
+                .HasForeignKey(d => d.CriterionId)
+                .OnDelete(DeleteBehavior.ClientSetNull)
+                .HasConstraintName("FK_CONTRACTS_CRITERIA");
         });
 
         modelBuilder.Entity<ContractReview>(entity =>
@@ -167,6 +174,9 @@ public partial class NebrasdbContext : DbContext
             entity.ToTable("DOCUMENT_TYPES");
             entity.Property(e => e.Id).HasColumnName("ID");
             entity.Property(e => e.Name).HasMaxLength(100).HasColumnName("NAME");
+            entity.Property(e => e.IsRequiredForVerification)
+                .HasDefaultValue(false)
+                .HasColumnName("IS_REQUIRED_FOR_VERIFICATION");
         });
 
         modelBuilder.Entity<Grid>(entity =>
@@ -190,11 +200,16 @@ public partial class NebrasdbContext : DbContext
             entity.HasKey(e => e.Id).HasName("PK__GRID_CAP__3214EC27C682FA92");
             entity.ToTable("GRID_CAPACITY_RESERVATIONS");
             entity.HasIndex(e => e.OfferId, "UQ__GRID_CAP__OFFER_ID").IsUnique();
+            entity.HasIndex(e => e.ContractId, "UQ_GRID_CAPACITY_RESERVATIONS_CONTRACT_ID")
+                .IsUnique()
+                .HasFilter("[CONTRACT_ID] IS NOT NULL");
             entity.Property(e => e.Id).HasColumnName("ID");
             entity.Property(e => e.ContractId).HasColumnName("CONTRACT_ID");
             entity.Property(e => e.OfferId).HasColumnName("OFFER_ID");
             entity.Property(e => e.ReservationType).HasMaxLength(20).HasColumnName("RESERVATION_TYPE");
             entity.Property(e => e.CreatedAt).HasDefaultValueSql("(getdate())").HasColumnName("CREATED_AT");
+            entity.Property(e => e.ReleasedAt).HasColumnName("RELEASED_AT");
+            entity.Property(e => e.ReleaseReason).HasMaxLength(300).HasColumnName("RELEASE_REASON");
             entity.Property(e => e.GridId).HasColumnName("GRID_ID");
             entity.Property(e => e.ReservedMw).HasColumnType("decimal(10, 2)").HasColumnName("RESERVED_MW");
 
@@ -219,6 +234,9 @@ public partial class NebrasdbContext : DbContext
             entity.HasKey(e => e.Id).HasName("PK__LANDS__3214EC278FA5F43E");
             entity.ToTable("LANDS");
             entity.HasIndex(e => new { e.LandNumber, e.RegionId }, "UQ_LAND_NUMBER_REGION").IsUnique();
+            entity.HasIndex(e => new { e.RegionId, e.Village, e.Basin, e.ParcelNumber }, "UQ_LAND_LOCATION")
+                .IsUnique()
+                .HasFilter("[IS_DELETED] = 0");
             entity.Property(e => e.Id).HasColumnName("ID");
             entity.Property(e => e.AreaDonum).HasColumnType("decimal(10, 2)").HasColumnName("AREA_DONUM");
             entity.Property(e => e.DataVerifiedByAdmin).HasColumnName("DATA_VERIFIED_BY_ADMIN");
@@ -226,6 +244,9 @@ public partial class NebrasdbContext : DbContext
             entity.Property(e => e.ElevationM).HasColumnType("decimal(10, 2)").HasColumnName("ELEVATION_M");
             entity.Property(e => e.IsDeleted).HasColumnName("IS_DELETED");
             entity.Property(e => e.LandNumber).HasMaxLength(50).HasColumnName("LAND_NUMBER");
+            entity.Property(e => e.Village).HasMaxLength(100).HasColumnName("VILLAGE");
+            entity.Property(e => e.Basin).HasMaxLength(100).HasColumnName("BASIN");
+            entity.Property(e => e.ParcelNumber).HasMaxLength(100).HasColumnName("PARCEL_NUMBER");
             entity.Property(e => e.Status).HasColumnName("LAND_STATUS_ID");
             entity.Property(e => e.LandlordId).HasColumnName("LANDLORD_ID");
             entity.Property(e => e.RegionId).HasColumnName("REGION_ID");
@@ -267,6 +288,7 @@ public partial class NebrasdbContext : DbContext
             entity.Property(e => e.MinAreaDonum).HasColumnType("decimal(10, 2)").HasColumnName("MIN_AREA_DONUM");
             entity.Property(e => e.MinElevationM).HasColumnType("decimal(10, 2)").HasColumnName("MIN_ELEVATION_M");
             entity.Property(e => e.MinSolarIrradiance).HasColumnType("decimal(10, 2)").HasColumnName("MIN_SOLAR_IRRADIANCE");
+            entity.Property(e => e.Reason).HasMaxLength(500).HasColumnName("REASON");
             entity.Property(e => e.UpdatedAt).HasDefaultValueSql("(getdate())").HasColumnName("UPDATED_AT");
             entity.Property(e => e.UpdatedById).HasColumnName("UPDATED_BY_ID");
 
@@ -284,6 +306,9 @@ public partial class NebrasdbContext : DbContext
             entity.Property(e => e.DocumentTypeId).HasColumnName("DOCUMENT_TYPE_ID");
             entity.Property(e => e.FilePath).HasMaxLength(500).HasColumnName("FILE_PATH");
             entity.Property(e => e.LandId).HasColumnName("LAND_ID");
+            entity.Property(e => e.ReviewedById).HasColumnName("REVIEWED_BY_ID");
+            entity.Property(e => e.ReviewedAt).HasColumnName("REVIEWED_AT");
+            entity.Property(e => e.ReviewNote).HasMaxLength(500).HasColumnName("REVIEW_NOTE");
             entity.Property(e => e.Status).HasMaxLength(20).HasDefaultValue("Pending").HasColumnName("STATUS");
             entity.Property(e => e.UploadedAt).HasDefaultValueSql("(getdate())").HasColumnName("UPLOADED_AT");
             entity.Property(e => e.Version).HasDefaultValue(1).HasColumnName("VERSION");
@@ -297,6 +322,11 @@ public partial class NebrasdbContext : DbContext
                 .HasForeignKey(d => d.LandId)
                 .OnDelete(DeleteBehavior.ClientSetNull)
                 .HasConstraintName("FK_LD_LANDS");
+
+            entity.HasOne(d => d.ReviewedBy).WithMany()
+                .HasForeignKey(d => d.ReviewedById)
+                .OnDelete(DeleteBehavior.ClientSetNull)
+                .HasConstraintName("FK_LD_REVIEWED_BY");
         });
 
         modelBuilder.Entity<LandStatusHistory>(entity =>
@@ -449,6 +479,11 @@ public partial class NebrasdbContext : DbContext
             entity.Property(e => e.Email).HasMaxLength(255).HasColumnName("EMAIL");
             entity.Property(e => e.FullName).HasMaxLength(100).HasColumnName("FULL_NAME");
             entity.Property(e => e.IsDeleted).HasColumnName("IS_DELETED");
+            entity.Property(e => e.IsApproved).HasDefaultValue(false).HasColumnName("IS_APPROVED");
+            entity.Property(e => e.ApprovedById).HasColumnName("APPROVED_BY_ID");
+            entity.Property(e => e.ApprovedAt).HasColumnName("APPROVED_AT");
+            entity.Property(e => e.CompanyName).HasMaxLength(200).HasColumnName("COMPANY_NAME");
+            entity.Property(e => e.CompanyRegistrationNumber).HasMaxLength(100).HasColumnName("COMPANY_REGISTRATION_NUMBER");
             entity.Property(e => e.PasswordHash).HasMaxLength(255).HasColumnName("PASSWORD_HASH");
             entity.Property(e => e.Phone).HasMaxLength(20).HasColumnName("PHONE");
             entity.Property(e => e.RoleId).HasColumnName("ROLE_ID");
@@ -469,6 +504,23 @@ public partial class NebrasdbContext : DbContext
             new Role { Id = 3, Name = RoleNames.Admin },
             new Role { Id = 4, Name = RoleNames.SuperAdmin }
         );
+
+        modelBuilder.Entity<DocumentType>().HasData(
+            new DocumentType { Id = 1, Name = "TitleDeed", IsRequiredForVerification = true },
+            new DocumentType { Id = 2, Name = "EncumbranceStatement", IsRequiredForVerification = true }
+        );
+
+        modelBuilder.Entity<LandCriterion>().HasData(new LandCriterion
+        {
+            Id = 1,
+            MinAreaDonum = 20,
+            MaxSlopePct = 10,
+            MaxGridDistanceKm = 15,
+            MinSolarIrradiance = 5.0m,
+            MinElevationM = null,
+            UpdatedById = -1,
+            Reason = "ILLUSTRATIVE PLACEHOLDER values for development; replace after engineering validation"
+        });
 
         modelBuilder.Entity<User>().HasData(new User
         {

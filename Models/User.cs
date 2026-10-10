@@ -19,6 +19,16 @@ public partial class User
 
     public bool IsDeleted { get; set; }
 
+    public bool IsApproved { get; set; }
+
+    public int? ApprovedById { get; set; }
+
+    public DateTime? ApprovedAt { get; set; }
+
+    public string? CompanyName { get; set; }
+
+    public string? CompanyRegistrationNumber { get; set; }
+
     public virtual ICollection<Contract> ContractInvestors { get; set; } = new List<Contract>();
 
     public virtual ICollection<Contract> ContractLandlords { get; set; } = new List<Contract>();

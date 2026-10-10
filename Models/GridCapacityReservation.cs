@@ -19,6 +19,10 @@ public partial class GridCapacityReservation
 
     public DateTime? CreatedAt { get; set; }
 
+    public DateTime? ReleasedAt { get; set; }
+
+    public string? ReleaseReason { get; set; }
+
     public virtual Contract? Contract { get; set; }
 
     public virtual Grid Grid { get; set; } = null!;

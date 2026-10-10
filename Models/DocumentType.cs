@@ -9,5 +9,7 @@ public partial class DocumentType
 
     public string Name { get; set; } = null!;
 
+    public bool IsRequiredForVerification { get; set; }
+
     public virtual ICollection<LandDocument> LandDocuments { get; set; } = new List<LandDocument>();
 }

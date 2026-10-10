@@ -19,7 +19,15 @@ public partial class LandDocument
 
     public DateTime? UploadedAt { get; set; }
 
+    public int? ReviewedById { get; set; }
+
+    public DateTime? ReviewedAt { get; set; }
+
+    public string? ReviewNote { get; set; }
+
     public virtual DocumentType DocumentType { get; set; } = null!;
 
     public virtual Land Land { get; set; } = null!;
+
+    public virtual User? ReviewedBy { get; set; }
 }
