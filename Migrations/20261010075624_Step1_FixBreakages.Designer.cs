@@ -3,17 +3,20 @@ using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using NIBRAS.Models;
 
 #nullable disable
 
-namespace NIBRAS.API.Migrations
+namespace NibrasWeb.Migrations
 {
     [DbContext(typeof(NebrasdbContext))]
-    partial class NebrasdbContextModelSnapshot : ModelSnapshot
+    [Migration("20261010075624_Step1_FixBreakages")]
+    partial class Step1_FixBreakages
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder

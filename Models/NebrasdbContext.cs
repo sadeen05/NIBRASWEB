@@ -64,7 +64,6 @@ public partial class NebrasdbContext : DbContext
             entity.Property(e => e.OfferId).HasColumnName("OFFER_ID");
 
             entity.Property(e => e.Status)
-                .HasDefaultValue(ContractStatus.Active)
                 .HasColumnName("STATUS_ID");
 
             entity.Property(e => e.OfferVersionId).HasColumnName("OFFER_VERSION_ID");
@@ -366,6 +365,9 @@ public partial class NebrasdbContext : DbContext
         {
             entity.HasKey(e => e.Id).HasName("PK__OFFER_VE__3214EC27145811E1");
             entity.ToTable("OFFER_VERSIONS");
+            entity.HasIndex(e => e.OfferId, "UX_OFFER_VERSIONS_CURRENT_OFFER")
+                .IsUnique()
+                .HasFilter("[IS_CURRENT] = 1");
             entity.Property(e => e.Id).HasColumnName("ID");
             entity.Property(e => e.CreatedAt).HasDefaultValueSql("(getdate())").HasColumnName("CREATED_AT");
             entity.Property(e => e.CreatedById).HasColumnName("CREATED_BY_ID");
