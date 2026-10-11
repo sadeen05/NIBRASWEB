@@ -107,7 +107,21 @@ Content-Type: application/json
 }
 
 ### 2 MB request body — EXPECTED: 413
-# Replace {{largePayload}} with a locally generated 2 MB JSON body.
+# The app limits request bodies to 1 MiB (1,048,576 bytes) via Kestrel
+# MaxRequestBodySize (Program.cs). Any larger body must be rejected with
+# HTTP 413 Payload Too Large, never 500 / INTERNAL_ERROR.
+# Test requirements:
+# - Declare an explicit Content-Length; do NOT use chunked transfer encoding.
+#   A chunked request can surface as a connection reset instead.
+# - Send a locally generated 2 MiB JSON body (replace {{largePayload}}).
+# - A transport-level connection reset is NOT a 413 and does not prove the
+#   behavior; re-run with an explicit Content-Length.
+# Expected: 413 with the standard ProblemDetails body
+#   { "title": "Request body too large.", "status": 413,
+#     "detail": "The request body exceeds the allowed size.",
+#     "errorCode": "PAYLOAD_TOO_LARGE", "traceId": "<non-empty>" }
+# and no stack trace, SQL text, file paths, or exception details.
+# A dependency-free check is provided at docs/tests/verify-request-size.ps1.
 POST {{baseUrl}}/api/auth/login
 Content-Type: application/json
 
