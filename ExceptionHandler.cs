@@ -33,8 +33,6 @@ public class GlobalExceptionHandler : IExceptionHandler
             return true;
         }
 
-        _logger.LogError(exception, "Unhandled exception");
-
         var (status, title, errorCode) = exception switch
         {
             NotFoundException => (StatusCodes.Status404NotFound, "Resource not found.", "RESOURCE_NOT_FOUND"),
@@ -43,6 +41,15 @@ public class GlobalExceptionHandler : IExceptionHandler
             ValidationFailedException => (StatusCodes.Status400BadRequest, "Invalid request.", "BAD_REQUEST"),
             _ => (StatusCodes.Status500InternalServerError, "An unexpected error occurred.", "INTERNAL_ERROR")
         };
+
+        if (status == StatusCodes.Status500InternalServerError)
+        {
+            _logger.LogError(exception, "Unhandled exception");
+        }
+        else
+        {
+            _logger.LogWarning("Request rejected with status code {StatusCode}.", status);
+        }
 
         var problem = new ProblemDetails
         {
