@@ -12,7 +12,6 @@
 @nonInvestorUserId = <use-an-existing-landlord-id>
 @adminId = <capture-from-admin-token>
 @superAdminId = <capture-from-superadmin-token>
-@largePayload = <generate-a-2-MB-json-body-locally>
 
 # Fixture requirements:
 # - Run only against an isolated disposable database or explicitly approved fixtures.
@@ -20,6 +19,9 @@
 # - Admin/SuperAdmin fixtures, an unapproved Investor, and a Landlord fixture are required
 #   for the protected-user and approval requests below.
 # - Replace angle-bracket placeholders locally; never commit real values.
+# - Use syntactically valid credentials (password 10-128 chars, <=72 UTF-8 bytes, no
+#   control characters); otherwise login/registration returns 400 before credentials
+#   are checked, which would mask the authorization behavior under test.
 # - The HTTPS profile is https://localhost:7265. Use it only when the local development
 #   certificate is trusted by the HTTP client. Otherwise use this HTTP development URL;
 #   do not weaken application TLS settings.
@@ -191,9 +193,12 @@ Content-Type: application/json
 DELETE {{baseUrl}}/api/users/<other-admin-id>
 Authorization: Bearer {{adminToken}}
 
-### User attempts to delete own account — EXPECTED: 403
-DELETE {{baseUrl}}/api/users/<landlord-user-id>
-Authorization: Bearer {{landlordToken}}
+### Admin attempts to delete own account — EXPECTED: 403
+# Self-management protection lives in UserService.EnsureCallerCanManage. A Landlord
+# token is rejected earlier by the class-level [Authorize(Roles=Admin,SuperAdmin)]
+# (also 403), so exercise this rule with an Admin/SuperAdmin token and its own id.
+DELETE {{baseUrl}}/api/users/{{adminId}}
+Authorization: Bearer {{adminToken}}
 
 ### SuperAdmin deletes disposable Admin fixture — EXPECTED: 204
 # Requires a disposable Admin created during this test run; otherwise BLOCKED.
@@ -271,23 +276,33 @@ GET {{baseUrl}}/api/auth/me
 Authorization: Bearer <role-changed-user-old-token>
 
 ### Auth registration with extra protected fields — EXPECTED: 200
-# Extra fields must not set IsApproved, IsDeleted, ApprovedById, ApprovedAt,
-# PasswordHash, or elevate the role. Registration role remains Landlord only.
+# Use roleId 2 (Investor) because a Landlord is approved by default and cannot
+# demonstrate that the rejected isApproved field had no effect. Extra fields must not
+# set IsApproved, IsDeleted, ApprovedById, ApprovedAt, or PasswordHash, and must not
+# elevate the role.
 POST {{baseUrl}}/api/auth/register
 Content-Type: application/json
 
 {
-  "fullName": "Extra Field Landlord",
+  "fullName": "Extra Field Investor",
   "email": "step3-extra-fields@example.test",
   "phone": "0700003106",
-  "password": "{{landlordPassword}}",
-  "roleId": 1,
+  "password": "{{investorPassword}}",
+  "roleId": 2,
+  "companyName": "Extra Field Co",
+  "companyRegistrationNumber": "STEP3-EXTRA-01",
   "isApproved": true,
   "isDeleted": true,
   "approvedById": 4,
   "approvedAt": "2030-01-01T00:00:00Z",
   "passwordHash": "not-a-hash"
 }
+
+### Verify mass assignment had no effect — EXPECTED: 200, role=Investor, isApproved=false
+# Log in with the account from the previous request and call this; a successful login
+# proves isDeleted was ignored, and isApproved must remain false.
+GET {{baseUrl}}/api/auth/me
+Authorization: Bearer <token-from-the-registration-above>
 
 ### Auth registration with Admin role plus protected fields — EXPECTED: 400
 POST {{baseUrl}}/api/auth/register
@@ -303,18 +318,21 @@ Content-Type: application/json
 }
 
 ### Admin create user with protected fields — EXPECTED: 201
-# Requires Admin/SuperAdmin token. Inspect the created response: no PasswordHash
-# or protected fields may be returned.
+# Requires Admin/SuperAdmin token. Use roleId 2 (Investor) so isApproved can be
+# observed as false; a Landlord is approved by default. Inspect the created response:
+# no PasswordHash or protected fields may be returned.
 POST {{baseUrl}}/api/users
 Authorization: Bearer {{superAdminToken}}
 Content-Type: application/json
 
 {
-  "fullName": "Extra Field API User",
+  "fullName": "Extra Field API Investor",
   "email": "step3-extra-user@example.test",
   "phone": "0700003108",
-  "password": "{{landlordPassword}}",
-  "roleId": 1,
+  "password": "{{investorPassword}}",
+  "roleId": 2,
+  "companyName": "Extra Field API Co",
+  "companyRegistrationNumber": "STEP3-API-01",
   "isApproved": true,
   "isDeleted": true,
   "approvedById": 4,
@@ -361,7 +379,11 @@ Content-Type: application/json
   "roleId": 3
 }
 
-### SuperAdmin cannot create SuperAdmin — EXPECTED: 403
+### SuperAdmin create SuperAdmin — EXPECTED: 400
+# CreateUserRequest.RoleId has [Range(1,3)], so roleId 4 fails model validation with
+# 400 before the controller/service role check is reached. The Range attribute is the
+# enforcing control for roleId 4; the 403 "cannot create this role" branch applies to
+# roleId 3 for an Admin caller.
 POST {{baseUrl}}/api/users
 Authorization: Bearer {{superAdminToken}}
 Content-Type: application/json
