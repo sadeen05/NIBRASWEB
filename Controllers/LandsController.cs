@@ -18,23 +18,18 @@ public class LandsController : ControllerBase
     }
 
     [HttpGet]
-    public async Task<ActionResult<List<LandDto>>> GetAll()
+    public async Task<ActionResult<LandListResponse>> GetAll(
+        [FromQuery] int pageNumber = 1,
+        [FromQuery] int pageSize = 20,
+        [FromQuery] string? status = null)
     {
-        var lands = await _landService.GetAllAsync(1, 10);
-        return Ok(lands);
+        return Ok(await _landService.GetAllAsync(pageNumber, pageSize, status));
     }
 
     [HttpGet("{id}")]
     public async Task<ActionResult<LandDto>> GetById(int id)
     {
-        var land = await _landService.GetByIdAsync(id);
-
-        if (land == null)
-        {
-            return NotFound();
-        }
-
-        return Ok(land);
+        return Ok(await _landService.GetByIdAsync(id));
     }
 
     [HttpPost]
@@ -47,50 +42,47 @@ public class LandsController : ControllerBase
     [HttpPut("{id}")]
     public async Task<IActionResult> Update(int id, UpdateLandRequest request)
     {
-        var result = await _landService.UpdateAsync(id, request);
-
-        if (result == false)
-        {
-            return NotFound();
-        }
-
-        return NoContent();
-    }
-
-    [HttpDelete("{id}")]
-    public async Task<IActionResult> Delete(int id)
-    {
-        var result = await _landService.DeleteAsync(id);
-
-        if (result == false)
-        {
-            return NotFound();
-        }
-
+        await _landService.UpdateAsync(id, request);
         return NoContent();
     }
 
     [HttpPost("{id}/submit")]
-    public async Task<IActionResult> Submit(int id, [FromQuery] int landlordId)
+    public async Task<IActionResult> Submit(int id)
     {
-        var result = await _landService.SubmitAsync(id, landlordId);
-        if (!result) return NotFound();
+        await _landService.SubmitAsync(id);
         return Ok(new { message = "Land submitted for verification." });
     }
 
-    [HttpPost("{id}/verify")]
-    public async Task<IActionResult> Verify(int id, [FromQuery] int adminId)
+    [HttpPost("{id}/revise")]
+    public async Task<IActionResult> Revise(int id)
     {
-        var result = await _landService.VerifyAsync(id, adminId);
-        if (!result) return NotFound();
+        await _landService.ReviseAsync(id);
+        return Ok(new { message = "Land returned to Draft." });
+    }
+
+    [HttpPost("{id}/verify")]
+    public async Task<IActionResult> Verify(int id)
+    {
+        await _landService.VerifyAsync(id);
         return Ok(new { message = "Land verified successfully." });
     }
 
     [HttpPost("{id}/reject")]
-    public async Task<IActionResult> Reject(int id, [FromQuery] int adminId, [FromQuery] string reason)
+    public async Task<IActionResult> Reject(int id, [FromQuery] string reason)
     {
-        var result = await _landService.RejectAsync(id, adminId, reason);
-        if (!result) return NotFound();
+        await _landService.RejectAsync(id, reason);
         return Ok(new { message = "Land rejected." });
+    }
+
+    [HttpGet("{id}/eligibility")]
+    public async Task<ActionResult<LandEligibilityResponse>> GetEligibility(int id)
+    {
+        return Ok(await _landService.GetEligibilityAsync(id));
+    }
+
+    [HttpGet("{id}/history")]
+    public async Task<ActionResult<List<LandStatusHistoryDto>>> GetHistory(int id)
+    {
+        return Ok(await _landService.GetAllStatusHistoryAsync(id));
     }
 }

@@ -1,4 +1,3 @@
-using Mapster;
 using Microsoft.EntityFrameworkCore;
 using NIBRAS;
 using NIBRAS.API.DTOs;
@@ -9,277 +8,405 @@ namespace NIBRAS.API.Services;
 
 public class LandService : ILandService
 {
+    private const int MaxPageSize = 50;
     private readonly NebrasdbContext _context;
-    private readonly ILogger<LandService> _logger;
+    private readonly ICurrentUser _currentUser;
 
-    public LandService(NebrasdbContext context, ILogger<LandService> logger)
+    public LandService(NebrasdbContext context, ICurrentUser currentUser)
     {
         _context = context;
-        _logger = logger;
+        _currentUser = currentUser;
     }
 
-    public async Task<List<LandDto>> GetAllAsync(int pageNumber, int pageSize)
+    public async Task<LandListResponse> GetAllAsync(int pageNumber, int pageSize, string? status)
     {
-        if (pageNumber < 1) pageNumber = 1;
-        if (pageSize < 1) pageSize = 10;
-        if (pageSize > 50) pageSize = 50;
+        if (pageNumber < 1)
+            throw new ValidationFailedException("Page number must be at least 1.");
+        if (pageSize < 1 || pageSize > MaxPageSize)
+            throw new ValidationFailedException("Page size must be between 1 and 50.");
 
-        var lands = await _context.Lands
+        var statusFilter = ParseStatus(status);
+
+        var query = _context.Lands
+            .AsNoTracking()
             .Include(l => l.Region)
-            .Include(l => l.Landlord)
-            .Where(l => !l.IsDeleted)
+            .Where(l => !l.IsDeleted);
+        query = await ApplyVisibilityAsync(query);
+
+        if (statusFilter is { } filter)
+            query = query.Where(l => l.Status == filter);
+
+        var totalCount = await query.CountAsync();
+        var lands = await query
+            .OrderBy(l => l.Id)
             .Skip((pageNumber - 1) * pageSize)
             .Take(pageSize)
             .ToListAsync();
 
-        var result = new List<LandDto>();
-        foreach (var land in lands)
-        {
-            result.Add(ToDto(land));
-        }
-
-        return result;
+        var totalPages = (int)Math.Ceiling(totalCount / (double)pageSize);
+        return new LandListResponse(lands.Select(ToDto).ToList(), pageNumber, pageSize, totalCount, totalPages);
     }
 
-    public async Task<LandDto?> GetByIdAsync(int id)
+    public async Task<LandDto> GetByIdAsync(int id)
     {
-        var land = await _context.Lands
-            .Include(l => l.Region)
-            .Include(l => l.Landlord)
-            .FirstOrDefaultAsync(l => l.Id == id && !l.IsDeleted);
-
-        if (land == null) return null;
+        var land = await LoadLandAsync(id);
+        await EnsureCanViewAsync(land);
         return ToDto(land);
     }
 
     public async Task<LandDto> CreateAsync(CreateLandRequest request)
     {
-        var user = await _context.Users.Include(u => u.Role)
-            .FirstOrDefaultAsync(u => u.Id == request.LandlordId && !u.IsDeleted);
-        if (user == null)
-            throw new NotFoundException("User not found.");
-        if (user.Role.Name != "Landlord")
-            throw new NotFoundException("Only landlords can register land.");
+        if (_currentUser.Role != RoleNames.Landlord)
+            throw new ForbiddenException("Only landlords can register land.");
 
-        var exists = await _context.Lands.AnyAsync(l =>
-            l.LandNumber == request.LandNumber && l.RegionId == request.RegionId && !l.IsDeleted);
-        if (exists)
-            throw new BusinessRuleException("Land number already exists in this region.");
+        var userId = RequireUserId();
 
-        var criterion = await _context.LandCriteria
-            .OrderByDescending(c => c.UpdatedAt)
-            .FirstOrDefaultAsync();
+        await EnsureGridBelongsToRegionAsync(request.GridId, request.RegionId);
+        await EnsureNoDuplicateParcelAsync(request.RegionId, request.Village, request.Basin, request.ParcelNumber, null);
 
-        var standardErrors = ValidateRegisterStandards(request, criterion);
-        if (standardErrors.Any())
-            throw new BusinessRuleException($"Land does not meet registration standards: {string.Join(";", standardErrors)}");
-        var grid = await _context.Grids
-            .Include(g => g.GridCapacityReservations)
-            .FirstOrDefaultAsync(g => g.Id == request.GridId);
+        var results = EvaluateEligibility(
+            request.AreaDonum, request.SlopePercentage, request.DistanceToGridKm,
+            request.SolarIrradiance, request.ElevationM, await GetCurrentCriterionAsync());
+        EnsureEligible(results);
 
-        if (grid == null)
-            throw new NotFoundException("Grid not found for this region.");
+        var land = new Land
+        {
+            LandlordId = userId,
+            RegionId = request.RegionId,
+            GridId = request.GridId,
+            LandNumber = request.LandNumber,
+            Village = request.Village,
+            Basin = request.Basin,
+            ParcelNumber = request.ParcelNumber,
+            AreaDonum = request.AreaDonum,
+            SlopePercentage = request.SlopePercentage,
+            DistanceToGridKm = request.DistanceToGridKm,
+            SolarIrradiance = request.SolarIrradiance,
+            ElevationM = request.ElevationM,
+            Status = LandStatus.Draft,
+            DataVerifiedByAdmin = false,
+            IsDeleted = false
+        };
 
-        var totalReservedMw = grid.GridCapacityReservations.Sum(r => r.ReservedMw);
-        if (totalReservedMw >= grid.CapacityMw)
-            throw new BusinessRuleException("No capacity left in this electrical grid.");
-
-        var land = request.Adapt<Land>();
-        land.Status = LandStatus.Draft;
-        land.DataVerifiedByAdmin = false;
-        land.IsDeleted = false;
-        land.GridId = request.GridId;
-
-        _context.Add(land);
+        await using var transaction = await _context.Database.BeginTransactionAsync();
+        _context.Lands.Add(land);
         await _context.SaveChangesAsync();
 
-        await ChangeStatusAsync(land, LandStatus.Draft, request.LandlordId, "Land created as Draft.");
+        _context.LandStatusHistories.Add(NewHistory(land.Id, LandStatus.Draft, userId, "Land created as Draft."));
+        await _context.SaveChangesAsync();
+        await transaction.CommitAsync();
 
-        return ToDto(land);
+        return await ToDtoAsync(land);
     }
 
-    private List<string> ValidateRegisterStandards(CreateLandRequest request, LandCriterion? criterion)
-    {
-        var errors = new List<string>();
-        if (request.AreaDonum <= 0)
-            errors.Add("Land area must be greater than zero.");
-        if (string.IsNullOrWhiteSpace(request.LandNumber))
-            errors.Add("Land number is required.");
-        if (request.RegionId <= 0)
-            errors.Add("A valid RegionId is required.");
-
-        if (criterion != null)
-        {
-            if (criterion.MinAreaDonum.HasValue && request.AreaDonum < criterion.MinAreaDonum.Value)
-                errors.Add($"Land area is less than the minimum required ({criterion.MinAreaDonum} Donums).");
-            if (criterion.MaxSlopePct.HasValue && request.SlopePercentage > criterion.MaxSlopePct.Value)
-                errors.Add($"Land slope exceeds the maximum allowed limit ({criterion.MaxSlopePct}%).");
-            if (criterion.MaxGridDistanceKm.HasValue && request.DistanceToGridKm > criterion.MaxGridDistanceKm.Value)
-                errors.Add($"Land distance to grid exceeds the maximum allowed limit ({criterion.MaxGridDistanceKm} km).");
-        }
-
-        return errors;
-    }
-
-    public async Task<bool> UpdateAsync(int id, UpdateLandRequest request)
+    public async Task UpdateAsync(int id, UpdateLandRequest request)
     {
         var land = await _context.Lands
             .Include(l => l.Contracts)
-            .FirstOrDefaultAsync(l => l.Id == id && !l.IsDeleted);
+            .FirstOrDefaultAsync(l => l.Id == id && !l.IsDeleted)
+            ?? throw new NotFoundException("Land not found.");
 
-        if (land == null) return false;
+        EnsureOwner(land);
+
+        if (land.Status is not (LandStatus.Draft or LandStatus.Rejected))
+            throw new BusinessRuleException("Only lands in Draft or Rejected status can be edited.");
+
         if (land.Contracts.Any(c => c.Status == ContractStatus.Active))
             throw new BusinessRuleException("Cannot edit a land that has an active contract.");
 
+        if (request.RegionId != land.RegionId && request.GridId == land.GridId)
+            throw new ValidationFailedException("Changing the region requires a grid in the new region.");
+
+        await EnsureGridBelongsToRegionAsync(request.GridId, request.RegionId);
+        await EnsureNoDuplicateParcelAsync(request.RegionId, request.Village, request.Basin, request.ParcelNumber, id);
+
+        var results = EvaluateEligibility(
+            request.AreaDonum, request.SlopePercentage, request.DistanceToGridKm,
+            request.SolarIrradiance, request.ElevationM, await GetCurrentCriterionAsync());
+        EnsureEligible(results);
+
+        land.RegionId = request.RegionId;
+        land.GridId = request.GridId;
         land.LandNumber = request.LandNumber;
+        land.Village = request.Village;
+        land.Basin = request.Basin;
+        land.ParcelNumber = request.ParcelNumber;
         land.AreaDonum = request.AreaDonum;
         land.SlopePercentage = request.SlopePercentage;
         land.DistanceToGridKm = request.DistanceToGridKm;
         land.SolarIrradiance = request.SolarIrradiance;
         land.ElevationM = request.ElevationM;
-        land.RegionId = request.RegionId;
 
         await _context.SaveChangesAsync();
-        return true;
     }
 
-    public async Task<bool> DeleteAsync(int id)
+    public async Task SubmitAsync(int id)
     {
-        throw new BusinessRuleException("Direct deletion is not allowed.");
-    }
-
-    public async Task<bool> SubmitAsync(int landId, int landlordId)
-    {
-        var land = await _context.Lands
-            .Include(l => l.LandDocuments)
-            .FirstOrDefaultAsync(l => l.Id == landId && !l.IsDeleted);
-
-        if (land == null)
-            throw new NotFoundException("Land not found.");
-
-        if (land.LandlordId != landlordId)
-            throw new ForbiddenException("You are not the owner of this land.");
+        var land = await LoadLandAsync(id);
+        EnsureOwner(land);
 
         if (land.Status != LandStatus.Draft)
             throw new BusinessRuleException("Only lands in Draft status can be submitted.");
 
-        await ChangeStatusAsync(land, LandStatus.PendingVerification, landlordId, "Submitted for admin verification.");
-        return true;
+        if (string.IsNullOrWhiteSpace(land.Village) ||
+            string.IsNullOrWhiteSpace(land.Basin) ||
+            string.IsNullOrWhiteSpace(land.ParcelNumber))
+            throw new BusinessRuleException("Village, basin and parcel number are required before submission.");
+
+        var hasRequiredDocument = await _context.LandDocuments
+            .AnyAsync(d => d.LandId == id && d.DocumentType.IsRequiredForVerification);
+        if (!hasRequiredDocument)
+            throw new BusinessRuleException("A document of every type required for verification must be uploaded before submission.");
+
+        EnsureEligible(EvaluateEligibility(land, await GetCurrentCriterionAsync()));
+
+        await ChangeStatusAsync(land, LandStatus.PendingVerification, RequireUserId(), "Submitted for admin verification.");
     }
 
-    public async Task<bool> VerifyAsync(int landId, int adminId)
+    public async Task ReviseAsync(int id)
     {
-        var land = await _context.Lands
-            .Include(l => l.LandDocuments)
-            .ThenInclude(ld => ld.DocumentType)
-            .FirstOrDefaultAsync(l => l.Id == landId && !l.IsDeleted);
+        var land = await LoadLandAsync(id);
+        EnsureOwner(land);
 
-        if (land == null)
-            throw new NotFoundException("Land not found.");
+        if (land.Status != LandStatus.Rejected)
+            throw new BusinessRuleException("Only rejected lands can be revised.");
+
+        await ChangeStatusAsync(land, LandStatus.Draft, RequireUserId(), "Revised by owner and returned to Draft.");
+    }
+
+    public async Task VerifyAsync(int id)
+    {
+        var land = await LoadLandAsync(id);
 
         if (land.Status != LandStatus.PendingVerification)
             throw new BusinessRuleException("Land is not pending verification.");
 
-        var hasTitleDeed = land.LandDocuments.Any(d =>
-            d.DocumentType.Name == "TitleDeed" && d.Status == "Approved");
+        var hasTitleDeed = await _context.LandDocuments
+            .AnyAsync(d => d.LandId == id && d.DocumentType.Name == "TitleDeed" && d.Status == DocumentStatuses.Approved);
         if (!hasTitleDeed)
             throw new BusinessRuleException("No approved title deed document found.");
 
-        var criteria = await _context.LandCriteria
-            .OrderByDescending(c => c.UpdatedAt)
-            .FirstOrDefaultAsync();
-        if (criteria == null)
+        var criterion = await GetCurrentCriterionAsync();
+        if (criterion == null)
             throw new BusinessRuleException("No eligibility criteria configured.");
 
-        var eligibility = await CheckEligibilityAsync(landId);
-        if (!eligibility)
-            throw new BusinessRuleException("Land does not meet eligibility criteria.");
+        var failed = EvaluateEligibility(land, criterion).Where(r => r.Result == "Failed").Select(r => r.Criterion).ToList();
+        if (failed.Count > 0)
+            throw new BusinessRuleException("Land does not meet eligibility criteria: " + string.Join(", ", failed) + ".");
 
-        land.VerifiedAgainstCriterionId = criteria.Id;
-
+        land.VerifiedAgainstCriterionId = criterion.Id;
         land.DataVerifiedByAdmin = true;
 
-        await ChangeStatusAsync(land, LandStatus.Verified, adminId, "Verified by admin");
-        return true;
+        await ChangeStatusAsync(land, LandStatus.Verified, RequireUserId(), "Verified by admin");
     }
 
-    public async Task<bool> RejectAsync(int landId, int adminId, string reason)
+    public async Task RejectAsync(int id, string reason)
     {
-        var land = await _context.Lands.FindAsync(landId);
-        if (land == null || land.IsDeleted)
-            throw new NotFoundException("Land not found.");
+        var land = await LoadLandAsync(id);
 
         if (land.Status != LandStatus.PendingVerification)
             throw new BusinessRuleException("Land is not pending verification.");
 
-        await ChangeStatusAsync(land, LandStatus.Rejected, adminId, reason);
-        return true;
+        await ChangeStatusAsync(land, LandStatus.Rejected, RequireUserId(), reason);
     }
 
-    public async Task<bool> CheckEligibilityAsync(int landId)
+    public async Task<LandEligibilityResponse> GetEligibilityAsync(int id)
     {
-        var land = await _context.Lands.FirstOrDefaultAsync(l => l.Id == landId);
-        if (land == null) return false;
+        var land = await LoadLandAsync(id);
+        await EnsureCanViewAsync(land);
 
-        var criteria = await _context.LandCriteria.OrderByDescending(c => c.UpdatedAt).FirstOrDefaultAsync();
-        if (criteria == null) return true;
-
-        if ((criteria.MinAreaDonum.HasValue && land.AreaDonum < criteria.MinAreaDonum.Value) ||
-            (criteria.MaxSlopePct.HasValue && land.SlopePercentage > criteria.MaxSlopePct.Value) ||
-            (criteria.MaxGridDistanceKm.HasValue && land.DistanceToGridKm > criteria.MaxGridDistanceKm.Value) ||
-            (criteria.MinSolarIrradiance.HasValue && land.SolarIrradiance < criteria.MinSolarIrradiance.Value) ||
-            (criteria.MinElevationM.HasValue && land.ElevationM < criteria.MinElevationM.Value))
-        {
-            return false;
-        }
-
-        return true;
+        var criterion = await GetCurrentCriterionAsync();
+        return new LandEligibilityResponse(land.Id, criterion?.Id, EvaluateEligibility(land, criterion));
     }
 
     public async Task<List<LandStatusHistoryDto>> GetAllStatusHistoryAsync(int landId)
     {
+        var land = await LoadLandAsync(landId);
+        if (!IsAdmin && land.LandlordId != RequireUserId())
+            throw new ForbiddenException("You are not allowed to view this land's history.");
+
         var history = await _context.LandStatusHistories
             .Include(h => h.ChangedBy)
             .Where(h => h.LandId == landId)
             .OrderByDescending(h => h.ChangedAt)
             .ToListAsync();
 
-        var result = new List<LandStatusHistoryDto>();
-        foreach (var h in history)
+        return history.Select(h => new LandStatusHistoryDto
         {
-            result.Add(new LandStatusHistoryDto
-            {
-                id = h.Id,
-                LandId = h.LandId,
-                statusName = h.Status.ToString(),
-                ChangeByName = h.ChangedBy.FullName,
-                Reason = h.Reason,
-                ChangedAt = h.ChangedAt ?? DateTime.MinValue
-            });
+            id = h.Id,
+            LandId = h.LandId,
+            statusName = h.Status.ToString(),
+            ChangeByName = h.ChangedBy.FullName,
+            Reason = h.Reason,
+            ChangedAt = h.ChangedAt ?? DateTime.MinValue
+        }).ToList();
+    }
+
+    private bool IsAdmin => _currentUser.Role is RoleNames.Admin or RoleNames.SuperAdmin;
+
+    private int RequireUserId() =>
+        _currentUser.Id ?? throw new ForbiddenException("Authentication is required.");
+
+    private async Task<Land> LoadLandAsync(int id) =>
+        await _context.Lands
+            .Include(l => l.Region)
+            .FirstOrDefaultAsync(l => l.Id == id && !l.IsDeleted)
+        ?? throw new NotFoundException("Land not found.");
+
+    private void EnsureOwner(Land land)
+    {
+        if (land.LandlordId != RequireUserId())
+            throw new ForbiddenException("You are not the owner of this land.");
+    }
+
+    private async Task<bool> IsApprovedInvestorAsync(int userId) =>
+        await _context.Users.AnyAsync(u => u.Id == userId && !u.IsDeleted && u.IsApproved);
+
+    private async Task<IQueryable<Land>> ApplyVisibilityAsync(IQueryable<Land> query)
+    {
+        var userId = RequireUserId();
+        switch (_currentUser.Role)
+        {
+            case RoleNames.Admin:
+            case RoleNames.SuperAdmin:
+                return query;
+            case RoleNames.Landlord:
+                return query.Where(l => l.LandlordId == userId);
+            case RoleNames.Investor:
+                if (!await IsApprovedInvestorAsync(userId))
+                    throw new ForbiddenException("Investor account is not approved.");
+                return query.Where(l => l.Status == LandStatus.Verified);
+            default:
+                throw new ForbiddenException("Your role cannot browse lands.");
         }
-        return result;
+    }
+
+    private async Task EnsureCanViewAsync(Land land)
+    {
+        var userId = RequireUserId();
+        switch (_currentUser.Role)
+        {
+            case RoleNames.Admin:
+            case RoleNames.SuperAdmin:
+                return;
+            case RoleNames.Landlord when land.LandlordId == userId:
+                return;
+            case RoleNames.Investor when land.Status == LandStatus.Verified && await IsApprovedInvestorAsync(userId):
+                return;
+        }
+        throw new ForbiddenException("You are not allowed to view this land.");
+    }
+
+    private async Task EnsureGridBelongsToRegionAsync(int gridId, int regionId)
+    {
+        var grid = await _context.Grids.FirstOrDefaultAsync(g => g.Id == gridId);
+        if (grid == null || grid.RegionId != regionId)
+            throw new ValidationFailedException("Grid must exist and belong to the selected region.");
+    }
+
+    private async Task EnsureNoDuplicateParcelAsync(int regionId, string village, string basin, string parcelNumber, int? excludeLandId)
+    {
+        var exists = await _context.Lands.AnyAsync(l =>
+            !l.IsDeleted &&
+            l.RegionId == regionId &&
+            l.Village == village &&
+            l.Basin == basin &&
+            l.ParcelNumber == parcelNumber &&
+            (excludeLandId == null || l.Id != excludeLandId));
+
+        if (exists)
+            throw new BusinessRuleException("A land with the same region, village, basin and parcel number already exists.");
+    }
+
+    private async Task<LandCriterion?> GetCurrentCriterionAsync() =>
+        await _context.LandCriteria
+            .OrderByDescending(c => c.UpdatedAt)
+            .ThenByDescending(c => c.Id)
+            .FirstOrDefaultAsync();
+
+    private static IReadOnlyList<LandCriterionResult> EvaluateEligibility(Land land, LandCriterion? criterion) =>
+        EvaluateEligibility(land.AreaDonum, land.SlopePercentage, land.DistanceToGridKm,
+            land.SolarIrradiance, land.ElevationM, criterion);
+
+    private static IReadOnlyList<LandCriterionResult> EvaluateEligibility(
+        decimal area, decimal slope, decimal gridDistance, decimal solarIrradiance, decimal elevation,
+        LandCriterion? criterion) =>
+    [
+        EvaluateCriterion("area", criterion?.MinAreaDonum, area, isMinimum: true),
+        EvaluateCriterion("slope", criterion?.MaxSlopePct, slope, isMinimum: false),
+        EvaluateCriterion("gridDistance", criterion?.MaxGridDistanceKm, gridDistance, isMinimum: false),
+        EvaluateCriterion("solarIrradiance", criterion?.MinSolarIrradiance, solarIrradiance, isMinimum: true),
+        EvaluateCriterion("elevation", criterion?.MinElevationM, elevation, isMinimum: true)
+    ];
+
+    private static LandCriterionResult EvaluateCriterion(string criterion, decimal? required, decimal actual, bool isMinimum)
+    {
+        if (required is null)
+            return new LandCriterionResult(criterion, null, actual, "NotEnforced");
+
+        var passed = isMinimum ? actual >= required.Value : actual <= required.Value;
+        return new LandCriterionResult(criterion, required, actual, passed ? "Passed" : "Failed");
+    }
+
+    private static void EnsureEligible(IEnumerable<LandCriterionResult> results)
+    {
+        var failed = results.Where(r => r.Result == "Failed").Select(r => r.Criterion).ToList();
+        if (failed.Count > 0)
+            throw new ValidationFailedException("Land does not meet eligibility criteria: " + string.Join(", ", failed) + ".");
     }
 
     private async Task ChangeStatusAsync(Land land, LandStatus newStatus, int changedById, string? reason)
     {
         land.Status = newStatus;
-
-        _context.LandStatusHistories.Add(new LandStatusHistory
-        {
-            LandId = land.Id,
-            Status = newStatus,
-            ChangedById = changedById,
-            Reason = reason,
-            ChangedAt = DateTime.UtcNow
-        });
-
+        _context.LandStatusHistories.Add(NewHistory(land.Id, newStatus, changedById, reason));
         await _context.SaveChangesAsync();
     }
 
-    private static LandDto ToDto(Land land)
+    private static LandStatusHistory NewHistory(int landId, LandStatus status, int changedById, string? reason) =>
+        new()
+        {
+            LandId = landId,
+            Status = status,
+            ChangedById = changedById,
+            Reason = reason,
+            ChangedAt = DateTime.UtcNow
+        };
+
+    private static LandDto ToDto(Land land) => new()
     {
-        var dto = land.Adapt<LandDto>();
-        dto.Status = land.Status.ToString();
-        return dto;
+        Id = land.Id,
+        LandlordId = land.LandlordId,
+        RegionId = land.RegionId,
+        RegionName = land.Region.NameEn,
+        GridId = land.GridId,
+        LandNumber = land.LandNumber,
+        Village = land.Village,
+        Basin = land.Basin,
+        ParcelNumber = land.ParcelNumber,
+        AreaDonum = land.AreaDonum,
+        SlopePercentage = land.SlopePercentage,
+        DistanceToGridKm = land.DistanceToGridKm,
+        SolarIrradiance = land.SolarIrradiance,
+        ElevationM = land.ElevationM,
+        Status = land.Status.ToString(),
+        DataVerifiedByAdmin = land.DataVerifiedByAdmin,
+        VerifiedAgainstCriterionId = land.VerifiedAgainstCriterionId
+    };
+
+    private async Task<LandDto> ToDtoAsync(Land land)
+    {
+        await _context.Entry(land).Reference(l => l.Region).LoadAsync();
+        return ToDto(land);
+    }
+
+    private static LandStatus? ParseStatus(string? status)
+    {
+        if (string.IsNullOrWhiteSpace(status))
+            return null;
+
+        if (!Enum.TryParse<LandStatus>(status, ignoreCase: false, out var parsed) || parsed.ToString() != status)
+            throw new ValidationFailedException("Status must be the name of a land status.");
+
+        return parsed;
     }
 }
