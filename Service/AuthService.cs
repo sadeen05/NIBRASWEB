@@ -36,8 +36,9 @@ public sealed class AuthService : IAuthService
             throw new ValidationFailedException("Investor company details are required.");
         }
 
-        if (await _context.Users.AnyAsync(u =>
-                (u.Email == request.Email || u.Phone == request.Phone)))
+        if (await _context.Users
+                .IgnoreQueryFilters()
+                .AnyAsync(u => (u.Email == request.Email || u.Phone == request.Phone)))
         {
             throw new DuplicateRegistrationException();
         }

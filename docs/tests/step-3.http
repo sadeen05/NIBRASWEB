@@ -26,6 +26,18 @@
 #   certificate is trusted by the HTTP client. Otherwise use this HTTP development URL;
 #   do not weaken application TLS settings.
 
+# F7 execution status (run against NEBRASDB_Step1 in Development, RateLimit__AuthPerMinute=5):
+#   PASS     executed; the actual status matched the expectation below it
+#   BLOCKED  not executed. NEBRASDB_Step1 has no Admin or Investor rows and its only
+#            SuperAdmin does not match the configured test credentials, so every request
+#            that needs an Admin/SuperAdmin token is unverified. Those expectations are
+#            documented targets, not results.
+#   NOT RUN  outside the F7 scope; documented but unverified
+# PASS equivalents (same endpoint and expectation, executed with disposable s3f-* emails
+# instead of the literal fixture emails in this file): register Landlord (200), login
+# Landlord (200), unknown email vs wrong password (401, identical bodies), Landlord
+# GET /api/users (403), and register with a soft-deleted user's email (409).
+
 ### Register Landlord — EXPECTED: 200
 POST {{baseUrl}}/api/auth/register
 Content-Type: application/json

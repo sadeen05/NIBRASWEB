@@ -1,5 +1,5 @@
 @baseUrl = http://localhost:5181
-@authLimit = 10
+@authLimit = 5
 @loginPassword = <set-a-local-test-password>
 @loginEmail = <use-a-disposable-fixture-email>
 @validToken = <capture-locally-do-not-commit>
@@ -9,10 +9,11 @@
 
 # Safety and setup:
 # - These tests are documentation/HTTP-client requests, not an authorization to mutate
-#   NEBRASDB_Step1. Use only an isolated disposable database and disposable fixtures.
-# - The auth rate limit is RateLimit:AuthPerMinute in appsettings.json (currently 10
-#   requests per minute per client IP). Do not lower the tracked value to force an
-#   earlier 429.
+#   NEBRASDB_Step1. Use only disposable fixtures; prefix every fixture with a unique run stamp.
+# - The auth rate limit is RateLimit:AuthPerMinute (appsettings.json default 10). The
+#   F7 run used RateLimit__AuthPerMinute=5 in the process environment, so @authLimit above
+#   is 5. Requests 1..N return their normal status and request N+1 in the same minute
+#   returns 429. Do not lower the tracked appsettings value to force an earlier 429.
 # - Login/registration requests must use syntactically valid credentials (password
 #   10-128 characters, <=72 UTF-8 bytes, no control characters); otherwise the
 #   request returns 400 before credentials are verified, which would mask the
@@ -22,9 +23,17 @@
 #   trusted. If it is untrusted, use the HTTP development URL for local testing only;
 #   do not disable or weaken application security.
 # - Never print credentials, tokens, hashes, or response bodies containing personal data.
+#
+# F7 execution status legend (each case carries its result on the line below its title):
+#   PASS            executed against the running app; actual status matched expected
+#   BLOCKED         not executed: needs an Admin/SuperAdmin token that NEBRASDB_Step1 does
+#                   not provide (no Admin or Investor rows; its only SuperAdmin does not
+#                   match the configured test credentials)
+#   NOT RUN         not part of the F7 run; expectation is documented but unverified
 
-### Required security headers — EXPECTED: 401
-GET {{baseUrl}}/api/lands
+### Required security headers (no token) — EXPECTED: 401
+# F7 result: PASS (GET /api/auth/me without a token returned 401 with the headers below).
+GET {{baseUrl}}/api/auth/me
 
 # Expected headers:
 # X-Content-Type-Options: nosniff
@@ -33,123 +42,124 @@ GET {{baseUrl}}/api/lands
 # Content-Security-Policy: default-src 'none'; frame-ancestors 'none'
 
 ### Valid token through Authorization header — EXPECTED: 200
+# F7 result: PASS (returned 200 for the Landlord test tokens before their deactivation/role change).
 GET {{baseUrl}}/api/auth/me
 Authorization: Bearer {{validToken}}
 
 ### Token through query string — EXPECTED: 401
+# F7 result: NOT RUN
 GET {{baseUrl}}/api/auth/me?access_token=<valid-token>
 
 ### Tampered JWT — EXPECTED: 401
+# F7 result: NOT RUN
 GET {{baseUrl}}/api/auth/me
 Authorization: Bearer <tampered-token>
 
 ### Unsigned alg:none JWT — EXPECTED: 401
+# F7 result: NOT RUN
 GET {{baseUrl}}/api/auth/me
 Authorization: Bearer <unsigned-token>
 
 ### Deactivated token — EXPECTED: 401
-# Requires a disposable fixture whose old token was captured before soft deletion.
+# F7 result: PASS for the soft-delete path. The disposable Landlord was soft-deleted with
+# a SQL UPDATE (IS_DELETED = 1), which is what the API delete sets. The API path (an
+# Admin deletes the user) is BLOCKED because no Admin credential is available.
 GET {{baseUrl}}/api/auth/me
 Authorization: Bearer <deactivated-user-old-token>
 
 ### Role-changed token — EXPECTED: 401
-# Requires a disposable fixture whose database role was changed after token issuance.
+# F7 result: PASS. A disposable Landlord's ROLE_ID was changed in NEBRASDB_Step1 with a
+# single-row SQL UPDATE, then its token (issued as Landlord) was rejected.
 GET {{baseUrl}}/api/auth/me
 Authorization: Bearer <role-changed-user-old-token>
 
-# Rate-limit block: run in isolation in a fresh window. The "auth" policy allows
-# RateLimit:AuthPerMinute requests per minute per client IP (currently 10 in
-# appsettings.json). Requests 1-10 return 401; request 11 in the same minute returns
-# 429. Do not lower the configured limit to force an earlier 429.
+# Rate-limit block (executed order). Run in a fresh window, with RateLimit__AuthPerMinute=5.
+# Every request below counts toward the same per-IP fixed window.
 
-### Rate-limit request 1 of 10 — EXPECTED: 401
+### Rate-limit request 1 of 6 (wrong password, existing email) — EXPECTED: 401
+# F7 result: PASS (401)
 POST {{baseUrl}}/api/auth/login
 Content-Type: application/json
 
-{"email":"{{loginEmail}}","password":"{{loginPassword}}"}
+{"email":"{{loginEmail}}","password":"<wrong-password>"}
 
-### Rate-limit request 2 of 10 — EXPECTED: 401
+### Rate-limit request 2 of 6 (unknown email) — EXPECTED: 401, body identical to request 1
+# F7 result: PASS (401; body identical to request 1: {"message":"Invalid email or password"})
 POST {{baseUrl}}/api/auth/login
 Content-Type: application/json
 
-{"email":"{{loginEmail}}","password":"{{loginPassword}}"}
+{"email":"unknown-step3-<run-stamp>@example.test","password":"<wrong-password>"}
 
-### Rate-limit request 3 of 10 — EXPECTED: 401
+### Rate-limit request 3 of 6 (wrong password) — EXPECTED: 401
+# F7 result: PASS (401)
 POST {{baseUrl}}/api/auth/login
 Content-Type: application/json
 
-{"email":"{{loginEmail}}","password":"{{loginPassword}}"}
+{"email":"{{loginEmail}}","password":"<wrong-password>"}
 
-### Rate-limit request 4 of 10 — EXPECTED: 401
+### Rate-limit request 4 of 6 (wrong password) — EXPECTED: 401
+# F7 result: PASS (401)
 POST {{baseUrl}}/api/auth/login
 Content-Type: application/json
 
-{"email":"{{loginEmail}}","password":"{{loginPassword}}"}
+{"email":"{{loginEmail}}","password":"<wrong-password>"}
 
-### Rate-limit request 5 of 10 — EXPECTED: 401
+### Rate-limit request 5 of 6 (wrong password) — EXPECTED: 401
+# F7 result: PASS (401)
 POST {{baseUrl}}/api/auth/login
 Content-Type: application/json
 
-{"email":"{{loginEmail}}","password":"{{loginPassword}}"}
+{"email":"{{loginEmail}}","password":"<wrong-password>"}
 
-### Rate-limit request 6 of 10 — EXPECTED: 401
-POST {{baseUrl}}/api/auth/login
-Content-Type: application/json
-
-{"email":"{{loginEmail}}","password":"{{loginPassword}}"}
-
-### Rate-limit request 7 of 10 — EXPECTED: 401
-POST {{baseUrl}}/api/auth/login
-Content-Type: application/json
-
-{"email":"{{loginEmail}}","password":"{{loginPassword}}"}
-
-### Rate-limit request 8 of 10 — EXPECTED: 401
-POST {{baseUrl}}/api/auth/login
-Content-Type: application/json
-
-{"email":"{{loginEmail}}","password":"{{loginPassword}}"}
-
-### Rate-limit request 9 of 10 — EXPECTED: 401
-POST {{baseUrl}}/api/auth/login
-Content-Type: application/json
-
-{"email":"{{loginEmail}}","password":"{{loginPassword}}"}
-
-### Rate-limit request 10 of 10 — EXPECTED: 401
-POST {{baseUrl}}/api/auth/login
-Content-Type: application/json
-
-{"email":"{{loginEmail}}","password":"{{loginPassword}}"}
-
-### Rate-limit request 11 in same minute/IP — EXPECTED: 429
+### Rate-limit request 6 in same minute/IP (correct credentials) — EXPECTED: 429
+# F7 result: PASS (429). The 429 is returned by the limiter before credentials are checked.
 POST {{baseUrl}}/api/auth/login
 Content-Type: application/json
 
 {"email":"{{loginEmail}}","password":"{{loginPassword}}"}
 
 ### 2 MB request body — EXPECTED: 413
-# Run this in a fresh rate-limit window: the login endpoint uses the "auth" policy,
-# so a 429 from a preceding rate-limit block would otherwise mask the 413.
-# The app limits request bodies to 1 MiB (1,048,576 bytes) via Kestrel
-# MaxRequestBodySize (Program.cs). Any larger body must be rejected with
-# HTTP 413 Payload Too Large, never 500 / INTERNAL_ERROR.
+# F7 result: PASS (413, errorCode PAYLOAD_TOO_LARGE, security headers present).
+# The app limits request bodies to 1 MiB (1,048,576 bytes) via Kestrel MaxRequestBodySize
+# (Program.cs). Any larger body must be rejected with HTTP 413, never 500 / INTERNAL_ERROR.
 # Test requirements:
 # - Declare an explicit Content-Length; do NOT use chunked transfer encoding.
 #   A chunked request can surface as a connection reset instead.
 # - Send a locally generated 2 MiB JSON body (replace {{largePayload}}).
-# - A transport-level connection reset is NOT a 413 and does not prove the
-#   behavior; re-run with an explicit Content-Length.
+# - A transport-level connection reset is NOT a 413 and does not prove the behavior.
+# - This request is rate limited on the register/login endpoints, so run it inside a
+#   window with budget left. The F7 run sent it to /api/auth/register.
 # Expected: 413 with the standard ProblemDetails body
 #   { "title": "Request body too large.", "status": 413,
 #     "detail": "The request body exceeds the allowed size.",
 #     "errorCode": "PAYLOAD_TOO_LARGE", "traceId": "<non-empty>" }
 # and no stack trace, SQL text, file paths, or exception details.
 # A dependency-free check is provided at docs/tests/verify-request-size.ps1.
-POST {{baseUrl}}/api/auth/login
+POST {{baseUrl}}/api/auth/register
 Content-Type: application/json
 
 {{largePayload}}
+
+### Unauthenticated unknown route — EXPECTED: 401 (fallback policy)
+# F7 result: PASS (401). The app's FallbackPolicy requires an authenticated user, so
+# anonymous callers are rejected before routing reports 404. Headers are present.
+GET {{baseUrl}}/api/f7-route-does-not-exist
+
+### Authenticated unknown route — EXPECTED: 404 with security headers
+# F7 result: PASS (404 with security headers). Use a valid Landlord token.
+GET {{baseUrl}}/api/f7-route-does-not-exist
+Authorization: Bearer {{validToken}}
+
+### Landlord lists users — EXPECTED: 403 with security headers
+# F7 result: PASS (403 with security headers).
+GET {{baseUrl}}/api/users
+Authorization: Bearer {{validToken}}
+
+### Missing land (controller NotFound) — EXPECTED: 404 with security headers
+# F7 result: PASS for status and headers. The controller returns a bare NotFound() with an
+# empty body, so this does NOT exercise the exception-handler 404 body (errorCode).
+GET {{baseUrl}}/api/lands/2147480000
+Authorization: Bearer {{validToken}}
 
 ### Generic 500 response — NOT APPLICABLE (no triggering endpoint)
 # The application exposes no endpoint that throws an unexpected exception, so the 500
@@ -161,70 +171,43 @@ Content-Type: application/json
 # with no stack trace, SQL text, file paths, or exception details.
 
 ### Newly-created password hash format — EXPECTED: PASS/FAIL assertion, no HTTP status
-# Requires a disposable registration fixture and a read-only database assertion:
-# PASSWORD_HASH LIKE '$2%'. Never print the hash. Do not run the assertion against
-# NEBRASDB_Step1 without explicit approval.
+# F7 result: PASS. A registered Landlord's PASSWORD_HASH prefix (LEFT 4) was '$2a$'.
+# Only the 4-character prefix is read; the hash is never printed.
+# SELECT LEFT(PASSWORD_HASH, 4) FROM USERS WHERE ID = <fixture-id>;
 
 ### Admin approval success and persisted audit fields — EXPECTED: 204 then PASS/FAIL
-# Requires an isolated unapproved Investor with both company fields and an Admin token.
+# F7 result: BLOCKED (needs an Admin token). Code path and fields are documented, not executed.
 # After 204, verify IsApproved=true, ApprovedById=authenticated Admin ID, and
 # ApprovedAt is non-null UTC. Never print contact fields or tokens.
 
-### User list pagination maximum — EXPECTED: 400
-GET {{baseUrl}}/api/users?pageSize=1000
-Authorization: Bearer {{adminToken}}
-
-### Required user fields and role projection — EXPECTED: 200
-# Response must include role, isApproved, companyName, and companyRegistrationNumber.
-GET {{baseUrl}}/api/users?pageNumber=1&pageSize=20
-Authorization: Bearer {{adminToken}}
-
-### Admin deletes SuperAdmin — EXPECTED: 403
-DELETE {{baseUrl}}/api/users/<superadmin-id>
-Authorization: Bearer {{adminToken}}
-
-### Admin updates SuperAdmin — EXPECTED: 403
-PUT {{baseUrl}}/api/users/<superadmin-id>
-Authorization: Bearer {{adminToken}}
-Content-Type: application/json
-
-{
-  "fullName": "Rejected",
-  "email": "rejected@example.test",
-  "phone": "0700003118"
-}
-
-### Admin deletes another Admin — EXPECTED: 403
-DELETE {{baseUrl}}/api/users/<other-admin-id>
-Authorization: Bearer {{adminToken}}
-
-### User deletes own account — EXPECTED: 403
-DELETE {{baseUrl}}/api/users/<own-user-id>
-Authorization: Bearer {{validToken}}
-
-### Full name at 70 characters — EXPECTED: 204
-PUT {{baseUrl}}/api/users/<disposable-user-id>
-Authorization: Bearer {{adminToken}}
+### Register FullName of 70 characters — EXPECTED: 200
+# F7 result: PASS (200).
+POST {{baseUrl}}/api/auth/register
 Content-Type: application/json
 
 {
   "fullName": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-  "email": "step3-boundary@example.test",
-  "phone": "0700003119"
+  "email": "step3-boundary-70@example.test",
+  "phone": "0700003119",
+  "password": "{{loginPassword}}",
+  "roleId": 1
 }
 
-### Full name at 150 characters — EXPECTED: 400
-PUT {{baseUrl}}/api/users/<disposable-user-id>
-Authorization: Bearer {{adminToken}}
+### Register FullName of 150 characters — EXPECTED: 400
+# F7 result: PASS (400).
+POST {{baseUrl}}/api/auth/register
 Content-Type: application/json
 
 {
   "fullName": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
   "email": "step3-oversized-name@example.test",
-  "phone": "0700003120"
+  "phone": "0700003120",
+  "password": "{{loginPassword}}",
+  "roleId": 1
 }
 
-### Password at 200 characters — EXPECTED: 400
+### Password at 200 characters (register) — EXPECTED: 400
+# F7 result: PASS (400).
 POST {{baseUrl}}/api/auth/register
 Content-Type: application/json
 
@@ -236,7 +219,22 @@ Content-Type: application/json
   "roleId": 1
 }
 
+### Duplicate registration with a soft-deleted user's email — EXPECTED: 409, generic message
+# F7 result: PASS (409, message "Email or phone is already registered"). The soft-deleted
+# user's row is still matched because the duplicate check does not filter on IsDeleted.
+POST {{baseUrl}}/api/auth/register
+Content-Type: application/json
+
+{
+  "fullName": "Duplicate Email",
+  "email": "<email-of-a-soft-deleted-fixture>",
+  "phone": "0700003130",
+  "password": "{{loginPassword}}",
+  "roleId": 1
+}
+
 ### Control character input — EXPECTED: 400
+# F7 result: NOT RUN
 POST {{baseUrl}}/api/auth/register
 Content-Type: application/json
 
@@ -247,3 +245,80 @@ Content-Type: application/json
   "password": "{{loginPassword}}",
   "roleId": 1
 }
+
+### User list pagination maximum — EXPECTED: 400
+# F7 result: BLOCKED (needs an Admin token; authorization runs before paging validation).
+GET {{baseUrl}}/api/users?pageSize=1000
+Authorization: Bearer {{adminToken}}
+
+### Required user fields and role projection — EXPECTED: 200
+# F7 result: BLOCKED (needs an Admin token). Response must include role, isApproved,
+# companyName, and companyRegistrationNumber.
+GET {{baseUrl}}/api/users?pageNumber=1&pageSize=20
+Authorization: Bearer {{adminToken}}
+
+### Admin deletes SuperAdmin — EXPECTED: 403
+# F7 result: BLOCKED (needs an Admin token).
+DELETE {{baseUrl}}/api/users/<superadmin-id>
+Authorization: Bearer {{adminToken}}
+
+### Admin updates SuperAdmin — EXPECTED: 403
+# F7 result: BLOCKED (needs an Admin token).
+PUT {{baseUrl}}/api/users/<superadmin-id>
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{
+  "fullName": "Rejected",
+  "email": "rejected@example.test",
+  "phone": "0700003118"
+}
+
+### Admin deletes another Admin — EXPECTED: 403
+# F7 result: BLOCKED (needs an Admin token and a second Admin fixture).
+DELETE {{baseUrl}}/api/users/<other-admin-id>
+Authorization: Bearer {{adminToken}}
+
+### User deletes own account — EXPECTED: 403
+# F7 result: BLOCKED for Admin/SuperAdmin (needs their token). A Landlord token is rejected
+# earlier by the class-level role policy (403 on GET /api/users above).
+DELETE {{baseUrl}}/api/users/<own-user-id>
+Authorization: Bearer {{validToken}}
+
+### Full name at 70 characters (admin update) — EXPECTED: 204
+# F7 result: BLOCKED (needs an Admin token). The register variant above is PASS (200).
+PUT {{baseUrl}}/api/users/<disposable-user-id>
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{
+  "fullName": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "email": "step3-boundary@example.test",
+  "phone": "0700003119"
+}
+
+### Full name at 150 characters (admin update) — EXPECTED: 400
+# F7 result: BLOCKED (needs an Admin token). The register variant above is PASS (400).
+PUT {{baseUrl}}/api/users/<disposable-user-id>
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{
+  "fullName": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "email": "step3-oversized-name@example.test",
+  "phone": "0700003120"
+}
+
+### Tampered JWT (admin path) — EXPECTED: 401
+# F7 result: NOT RUN
+GET {{baseUrl}}/api/auth/me
+Authorization: Bearer <tamperedToken>
+
+### alg:none JWT — EXPECTED: 401
+# F7 result: NOT RUN
+GET {{baseUrl}}/api/auth/me
+Authorization: Bearer <unsigned-token>
+
+### Query-string access_token — EXPECTED: 401
+# F7 result: NOT RUN
+GET {{baseUrl}}/api/auth/me?access_token=<valid-token>

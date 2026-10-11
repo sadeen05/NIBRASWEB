@@ -41,23 +41,14 @@ public class UserService : IUserService
 
         var totalCount = await query.CountAsync();
         var users = await query
+            .Include(u => u.Role)
             .OrderBy(u => u.Id)
             .Skip((pageNumber - 1) * pageSize)
             .Take(pageSize)
-            .Select(u => new UserDto(
-                u.Id,
-                u.FullName,
-                u.Email,
-                u.Phone,
-                u.Role.Name,
-                u.CreatedAt,
-                u.IsApproved,
-                u.CompanyName,
-                u.CompanyRegistrationNumber))
             .ToListAsync();
 
         return new UserListResponse(
-            users,
+            users.Select(ToDto).ToList(),
             pageNumber,
             pageSize,
             totalCount,
