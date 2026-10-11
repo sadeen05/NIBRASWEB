@@ -5,6 +5,7 @@
 @validToken = <capture-locally-do-not-commit>
 @adminToken = <capture-locally-do-not-commit>
 @largePayload = <generate-a-2-MB-json-body-locally>
+@password200Characters = <generate-exactly-200-characters-locally>
 
 # Safety and setup:
 # - These tests are documentation/HTTP-client requests, not an authorization to mutate
@@ -134,3 +135,81 @@ GET {{baseUrl}}/api/test/unexpected-error
 # Requires an isolated unapproved Investor with both company fields and an Admin token.
 # After 204, verify IsApproved=true, ApprovedById=authenticated Admin ID, and
 # ApprovedAt is non-null UTC. Never print contact fields or tokens.
+
+### User list pagination maximum — EXPECTED: 400
+GET {{baseUrl}}/api/users?pageSize=1000
+Authorization: Bearer {{adminToken}}
+
+### Required user fields and role projection — EXPECTED: 200
+# Response must include role, isApproved, companyName, and companyRegistrationNumber.
+GET {{baseUrl}}/api/users?pageNumber=1&pageSize=20
+Authorization: Bearer {{adminToken}}
+
+### Admin deletes SuperAdmin — EXPECTED: 403
+DELETE {{baseUrl}}/api/users/<superadmin-id>
+Authorization: Bearer {{adminToken}}
+
+### Admin updates SuperAdmin — EXPECTED: 403
+PUT {{baseUrl}}/api/users/<superadmin-id>
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{
+  "fullName": "Rejected",
+  "email": "rejected@example.test",
+  "phone": "0700003118"
+}
+
+### Admin deletes another Admin — EXPECTED: 403
+DELETE {{baseUrl}}/api/users/<other-admin-id>
+Authorization: Bearer {{adminToken}}
+
+### User deletes own account — EXPECTED: 403
+DELETE {{baseUrl}}/api/users/<own-user-id>
+Authorization: Bearer {{validToken}}
+
+### Full name at 70 characters — EXPECTED: 204
+PUT {{baseUrl}}/api/users/<disposable-user-id>
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{
+  "fullName": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "email": "step3-boundary@example.test",
+  "phone": "0700003119"
+}
+
+### Full name at 150 characters — EXPECTED: 400
+PUT {{baseUrl}}/api/users/<disposable-user-id>
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{
+  "fullName": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "email": "step3-oversized-name@example.test",
+  "phone": "0700003120"
+}
+
+### Password at 200 characters — EXPECTED: 400
+POST {{baseUrl}}/api/auth/register
+Content-Type: application/json
+
+{
+  "fullName": "Oversized Password",
+  "email": "step3-200-password@example.test",
+  "phone": "0700003121",
+  "password": "{{password200Characters}}",
+  "roleId": 1
+}
+
+### Control character input — EXPECTED: 400
+POST {{baseUrl}}/api/auth/register
+Content-Type: application/json
+
+{
+  "fullName": "Bad\u0001Name",
+  "email": "step3-control@example.test",
+  "phone": "0700003122",
+  "password": "{{loginPassword}}",
+  "roleId": 1
+}

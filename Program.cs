@@ -38,6 +38,7 @@ if (jwtKeyBytes.Length < 32)
 builder.Services.AddControllers();
 builder.Services.AddRateLimiter(options =>
 {
+    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
     options.AddPolicy("auth", httpContext =>
         RateLimitPartition.GetFixedWindowLimiter(
             httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
@@ -151,22 +152,27 @@ if (app.Environment.IsDevelopment())
     await SuperAdminSeeder.SeedAsync(app.Services, app.Configuration, app.Environment);
 }
 
-app.UseExceptionHandler();
 app.Use(async (context, next) =>
 {
-    context.Response.Headers["X-Content-Type-Options"] = "nosniff";
-    context.Response.Headers["X-Frame-Options"] = "DENY";
-    context.Response.Headers["Referrer-Policy"] = "no-referrer";
+    context.Response.OnStarting(() =>
+    {
+        context.Response.Headers["X-Content-Type-Options"] = "nosniff";
+        context.Response.Headers["X-Frame-Options"] = "DENY";
+        context.Response.Headers["Referrer-Policy"] = "no-referrer";
 
-    var isSwaggerUi = context.Request.Path == "/swagger" ||
-                      context.Request.Path.StartsWithSegments("/swagger/index.html");
-    context.Response.Headers["Content-Security-Policy"] =
-        app.Environment.IsDevelopment() && isSwaggerUi
-            ? "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-ancestors 'none'"
-            : "default-src 'none'; frame-ancestors 'none'";
+        var isSwaggerUi = context.Request.Path == "/swagger" ||
+                          context.Request.Path.StartsWithSegments("/swagger/index.html");
+        context.Response.Headers["Content-Security-Policy"] =
+            app.Environment.IsDevelopment() && isSwaggerUi
+                ? "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-ancestors 'none'"
+                : "default-src 'none'; frame-ancestors 'none'";
+
+        return Task.CompletedTask;
+    });
 
     await next();
 });
+app.UseExceptionHandler();
 
 if (app.Environment.IsDevelopment())
 {

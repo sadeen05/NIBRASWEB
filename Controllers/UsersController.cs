@@ -21,9 +21,13 @@ public class UsersController : ControllerBase
     }
 
     [HttpGet]
-    public async Task<ActionResult<List<UserDto>>> GetAll()
+    public async Task<ActionResult<UserListResponse>> GetAll(
+        [FromQuery] int pageNumber = 1,
+        [FromQuery] int pageSize = 20,
+        [FromQuery] string? role = null,
+        [FromQuery] bool? isApproved = null)
     {
-        return await _userService.GetAllAsync();
+        return Ok(await _userService.GetAllAsync(pageNumber, pageSize, role, isApproved));
     }
 
     [HttpGet("{id}")]
@@ -37,9 +41,10 @@ public class UsersController : ControllerBase
     [HttpPost]
     public async Task<ActionResult<UserDto>> Create(CreateUserRequest request)
     {
-        if (_currentUser.Role == RoleNames.Admin && request.RoleId == 3)
+        if (request.RoleId is < 1 or > 3 ||
+            (_currentUser.Role == RoleNames.Admin && request.RoleId == 3))
         {
-            return Forbid();
+            throw new ForbiddenException("You are not authorized to create this user role.");
         }
 
         var user = await _userService.CreateAsync(request);

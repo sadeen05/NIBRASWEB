@@ -7,8 +7,11 @@
 @adminToken = <capture-from-existing-admin-login>
 @superAdminToken = <capture-from-existing-superadmin-login>
 @investorId = <capture-from-investor-registration>
+@password200Characters = <generate-exactly-200-characters-locally>
 @missingUserId = 2147483647
 @nonInvestorUserId = <use-an-existing-landlord-id>
+@adminId = <capture-from-admin-token>
+@superAdminId = <capture-from-superadmin-token>
 @largePayload = <generate-a-2-MB-json-body-locally>
 
 # Fixture requirements:
@@ -134,6 +137,18 @@ Authorization: Bearer {{landlordToken}}
 GET {{baseUrl}}/api/users
 Authorization: Bearer {{superAdminToken}}
 
+### Paginated user list with filters — EXPECTED: 200
+GET {{baseUrl}}/api/users?pageNumber=1&pageSize=20&role=Investor&isApproved=false
+Authorization: Bearer {{superAdminToken}}
+
+### User list page size above maximum — EXPECTED: 400
+GET {{baseUrl}}/api/users?pageSize=1000
+Authorization: Bearer {{superAdminToken}}
+
+### Invalid user role filter — EXPECTED: 400
+GET {{baseUrl}}/api/users?role=NotARealRole
+Authorization: Bearer {{superAdminToken}}
+
 ### Admin approves valid Investor — EXPECTED: 204
 # Requires an unapproved Investor with both company fields and an Admin token.
 POST {{baseUrl}}/api/users/{{investorId}}/approve
@@ -156,6 +171,80 @@ Authorization: Bearer {{adminToken}}
 # Requires a disposable unapproved Investor fixture missing one company field.
 POST {{baseUrl}}/api/users/<investor-missing-company-id>/approve
 Authorization: Bearer {{adminToken}}
+
+### Admin attempts to delete SuperAdmin — EXPECTED: 403
+DELETE {{baseUrl}}/api/users/{{superAdminId}}
+Authorization: Bearer {{adminToken}}
+
+### Admin attempts to update SuperAdmin — EXPECTED: 403
+PUT {{baseUrl}}/api/users/{{superAdminId}}
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{
+  "fullName": "Rejected Update",
+  "email": "rejected-update@example.test",
+  "phone": "0700003111"
+}
+
+### Admin attempts to delete another Admin — EXPECTED: 403
+DELETE {{baseUrl}}/api/users/<other-admin-id>
+Authorization: Bearer {{adminToken}}
+
+### User attempts to delete own account — EXPECTED: 403
+DELETE {{baseUrl}}/api/users/<landlord-user-id>
+Authorization: Bearer {{landlordToken}}
+
+### SuperAdmin deletes disposable Admin fixture — EXPECTED: 204
+# Requires a disposable Admin created during this test run; otherwise BLOCKED.
+DELETE {{baseUrl}}/api/users/<disposable-admin-id>
+Authorization: Bearer {{superAdminToken}}
+
+### Valid 70-character full name update — EXPECTED: 204
+PUT {{baseUrl}}/api/users/<disposable-landlord-id>
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{
+  "fullName": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "email": "step3-update@example.test",
+  "phone": "0700003112"
+}
+
+### 150-character full name update — EXPECTED: 400
+PUT {{baseUrl}}/api/users/<disposable-landlord-id>
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{
+  "fullName": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "email": "step3-update@example.test",
+  "phone": "0700003112"
+}
+
+### 200-character registration password — EXPECTED: 400
+POST {{baseUrl}}/api/auth/register
+Content-Type: application/json
+
+{
+  "fullName": "Oversized Password User",
+  "email": "step3-oversized-password@example.test",
+  "phone": "0700003113",
+  "password": "{{password200Characters}}",
+  "roleId": 1
+}
+
+### Control character in full name — EXPECTED: 400
+POST {{baseUrl}}/api/auth/register
+Content-Type: application/json
+
+{
+  "fullName": "Invalid\u0001Name",
+  "email": "step3-control-character@example.test",
+  "phone": "0700003114",
+  "password": "{{landlordPassword}}",
+  "roleId": 1
+}
 
 ### Tampered JWT — EXPECTED: 401
 # Set tamperedToken locally by changing one character of a valid token.
@@ -257,4 +346,43 @@ Content-Type: application/json
   "phone": "0700003110",
   "password": "{{landlordPassword}}",
   "roleId": 1
+}
+
+### Admin cannot create Admin — EXPECTED: 403
+POST {{baseUrl}}/api/users
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{
+  "fullName": "Rejected Admin",
+  "email": "step3-rejected-admin@example.test",
+  "phone": "0700003115",
+  "password": "{{landlordPassword}}",
+  "roleId": 3
+}
+
+### SuperAdmin cannot create SuperAdmin — EXPECTED: 403
+POST {{baseUrl}}/api/users
+Authorization: Bearer {{superAdminToken}}
+Content-Type: application/json
+
+{
+  "fullName": "Rejected SuperAdmin",
+  "email": "step3-rejected-superadmin@example.test",
+  "phone": "0700003116",
+  "password": "{{landlordPassword}}",
+  "roleId": 4
+}
+
+### Investor creation missing company details — EXPECTED: 400
+POST {{baseUrl}}/api/users
+Authorization: Bearer {{superAdminToken}}
+Content-Type: application/json
+
+{
+  "fullName": "Invalid API Investor",
+  "email": "step3-invalid-api-investor@example.test",
+  "phone": "0700003117",
+  "password": "{{investorPassword}}",
+  "roleId": 2
 }

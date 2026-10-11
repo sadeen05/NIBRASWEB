@@ -22,6 +22,8 @@ public sealed class AuthService : IAuthService
 
     public async Task<AuthUserSummary> RegisterAsync(RegisterRequest request)
     {
+        PasswordPolicy.Validate(request.Password);
+
         if (request.RoleId is not (1 or 2))
         {
             throw new BusinessRuleException("Only Landlord and Investor registration is allowed.");
@@ -35,7 +37,7 @@ public sealed class AuthService : IAuthService
         }
 
         if (await _context.Users.AnyAsync(u =>
-                !u.IsDeleted && (u.Email == request.Email || u.Phone == request.Phone)))
+                (u.Email == request.Email || u.Phone == request.Phone)))
         {
             throw new DuplicateRegistrationException();
         }
@@ -61,6 +63,8 @@ public sealed class AuthService : IAuthService
 
     public async Task<AuthResponse?> LoginAsync(LoginRequest request)
     {
+        PasswordPolicy.Validate(request.Password);
+
         var user = await _context.Users
             .IgnoreQueryFilters()
             .Include(u => u.Role)
@@ -126,4 +130,8 @@ public sealed class AuthService : IAuthService
 
 public sealed class DuplicateRegistrationException : BusinessRuleException
 {
+    public DuplicateRegistrationException()
+        : base("Email or phone is already registered")
+    {
+    }
 }

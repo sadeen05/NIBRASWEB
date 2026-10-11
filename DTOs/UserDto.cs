@@ -7,5 +7,15 @@ public record UserDto
     string Email,
     string Phone,
     string Role,
-    DateTime CreatedAt
+    DateTime CreatedAt,
+    bool IsApproved,
+    string? CompanyName,
+    string? CompanyRegistrationNumber
 );
+
+public record UserListResponse(
+    IReadOnlyList<UserDto> Items,
+    int PageNumber,
+    int PageSize,
+    int TotalCount,
+    int TotalPages);

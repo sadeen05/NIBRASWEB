@@ -4,7 +4,7 @@ namespace NIBRAS.API.Services;
 
 public interface IUserService
 {
-    Task<List<UserDto>> GetAllAsync();
+    Task<UserListResponse> GetAllAsync(int pageNumber, int pageSize, string? role, bool? isApproved);
     Task<UserDto?> GetByIdAsync(int id);
     Task<UserDto> CreateAsync(CreateUserRequest request);
     Task<bool> ApproveAsync(int id, int approvedById);
