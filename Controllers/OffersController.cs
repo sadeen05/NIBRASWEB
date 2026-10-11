@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using NIBRAS.API.DTOs;
 using NibrasWeb.DTOs;
@@ -7,6 +8,7 @@ namespace NIBRAS.API.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
+[Authorize]
 public class OffersController : ControllerBase
 {
     private readonly IOfferService _offerService;

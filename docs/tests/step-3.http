@@ -1,0 +1,260 @@
+@baseUrl = http://localhost:5181
+@landlordPassword = <set-a-local-test-password>
+@investorPassword = <set-a-local-test-password>
+@invalidPassword = <set-a-wrong-password>
+@landlordToken = <capture-from-landlord-login>
+@investorToken = <capture-from-investor-login>
+@adminToken = <capture-from-existing-admin-login>
+@superAdminToken = <capture-from-existing-superadmin-login>
+@investorId = <capture-from-investor-registration>
+@missingUserId = 2147483647
+@nonInvestorUserId = <use-an-existing-landlord-id>
+@largePayload = <generate-a-2-MB-json-body-locally>
+
+# Fixture requirements:
+# - Run only against an isolated disposable database or explicitly approved fixtures.
+# - Do not reuse production credentials or print tokens/passwords/hashes.
+# - Admin/SuperAdmin fixtures, an unapproved Investor, and a Landlord fixture are required
+#   for the protected-user and approval requests below.
+# - Replace angle-bracket placeholders locally; never commit real values.
+# - The HTTPS profile is https://localhost:7265. Use it only when the local development
+#   certificate is trusted by the HTTP client. Otherwise use this HTTP development URL;
+#   do not weaken application TLS settings.
+
+### Register Landlord — EXPECTED: 200
+POST {{baseUrl}}/api/auth/register
+Content-Type: application/json
+
+{
+  "fullName": "Step 3 Test Landlord",
+  "email": "step3-landlord@example.test",
+  "phone": "0700003101",
+  "password": "{{landlordPassword}}",
+  "roleId": 1
+}
+
+### Register Investor — EXPECTED: 200
+POST {{baseUrl}}/api/auth/register
+Content-Type: application/json
+
+{
+  "fullName": "Step 3 Test Investor",
+  "email": "step3-investor@example.test",
+  "phone": "0700003102",
+  "password": "{{investorPassword}}",
+  "roleId": 2,
+  "companyName": "Step 3 Test Company",
+  "companyRegistrationNumber": "STEP3-INVESTOR-001"
+}
+
+### Investor registration without company details — EXPECTED: 400
+POST {{baseUrl}}/api/auth/register
+Content-Type: application/json
+
+{
+  "fullName": "Invalid Step 3 Investor",
+  "email": "step3-invalid-investor@example.test",
+  "phone": "0700003103",
+  "password": "{{investorPassword}}",
+  "roleId": 2
+}
+
+### Public Admin registration — EXPECTED: 400
+POST {{baseUrl}}/api/auth/register
+Content-Type: application/json
+
+{
+  "fullName": "Rejected Public Admin",
+  "email": "step3-public-admin@example.test",
+  "phone": "0700003104",
+  "password": "{{landlordPassword}}",
+  "roleId": 3
+}
+
+### Public SuperAdmin registration — EXPECTED: 400
+POST {{baseUrl}}/api/auth/register
+Content-Type: application/json
+
+{
+  "fullName": "Rejected Public SuperAdmin",
+  "email": "step3-public-superadmin@example.test",
+  "phone": "0700003105",
+  "password": "{{landlordPassword}}",
+  "roleId": 4
+}
+
+### Login Landlord — EXPECTED: 200
+POST {{baseUrl}}/api/auth/login
+Content-Type: application/json
+
+{
+  "email": "step3-landlord@example.test",
+  "password": "{{landlordPassword}}"
+}
+
+### Login Investor — EXPECTED: 200
+POST {{baseUrl}}/api/auth/login
+Content-Type: application/json
+
+{
+  "email": "step3-investor@example.test",
+  "password": "{{investorPassword}}"
+}
+
+### Current user — EXPECTED: 200
+GET {{baseUrl}}/api/auth/me
+Authorization: Bearer {{landlordToken}}
+
+### Unknown email — EXPECTED: 401
+POST {{baseUrl}}/api/auth/login
+Content-Type: application/json
+
+{
+  "email": "unknown-step3@example.test",
+  "password": "{{invalidPassword}}"
+}
+
+### Wrong password — EXPECTED: 401; compare with unknown-email response without exposing bodies
+POST {{baseUrl}}/api/auth/login
+Content-Type: application/json
+
+{
+  "email": "step3-landlord@example.test",
+  "password": "{{invalidPassword}}"
+}
+
+### Unauthenticated lands request — EXPECTED: 401
+GET {{baseUrl}}/api/lands
+
+### Landlord cannot list users — EXPECTED: 403
+GET {{baseUrl}}/api/users
+Authorization: Bearer {{landlordToken}}
+
+### SuperAdmin lists users — EXPECTED: 200
+GET {{baseUrl}}/api/users
+Authorization: Bearer {{superAdminToken}}
+
+### Admin approves valid Investor — EXPECTED: 204
+# Requires an unapproved Investor with both company fields and an Admin token.
+POST {{baseUrl}}/api/users/{{investorId}}/approve
+Authorization: Bearer {{adminToken}}
+
+### Verify approval with Admin user listing — EXPECTED: 200
+# Inspect only IsApproved, ApprovedById, and ApprovedAt; redact all contacts/tokens.
+GET {{baseUrl}}/api/users/{{investorId}}
+Authorization: Bearer {{adminToken}}
+
+### Missing-user approval — EXPECTED: 404
+POST {{baseUrl}}/api/users/{{missingUserId}}/approve
+Authorization: Bearer {{adminToken}}
+
+### Non-Investor approval — EXPECTED: 400
+POST {{baseUrl}}/api/users/{{nonInvestorUserId}}/approve
+Authorization: Bearer {{adminToken}}
+
+### Investor missing company details approval — EXPECTED: 400
+# Requires a disposable unapproved Investor fixture missing one company field.
+POST {{baseUrl}}/api/users/<investor-missing-company-id>/approve
+Authorization: Bearer {{adminToken}}
+
+### Tampered JWT — EXPECTED: 401
+# Set tamperedToken locally by changing one character of a valid token.
+GET {{baseUrl}}/api/auth/me
+Authorization: Bearer <tamperedToken>
+
+### alg:none JWT — EXPECTED: 401
+# Supply a locally generated unsigned token; never commit or print it.
+GET {{baseUrl}}/api/auth/me
+Authorization: Bearer <unsigned-token>
+
+### Query-string access_token — EXPECTED: 401
+GET {{baseUrl}}/api/auth/me?access_token=<valid-token>
+
+### Deactivated user's old token — EXPECTED: 401
+# Requires a disposable user: capture its token, soft-delete it as Admin, then retry.
+GET {{baseUrl}}/api/auth/me
+Authorization: Bearer <deactivated-user-old-token>
+
+### Token after database role change — EXPECTED: 401
+# Requires a disposable user: capture its token, change its DB role in an approved
+# isolated fixture, then retry. Do not perform this against NEBRASDB_Step1.
+GET {{baseUrl}}/api/auth/me
+Authorization: Bearer <role-changed-user-old-token>
+
+### Auth registration with extra protected fields — EXPECTED: 200
+# Extra fields must not set IsApproved, IsDeleted, ApprovedById, ApprovedAt,
+# PasswordHash, or elevate the role. Registration role remains Landlord only.
+POST {{baseUrl}}/api/auth/register
+Content-Type: application/json
+
+{
+  "fullName": "Extra Field Landlord",
+  "email": "step3-extra-fields@example.test",
+  "phone": "0700003106",
+  "password": "{{landlordPassword}}",
+  "roleId": 1,
+  "isApproved": true,
+  "isDeleted": true,
+  "approvedById": 4,
+  "approvedAt": "2030-01-01T00:00:00Z",
+  "passwordHash": "not-a-hash"
+}
+
+### Auth registration with Admin role plus protected fields — EXPECTED: 400
+POST {{baseUrl}}/api/auth/register
+Content-Type: application/json
+
+{
+  "fullName": "Extra Field Admin",
+  "email": "step3-extra-admin@example.test",
+  "phone": "0700003107",
+  "password": "{{landlordPassword}}",
+  "roleId": 3,
+  "isApproved": true
+}
+
+### Admin create user with protected fields — EXPECTED: 201
+# Requires Admin/SuperAdmin token. Inspect the created response: no PasswordHash
+# or protected fields may be returned.
+POST {{baseUrl}}/api/users
+Authorization: Bearer {{superAdminToken}}
+Content-Type: application/json
+
+{
+  "fullName": "Extra Field API User",
+  "email": "step3-extra-user@example.test",
+  "phone": "0700003108",
+  "password": "{{landlordPassword}}",
+  "roleId": 1,
+  "isApproved": true,
+  "isDeleted": true,
+  "approvedById": 4,
+  "approvedAt": "2030-01-01T00:00:00Z",
+  "passwordHash": "not-a-hash"
+}
+
+### Admin create SuperAdmin — EXPECTED: 400
+POST {{baseUrl}}/api/users
+Authorization: Bearer {{superAdminToken}}
+Content-Type: application/json
+
+{
+  "fullName": "Rejected API SuperAdmin",
+  "email": "step3-api-superadmin@example.test",
+  "phone": "0700003109",
+  "password": "{{landlordPassword}}",
+  "roleId": 4
+}
+
+### Landlord cannot create user — EXPECTED: 403
+POST {{baseUrl}}/api/users
+Authorization: Bearer {{landlordToken}}
+Content-Type: application/json
+
+{
+  "fullName": "Rejected Landlord User",
+  "email": "step3-landlord-created@example.test",
+  "phone": "0700003110",
+  "password": "{{landlordPassword}}",
+  "roleId": 1
+}

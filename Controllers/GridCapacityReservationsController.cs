@@ -1,11 +1,14 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using NIBRAS.API.DTOs;
 using NIBRAS.API.Services;
+using NIBRAS.Models;
 
 namespace NIBRAS.API.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
+[Authorize(Roles = RoleNames.Admin + "," + RoleNames.SuperAdmin)]
 public class GridCapacityReservationsController : ControllerBase
 {
     private readonly IGridCapacityReservationService _reservationService;

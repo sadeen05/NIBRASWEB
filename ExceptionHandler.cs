@@ -13,14 +13,12 @@ public class GlobalExceptionHandler : IExceptionHandler
     {
         _logger.LogError(exception, "Unhandled exception");
 
-        var env = httpContext.RequestServices.GetRequiredService<IWebHostEnvironment>();
-
         var (status, title, errorCode) = exception switch
         {
-            KeyNotFoundException => (StatusCodes.Status404NotFound, "Resource not found.", "RESOURCE_NOT_FOUND"),
-            UnauthorizedAccessException => (StatusCodes.Status403Forbidden, "Not authorized to perform this action.", "FORBIDDEN"),
-            InvalidOperationException => (StatusCodes.Status409Conflict, "Request violates a business rule.", "INVALID_STATE"),
-            ArgumentException => (StatusCodes.Status400BadRequest, "Invalid request.", "BAD_REQUEST"),
+            NotFoundException => (StatusCodes.Status404NotFound, "Resource not found.", "RESOURCE_NOT_FOUND"),
+            ForbiddenException => (StatusCodes.Status403Forbidden, "Not authorized to perform this action.", "FORBIDDEN"),
+            BusinessRuleException => (StatusCodes.Status409Conflict, "Request violates a business rule.", "INVALID_STATE"),
+            ValidationFailedException => (StatusCodes.Status400BadRequest, "Invalid request.", "BAD_REQUEST"),
             _ => (StatusCodes.Status500InternalServerError, "An unexpected error occurred.", "INTERNAL_ERROR")
         };
 
@@ -30,20 +28,14 @@ public class GlobalExceptionHandler : IExceptionHandler
             Title = title,
             Detail = exception switch
             {
-                KeyNotFoundException or UnauthorizedAccessException
-                    or InvalidOperationException or ArgumentException
+                NotFoundException or ForbiddenException
+                    or BusinessRuleException or ValidationFailedException
                     => exception.Message,
-                _ when env.IsDevelopment() => exception.Message,
-                _ => null
+                _ => "An unexpected error occurred."
             }
         };
         problem.Extensions["errorCode"] = errorCode;
-        if (env.IsDevelopment() && exception is not (
-            KeyNotFoundException or UnauthorizedAccessException
-            or InvalidOperationException or ArgumentException))
-        {
-            problem.Extensions["stackTrace"] = exception.StackTrace?.ToString();
-        }
+        problem.Extensions["traceId"] = httpContext.TraceIdentifier;
 
         httpContext.Response.StatusCode = status;
         await httpContext.Response.WriteAsJsonAsync(problem, ct);

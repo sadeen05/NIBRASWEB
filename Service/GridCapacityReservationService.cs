@@ -1,5 +1,6 @@
 using Mapster;
 using Microsoft.EntityFrameworkCore;
+using NIBRAS;
 using NIBRAS.API.DTOs;
 using NIBRAS.Models;
 
@@ -34,7 +35,7 @@ public class GridCapacityReservationService : IGridCapacityReservationService
     public async Task<GridCapacityReservationDto> CreateAsync(CreateGridCapacityReservationRequest request)
     {
         var grid = await _context.Grids.FindAsync(request.GridId);
-        if (grid == null) throw new KeyNotFoundException("Grid not found.");
+        if (grid == null) throw new NotFoundException("Grid not found.");
 
         var totalReserved = await _context.GridCapacityReservations
             .Where(r => r.GridId == request.GridId)
@@ -42,7 +43,7 @@ public class GridCapacityReservationService : IGridCapacityReservationService
 
         if ((totalReserved + request.ReservedMw) > grid.CapacityMw)
         {
-            throw new InvalidOperationException($"Reservation exceeds available capacity. Max grid capacity is {grid.CapacityMw} MW, and currently {totalReserved} MW is reserved.");
+            throw new BusinessRuleException($"Reservation exceeds available capacity. Max grid capacity is {grid.CapacityMw} MW, and currently {totalReserved} MW is reserved.");
         }
 
         var item = request.Adapt<GridCapacityReservation>();
@@ -57,7 +58,7 @@ public class GridCapacityReservationService : IGridCapacityReservationService
         if (item == null) return false;
 
         var grid = await _context.Grids.FindAsync(request.GridId);
-        if (grid == null) throw new KeyNotFoundException("Grid not found.");
+        if (grid == null) throw new NotFoundException("Grid not found.");
 
         var totalReserved = await _context.GridCapacityReservations
             .Where(r => r.GridId == request.GridId && r.Id != id)
@@ -65,7 +66,7 @@ public class GridCapacityReservationService : IGridCapacityReservationService
 
         if ((totalReserved + request.ReservedMw) > grid.CapacityMw)
         {
-            throw new InvalidOperationException($"Update exceeds available grid capacity ({grid.CapacityMw} MW).");
+            throw new BusinessRuleException($"Update exceeds available grid capacity ({grid.CapacityMw} MW).");
         }
 
         item.GridId = request.GridId;

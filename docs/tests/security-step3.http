@@ -1,0 +1,136 @@
+@baseUrl = http://localhost:5181
+@authLimit = 5
+@loginPassword = <set-a-local-test-password>
+@loginEmail = <use-a-disposable-fixture-email>
+@validToken = <capture-locally-do-not-commit>
+@adminToken = <capture-locally-do-not-commit>
+@largePayload = <generate-a-2-MB-json-body-locally>
+
+# Safety and setup:
+# - These tests are documentation/HTTP-client requests, not an authorization to mutate
+#   NEBRASDB_Step1. Use only an isolated disposable database and disposable fixtures.
+# - Set RateLimit:AuthPerMinute to 5 in a local test configuration/environment before
+#   running the rate-limit block; do not change tracked appsettings.json.
+# - The application currently has a Development HTTP URL at http://localhost:5181
+#   and HTTPS at https://localhost:7265. Prefer HTTPS when its local certificate is
+#   trusted. If it is untrusted, use the HTTP development URL for local testing only;
+#   do not disable or weaken application security.
+# - Never print credentials, tokens, hashes, or response bodies containing personal data.
+
+### Required security headers — EXPECTED: 401
+GET {{baseUrl}}/api/lands
+
+# Expected headers:
+# X-Content-Type-Options: nosniff
+# X-Frame-Options: DENY
+# Referrer-Policy: no-referrer
+# Content-Security-Policy: default-src 'none'; frame-ancestors 'none'
+
+### Valid token through Authorization header — EXPECTED: 200
+GET {{baseUrl}}/api/auth/me
+Authorization: Bearer {{validToken}}
+
+### Token through query string — EXPECTED: 401
+GET {{baseUrl}}/api/auth/me?access_token=<valid-token>
+
+### Tampered JWT — EXPECTED: 401
+GET {{baseUrl}}/api/auth/me
+Authorization: Bearer <tampered-token>
+
+### Unsigned alg:none JWT — EXPECTED: 401
+GET {{baseUrl}}/api/auth/me
+Authorization: Bearer <unsigned-token>
+
+### Deactivated token — EXPECTED: 401
+# Requires a disposable fixture whose old token was captured before soft deletion.
+GET {{baseUrl}}/api/auth/me
+Authorization: Bearer <deactivated-user-old-token>
+
+### Role-changed token — EXPECTED: 401
+# Requires a disposable fixture whose database role was changed after token issuance.
+GET {{baseUrl}}/api/auth/me
+Authorization: Bearer <role-changed-user-old-token>
+
+### Login attempt 1 — EXPECTED: 401
+POST {{baseUrl}}/api/auth/login
+Content-Type: application/json
+
+{
+  "email": "{{loginEmail}}",
+  "password": "{{loginPassword}}"
+}
+
+### Login attempt 2 — EXPECTED: 401
+POST {{baseUrl}}/api/auth/login
+Content-Type: application/json
+
+{
+  "email": "{{loginEmail}}",
+  "password": "{{loginPassword}}"
+}
+
+### Login attempt 3 — EXPECTED: 401
+POST {{baseUrl}}/api/auth/login
+Content-Type: application/json
+
+{
+  "email": "{{loginEmail}}",
+  "password": "{{loginPassword}}"
+}
+
+### Login attempt 4 — EXPECTED: 401
+POST {{baseUrl}}/api/auth/login
+Content-Type: application/json
+
+{
+  "email": "{{loginEmail}}",
+  "password": "{{loginPassword}}"
+}
+
+### Login attempt 5 — EXPECTED: 401
+POST {{baseUrl}}/api/auth/login
+Content-Type: application/json
+
+{
+  "email": "{{loginEmail}}",
+  "password": "{{loginPassword}}"
+}
+
+### Login attempt 6 in same minute/IP — EXPECTED: 429
+POST {{baseUrl}}/api/auth/login
+Content-Type: application/json
+
+{
+  "email": "{{loginEmail}}",
+  "password": "{{loginPassword}}"
+}
+
+### 2 MB request body — EXPECTED: 413
+# Replace {{largePayload}} with a locally generated 2 MB JSON body.
+POST {{baseUrl}}/api/auth/login
+Content-Type: application/json
+
+{{largePayload}}
+
+### Generic 500 response — EXPECTED: 500
+# Requires an isolated fixture or controlled test endpoint that throws an unexpected
+# exception. No such endpoint is present in the application; do not induce this by
+# corrupting production data.
+GET {{baseUrl}}/api/test/unexpected-error
+
+# Expected JSON properties:
+# "status": 500
+# "detail": "An unexpected error occurred."
+# "errorCode": "INTERNAL_ERROR"
+# "traceId": "<non-empty>"
+# No stackTrace, SQL text, file paths, or exception details.
+
+### Newly-created password hash format — EXPECTED: PASS/FAIL assertion, no HTTP status
+# Requires a disposable registration fixture and a read-only database assertion:
+# PASSWORD_HASH LIKE '$2%'. Never print the hash. Do not run the assertion against
+# NEBRASDB_Step1 without explicit approval.
+
+### Admin approval success and persisted audit fields — EXPECTED: 204 then PASS/FAIL
+# Requires an isolated unapproved Investor with both company fields and an Admin token.
+# After 204, verify IsApproved=true, ApprovedById=authenticated Admin ID, and
+# ApprovedAt is non-null UTC. Never print contact fields or tokens.

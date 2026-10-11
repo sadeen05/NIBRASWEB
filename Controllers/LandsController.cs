@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using NIBRAS.API.DTOs;
 using NIBRAS.API.Services;
@@ -6,6 +7,7 @@ namespace NIBRAS.API.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
+[Authorize]
 public class LandsController : ControllerBase
 {
     private readonly ILandService _landService;

@@ -1,5 +1,5 @@
-using Mapster;
 using Microsoft.EntityFrameworkCore;
+using NIBRAS;
 using NIBRAS.API.DTOs;
 using NIBRAS.Models;
 
@@ -23,6 +23,7 @@ public class UserService : IUserService
         var pagesize = 10;
         var pageIndex = 0;
         var users = await _context.Users
+            .Where(u => !u.IsDeleted)
             .Skip(pageIndex * pagesize)
             .Take(pagesize)
             .ToListAsync();
@@ -42,33 +43,69 @@ public class UserService : IUserService
 
     public async Task<UserDto?> GetByIdAsync(int id)
     {
-        var user = await _context.Users.FindAsync(id);
+        var user = await _context.Users
+            .SingleOrDefaultAsync(u => u.Id == id && !u.IsDeleted);
         if (user == null)
         {
             _logger.LogWarning("User not found");
             return null;
         }
-        return user.Adapt<UserDto>();
+        return ToDto(user);
     }
 
     public async Task<UserDto> CreateAsync(CreateUserRequest request)
     {
-        var emailExists = await _context.Users.AnyAsync(u => u.Email == request.Email);
+        var emailExists = await _context.Users.AnyAsync(u => u.Email == request.Email && !u.IsDeleted);
         if (emailExists)
-            throw new InvalidOperationException("Email already exists.");
+            throw new BusinessRuleException("Email already exists.");
 
-        var user = request.Adapt<User>();
-        user.PasswordHash = "default_pass";
+        if (request.RoleId is < 1 or > 3)
+            throw new ValidationFailedException("User role is invalid.");
+
+        var user = new User
+        {
+            FullName = request.FullName,
+            Email = request.Email,
+            Phone = request.Phone,
+            RoleId = request.RoleId,
+            PasswordHash = BCrypt.Net.BCrypt.HashPassword(request.Password, workFactor: 12),
+            IsDeleted = false
+        };
 
         _context.Users.Add(user);
         await _context.SaveChangesAsync();
 
-        return user.Adapt<UserDto>();
+        return ToDto(user);
+    }
+
+    public async Task<bool> ApproveAsync(int id, int approvedById)
+    {
+        var user = await _context.Users
+            .Include(u => u.Role)
+            .SingleOrDefaultAsync(u => u.Id == id && !u.IsDeleted);
+        if (user == null)
+        {
+            return false;
+        }
+
+        if (user.Role.Name != RoleNames.Investor ||
+            string.IsNullOrWhiteSpace(user.CompanyName) ||
+            string.IsNullOrWhiteSpace(user.CompanyRegistrationNumber))
+        {
+            throw new ValidationFailedException("Only an Investor with company details can be approved.");
+        }
+
+        user.IsApproved = true;
+        user.ApprovedById = approvedById;
+        user.ApprovedAt = DateTime.UtcNow;
+        await _context.SaveChangesAsync();
+        return true;
     }
 
     public async Task<bool> UpdateAsync(int id, UpdateUserRequest request)
     {
-        var user = await _context.Users.FindAsync(id);
+        var user = await _context.Users
+            .SingleOrDefaultAsync(u => u.Id == id && !u.IsDeleted);
         if (user == null)
         {
             _logger.LogWarning("User not found for update");
@@ -77,9 +114,10 @@ public class UserService : IUserService
 
         if (user.Email != request.Email)
         {
-            var emailExists = await _context.Users.AnyAsync(u => u.Email == request.Email && u.Id != id);
+            var emailExists = await _context.Users.AnyAsync(u =>
+                u.Email == request.Email && u.Id != id && !u.IsDeleted);
             if (emailExists)
-                throw new InvalidOperationException("Email already in use by another user.");
+                throw new BusinessRuleException("Email already in use by another user.");
         }
 
         user.FullName = request.FullName;
@@ -94,20 +132,21 @@ public class UserService : IUserService
     {
         var hasLands = await _context.Lands.AnyAsync(l => l.LandlordId == id && !l.IsDeleted);
         if (hasLands)
-            throw new InvalidOperationException("Cannot delete user who owns lands.");
+            throw new BusinessRuleException("Cannot delete user who owns lands.");
 
         var hasContracts = await _context.Contracts.AnyAsync(c => (c.InvestorId == id || c.LandlordId == id));
         if (hasContracts)
-            throw new InvalidOperationException("Cannot delete user who has contracts.");
+            throw new BusinessRuleException("Cannot delete user who has contracts.");
 
         var hasPendingCancellations = await _context.Contracts.AnyAsync(c =>
             (c.LandlordId == id || c.InvestorId == id)
             && c.CancellationRequestedById != null
             && (c.CancellationEffectiveDate >= DateTime.UtcNow || c.DisputeFlagged));
         if (hasPendingCancellations)
-            throw new InvalidOperationException("Cannot delete user with pending contract cancellations.");
+            throw new BusinessRuleException("Cannot delete user with pending contract cancellations.");
 
-        var user = await _context.Users.FindAsync(id);
+        var user = await _context.Users
+            .SingleOrDefaultAsync(u => u.Id == id && !u.IsDeleted);
         if (user == null)
         {
             _logger.LogWarning("User not found or already deleted");
@@ -120,4 +159,7 @@ public class UserService : IUserService
         await _context.SaveChangesAsync();
         return true;
     }
+
+    private static UserDto ToDto(User user) =>
+        new(user.Id, user.FullName, user.Email, user.Phone, user.Role?.Name ?? string.Empty, user.CreatedAt);
 }

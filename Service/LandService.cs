@@ -1,5 +1,6 @@
 using Mapster;
 using Microsoft.EntityFrameworkCore;
+using NIBRAS;
 using NIBRAS.API.DTOs;
 using NIBRAS.Models;
 using NibrasWeb.Enums;
@@ -54,16 +55,16 @@ public class LandService : ILandService
     public async Task<LandDto> CreateAsync(CreateLandRequest request)
     {
         var user = await _context.Users.Include(u => u.Role)
-            .FirstOrDefaultAsync(u => u.Id == request.LandlordId);
+            .FirstOrDefaultAsync(u => u.Id == request.LandlordId && !u.IsDeleted);
         if (user == null)
-            throw new KeyNotFoundException("User not found.");
+            throw new NotFoundException("User not found.");
         if (user.Role.Name != "Landlord")
-            throw new KeyNotFoundException("Only landlords can register land.");
+            throw new NotFoundException("Only landlords can register land.");
 
         var exists = await _context.Lands.AnyAsync(l =>
             l.LandNumber == request.LandNumber && l.RegionId == request.RegionId && !l.IsDeleted);
         if (exists)
-            throw new InvalidOperationException("Land number already exists in this region.");
+            throw new BusinessRuleException("Land number already exists in this region.");
 
         var criterion = await _context.LandCriteria
             .OrderByDescending(c => c.UpdatedAt)
@@ -71,17 +72,17 @@ public class LandService : ILandService
 
         var standardErrors = ValidateRegisterStandards(request, criterion);
         if (standardErrors.Any())
-            throw new InvalidOperationException($"Land does not meet registration standards: {string.Join(";", standardErrors)}");
+            throw new BusinessRuleException($"Land does not meet registration standards: {string.Join(";", standardErrors)}");
         var grid = await _context.Grids
             .Include(g => g.GridCapacityReservations)
             .FirstOrDefaultAsync(g => g.Id == request.GridId);
 
         if (grid == null)
-            throw new KeyNotFoundException("Grid not found for this region.");
+            throw new NotFoundException("Grid not found for this region.");
 
         var totalReservedMw = grid.GridCapacityReservations.Sum(r => r.ReservedMw);
         if (totalReservedMw >= grid.CapacityMw)
-            throw new InvalidOperationException("No capacity left in this electrical grid.");
+            throw new BusinessRuleException("No capacity left in this electrical grid.");
 
         var land = request.Adapt<Land>();
         land.Status = LandStatus.Draft;
@@ -128,7 +129,7 @@ public class LandService : ILandService
 
         if (land == null) return false;
         if (land.Contracts.Any(c => c.Status == ContractStatus.Active))
-            throw new InvalidOperationException("Cannot edit a land that has an active contract.");
+            throw new BusinessRuleException("Cannot edit a land that has an active contract.");
 
         land.LandNumber = request.LandNumber;
         land.AreaDonum = request.AreaDonum;
@@ -144,7 +145,7 @@ public class LandService : ILandService
 
     public async Task<bool> DeleteAsync(int id)
     {
-        throw new InvalidOperationException("Direct deletion is not allowed.");
+        throw new BusinessRuleException("Direct deletion is not allowed.");
     }
 
     public async Task<bool> SubmitAsync(int landId, int landlordId)
@@ -154,13 +155,13 @@ public class LandService : ILandService
             .FirstOrDefaultAsync(l => l.Id == landId && !l.IsDeleted);
 
         if (land == null)
-            throw new KeyNotFoundException("Land not found.");
+            throw new NotFoundException("Land not found.");
 
         if (land.LandlordId != landlordId)
-            throw new UnauthorizedAccessException("You are not the owner of this land.");
+            throw new ForbiddenException("You are not the owner of this land.");
 
         if (land.Status != LandStatus.Draft)
-            throw new InvalidOperationException("Only lands in Draft status can be submitted.");
+            throw new BusinessRuleException("Only lands in Draft status can be submitted.");
 
         await ChangeStatusAsync(land, LandStatus.PendingVerification, landlordId, "Submitted for admin verification.");
         return true;
@@ -174,25 +175,25 @@ public class LandService : ILandService
             .FirstOrDefaultAsync(l => l.Id == landId && !l.IsDeleted);
 
         if (land == null)
-            throw new KeyNotFoundException("Land not found.");
+            throw new NotFoundException("Land not found.");
 
         if (land.Status != LandStatus.PendingVerification)
-            throw new InvalidOperationException("Land is not pending verification.");
+            throw new BusinessRuleException("Land is not pending verification.");
 
         var hasTitleDeed = land.LandDocuments.Any(d =>
             d.DocumentType.Name == "TitleDeed" && d.Status == "Approved");
         if (!hasTitleDeed)
-            throw new InvalidOperationException("No approved title deed document found.");
+            throw new BusinessRuleException("No approved title deed document found.");
 
         var criteria = await _context.LandCriteria
             .OrderByDescending(c => c.UpdatedAt)
             .FirstOrDefaultAsync();
         if (criteria == null)
-            throw new InvalidOperationException("No eligibility criteria configured.");
+            throw new BusinessRuleException("No eligibility criteria configured.");
 
         var eligibility = await CheckEligibilityAsync(landId);
         if (!eligibility)
-            throw new InvalidOperationException("Land does not meet eligibility criteria.");
+            throw new BusinessRuleException("Land does not meet eligibility criteria.");
 
         land.VerifiedAgainstCriterionId = criteria.Id;
 
@@ -206,10 +207,10 @@ public class LandService : ILandService
     {
         var land = await _context.Lands.FindAsync(landId);
         if (land == null || land.IsDeleted)
-            throw new KeyNotFoundException("Land not found.");
+            throw new NotFoundException("Land not found.");
 
         if (land.Status != LandStatus.PendingVerification)
-            throw new InvalidOperationException("Land is not pending verification.");
+            throw new BusinessRuleException("Land is not pending verification.");
 
         await ChangeStatusAsync(land, LandStatus.Rejected, adminId, reason);
         return true;

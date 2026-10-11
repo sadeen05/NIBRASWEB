@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Authorization;
 using NIBRAS.API.DTOs;
 using NIBRAS.API.Services;
 
@@ -6,6 +7,7 @@ namespace NIBRAS.API.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
+[Authorize]
 public class RolesController : ControllerBase
 {
     private readonly IRoleService _roleService;
@@ -35,36 +37,4 @@ public class RolesController : ControllerBase
         return Ok(role);
     }
 
-    [HttpPost]
-    public async Task<ActionResult<RoleDto>> Create(CreateRoleRequest request)
-    {
-        var role = await _roleService.CreateAsync(request);
-        return CreatedAtAction(nameof(GetById), new { id = role.Id }, role);
-    }
-
-    [HttpPut("{id}")]
-    public async Task<IActionResult> Update(int id, UpdateRoleRequest request)
-    {
-        var result = await _roleService.UpdateAsync(id, request);
-
-        if (result == false)
-        {
-            return NotFound();
-        }
-
-        return NoContent();
-    }
-
-    [HttpDelete("{id}")]
-    public async Task<IActionResult> Delete(int id)
-    {
-        var result = await _roleService.DeleteAsync(id);
-
-        if (result == false)
-        {
-            return NotFound();
-        }
-
-        return NoContent();
-    }
 }

@@ -1,4 +1,5 @@
-﻿using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore;
+using NIBRAS;
 using NIBRAS.API.DTOs;
 using NIBRAS.Models;
 using NibrasWeb.DTOs;
@@ -34,14 +35,14 @@ namespace NibrasWeb.Service
             var user = await GetUserAsync(requestingUserId);
 
             var land = await _context.Lands.FirstOrDefaultAsync(l => l.Id == landId)
-                ?? throw new KeyNotFoundException("Land not found.");
+                ?? throw new NotFoundException("Land not found.");
 
             var isAdmin = user.Role.Name == RoleNames.Admin || user.Role.Name == RoleNames.SuperAdmin;
             var isLandlord = land.LandlordId == requestingUserId;
             var isInvestor = user.Role.Name == RoleNames.Investor;
 
             if (!isAdmin && !isLandlord && !isInvestor)
-                throw new UnauthorizedAccessException("You are not authorized to view offers for this land.");
+                throw new ForbiddenException("You are not authorized to view offers for this land.");
 
             var query = _context.Offers
                 .Include(o => o.Land).ThenInclude(l => l.Landlord)
@@ -71,7 +72,7 @@ namespace NibrasWeb.Service
                 user.Role.Name != RoleNames.Admin &&
                 user.Role.Name != RoleNames.SuperAdmin)
             {
-                throw new UnauthorizedAccessException("Only investors or admins can list offers."); // requestingAdminId add it 
+                throw new ForbiddenException("Only investors or admins can list offers."); // requestingAdminId add it 
             }
 
             var query = _context.Offers
@@ -116,14 +117,14 @@ namespace NibrasWeb.Service
         {
             var user = await GetUserAsync(request.InvestorId);
             if (user.Role.Name != RoleNames.Investor)
-                throw new UnauthorizedAccessException("Only investors can create offers.");
+                throw new ForbiddenException("Only investors can create offers.");
 
             var land = await _context.Lands
                 .FirstOrDefaultAsync(l => l.Id == request.LandId)
-                ?? throw new KeyNotFoundException("Land not found.");
+                ?? throw new NotFoundException("Land not found.");
 
             if (land.Status != LandStatus.Verified)
-                throw new InvalidOperationException("Only verified lands can receive offers.");
+                throw new BusinessRuleException("Only verified lands can receive offers.");
 
             var hasBlockingOffer = await _context.Offers.AnyAsync(o =>
                 o.LandId == request.LandId &&
@@ -132,16 +133,16 @@ namespace NibrasWeb.Service
                  o.Status == OfferStatus.Closed));
 
             if (hasBlockingOffer)
-                throw new InvalidOperationException("This land already has an active or closed offer and is not available.");
+                throw new BusinessRuleException("This land already has an active or closed offer and is not available.");
 
             var grid = await _context.Grids
                 .Include(g => g.GridCapacityReservations)
                 .FirstOrDefaultAsync(g => g.Id == land.GridId)
-                ?? throw new KeyNotFoundException("No grid found for this land.");
+                ?? throw new NotFoundException("No grid found for this land.");
 
             var totalReservedMw = grid.GridCapacityReservations.Sum(r => r.ReservedMw);
             if ((totalReservedMw + request.RequiredCapacityMw) > grid.CapacityMw)
-                throw new InvalidOperationException("No capacity left in this electrical grid.");
+                throw new BusinessRuleException("No capacity left in this electrical grid.");
 
             var offer = new Offer
             {
@@ -184,7 +185,7 @@ namespace NibrasWeb.Service
             _context.Offers.Add(offer);
             await _context.SaveChangesAsync();
 
-            return await GetByIdAsync(offer.Id) ?? throw new InvalidOperationException("Offer creation failed.");
+            return await GetByIdAsync(offer.Id) ?? throw new BusinessRuleException("Offer creation failed.");
         }
 
         public async Task<OfferDto> CounterOfferAsync(int offerId, int userId, decimal newAmount, string? message)
@@ -192,21 +193,21 @@ namespace NibrasWeb.Service
             var offer = await GetOfferForActionAsync(offerId, userId);
 
             if (newAmount <= 0)
-                throw new ArgumentException("Counter amount must be greater than zero.");
+                throw new ValidationFailedException("Counter amount must be greater than zero.");
 
             if (offer.Status != OfferStatus.PendingLandlordResponse &&
                 offer.Status != OfferStatus.PendingInvestorResponse)
             {
-                throw new InvalidOperationException("This offer is not in a negotiable state.");
+                throw new BusinessRuleException("This offer is not in a negotiable state.");
             }
 
             var actor = await GetUserAsync(userId);
             var isLandlord = actor.Role.Name == RoleNames.Landlord;
 
             if (offer.Status == OfferStatus.PendingLandlordResponse && !isLandlord)
-                throw new UnauthorizedAccessException("Only the landlord can respond at this stage.");
+                throw new ForbiddenException("Only the landlord can respond at this stage.");
             if (offer.Status == OfferStatus.PendingInvestorResponse && isLandlord)
-                throw new UnauthorizedAccessException("Only the investor can respond at this stage.");
+                throw new ForbiddenException("Only the investor can respond at this stage.");
 
             var newVersionNumber = (offer.OfferVersions.Max(v => (int?)v.VersionNumber) ?? 0) + 1;
 
@@ -233,7 +234,7 @@ namespace NibrasWeb.Service
 
             await _context.SaveChangesAsync();
 
-            return await GetByIdAsync(offer.Id) ?? throw new InvalidOperationException("Counter offer failed.");
+            return await GetByIdAsync(offer.Id) ?? throw new BusinessRuleException("Counter offer failed.");
         }
 
         public async Task<OfferDto> AcceptAsync(int offerId, int userId)
@@ -243,16 +244,16 @@ namespace NibrasWeb.Service
             if (offer.Status != OfferStatus.PendingLandlordResponse &&
                 offer.Status != OfferStatus.PendingInvestorResponse)
             {
-                throw new InvalidOperationException("This offer is not in a negotiable state.");
+                throw new BusinessRuleException("This offer is not in a negotiable state.");
             }
 
             var actor = await GetUserAsync(userId);
             var isLandlord = actor.Role.Name == RoleNames.Landlord;
 
             if (offer.Status == OfferStatus.PendingLandlordResponse && !isLandlord)
-                throw new UnauthorizedAccessException("Only the landlord can accept at this stage.");
+                throw new ForbiddenException("Only the landlord can accept at this stage.");
             if (offer.Status == OfferStatus.PendingInvestorResponse && isLandlord)
-                throw new UnauthorizedAccessException("Only the investor can accept at this stage.");
+                throw new ForbiddenException("Only the investor can accept at this stage.");
 
             offer.Status = OfferStatus.PendingAdminApproval;
             offer.UpdatedAt = DateTime.UtcNow;
@@ -269,7 +270,7 @@ namespace NibrasWeb.Service
 
             await _context.SaveChangesAsync();
 
-            return await GetByIdAsync(offer.Id) ?? throw new InvalidOperationException("Accept failed.");
+            return await GetByIdAsync(offer.Id) ?? throw new BusinessRuleException("Accept failed.");
         }
 
         public async Task<OfferDto> RejectAsync(int offerId, int userId, string reason)
@@ -279,16 +280,16 @@ namespace NibrasWeb.Service
             if (offer.Status != OfferStatus.PendingLandlordResponse &&
                 offer.Status != OfferStatus.PendingInvestorResponse)
             {
-                throw new InvalidOperationException("This offer is not in a negotiable state.");
+                throw new BusinessRuleException("This offer is not in a negotiable state.");
             }
 
             var actor = await GetUserAsync(userId);
             var isLandlord = actor.Role.Name == RoleNames.Landlord;
 
             if (offer.Status == OfferStatus.PendingLandlordResponse && !isLandlord)
-                throw new UnauthorizedAccessException("Only the landlord can reject at this stage.");
+                throw new ForbiddenException("Only the landlord can reject at this stage.");
             if (offer.Status == OfferStatus.PendingInvestorResponse && isLandlord)
-                throw new UnauthorizedAccessException("Only the investor can reject at this stage.");
+                throw new ForbiddenException("Only the investor can reject at this stage.");
 
             offer.Status = isLandlord ? OfferStatus.RejectedByLandlord : OfferStatus.RejectedByInvestor;
             offer.UpdatedAt = DateTime.UtcNow;
@@ -310,7 +311,7 @@ namespace NibrasWeb.Service
 
             await _context.SaveChangesAsync();
 
-            return await GetByIdAsync(offer.Id) ?? throw new InvalidOperationException("Reject failed.");
+            return await GetByIdAsync(offer.Id) ?? throw new BusinessRuleException("Reject failed.");
         }
 
         public async Task<OfferDto> WithdrawAsync(int offerId, int investorId)
@@ -319,15 +320,15 @@ namespace NibrasWeb.Service
 
             var actor = await GetUserAsync(investorId);
             if (actor.Role.Name != RoleNames.Investor)
-                throw new UnauthorizedAccessException("Only investors can withdraw offers.");
+                throw new ForbiddenException("Only investors can withdraw offers.");
             if (offer.InvestorId != investorId)
-                throw new UnauthorizedAccessException("You can only withdraw your own offer.");
+                throw new ForbiddenException("You can only withdraw your own offer.");
 
             if (offer.Status == OfferStatus.Accepted ||
                 offer.Status == OfferStatus.Closed ||
                 offer.Status == OfferStatus.RejectedByAdmin)
             {
-                throw new InvalidOperationException("This offer cannot be withdrawn in its current state.");
+                throw new BusinessRuleException("This offer cannot be withdrawn in its current state.");
             }
 
             offer.Status = OfferStatus.WithdrawnByInvestor;
@@ -345,32 +346,32 @@ namespace NibrasWeb.Service
 
             await _context.SaveChangesAsync();
 
-            return await GetByIdAsync(offer.Id) ?? throw new InvalidOperationException("Withdraw failed.");
+            return await GetByIdAsync(offer.Id) ?? throw new BusinessRuleException("Withdraw failed.");
         }
 
         public async Task<OfferDto> AdminApproveAsync(int offerId, int adminId) // we need transaction for the security
         {
             var admin = await GetUserAsync(adminId);
             if (admin.Role.Name != RoleNames.Admin && admin.Role.Name != RoleNames.SuperAdmin)
-                throw new UnauthorizedAccessException("Only admins can approve offers.");
+                throw new ForbiddenException("Only admins can approve offers.");
 
             var offer = await _context.Offers
                 .Include(o => o.Land).ThenInclude(l => l.Grid).ThenInclude(g => g.GridCapacityReservations)
                 .Include(o => o.OfferVersions)
                 .FirstOrDefaultAsync(o => o.Id == offerId)
-                ?? throw new KeyNotFoundException("Offer not found.");
+                ?? throw new NotFoundException("Offer not found.");
 
             if (offer.Status != OfferStatus.PendingAdminApproval)
-                throw new InvalidOperationException("Only offers pending admin approval can be approved.");
+                throw new BusinessRuleException("Only offers pending admin approval can be approved.");
 
             var currentVersion = offer.OfferVersions.FirstOrDefault(v => v.IsCurrent)
                 ?? offer.OfferVersions.OrderByDescending(v => v.VersionNumber).FirstOrDefault();
             if (currentVersion == null)
-                throw new InvalidOperationException("Offer has no versions to approve.");
+                throw new BusinessRuleException("Offer has no versions to approve.");
 
             var totalReservedMw = offer.Land.Grid.GridCapacityReservations.Sum(r => r.ReservedMw);
             if ((totalReservedMw + offer.RequiredCapacityMw) > offer.Land.Grid.CapacityMw)
-                throw new InvalidOperationException("No capacity left in this electrical grid.");
+                throw new BusinessRuleException("No capacity left in this electrical grid.");
 
             _context.GridCapacityReservations.Add(new GridCapacityReservation
             {
@@ -421,19 +422,19 @@ namespace NibrasWeb.Service
 
             await _context.SaveChangesAsync();
 
-            return await GetByIdAsync(offer.Id) ?? throw new InvalidOperationException("Approval failed.");
+            return await GetByIdAsync(offer.Id) ?? throw new BusinessRuleException("Approval failed.");
         }
 
         public async Task<OfferDto> AdminRejectAsync(int offerId, int adminId, string reason) // it will be stored in Version + History
         {
             var admin = await GetUserAsync(adminId);
             if (admin.Role.Name != RoleNames.Admin && admin.Role.Name != RoleNames.SuperAdmin)
-                throw new UnauthorizedAccessException("Only admins can reject offers.");
+                throw new ForbiddenException("Only admins can reject offers.");
 
             var offer = await GetOfferForActionAsync(offerId, adminId);
 
             if (offer.Status != OfferStatus.PendingAdminApproval)
-                throw new InvalidOperationException("Only offers pending admin approval can be rejected.");
+                throw new BusinessRuleException("Only offers pending admin approval can be rejected.");
 
             offer.Status = OfferStatus.RejectedByAdmin;
             offer.UpdatedAt = DateTime.UtcNow;
@@ -455,7 +456,7 @@ namespace NibrasWeb.Service
 
             await _context.SaveChangesAsync();
 
-            return await GetByIdAsync(offer.Id) ?? throw new InvalidOperationException("Rejection failed.");
+            return await GetByIdAsync(offer.Id) ?? throw new BusinessRuleException("Rejection failed.");
         }
 
         public async Task<List<OfferNegotiationHistoryDto>> GetNegotiationHistoryAsync(int offerId, int requestingUserId) // foreach + IsCurrent
@@ -464,12 +465,12 @@ namespace NibrasWeb.Service
             var offer = await _context.Offers
                 .Include(o => o.Land)
                 .FirstOrDefaultAsync(o => o.Id == offerId)
-                ?? throw new KeyNotFoundException("Offer not found.");
+                ?? throw new NotFoundException("Offer not found.");
 
             var isAdmin = user.Role.Name == RoleNames.Admin || user.Role.Name == RoleNames.SuperAdmin;
             var isParty = offer.InvestorId == requestingUserId || offer.Land.LandlordId == requestingUserId;
             if (!isAdmin && !isParty)
-                throw new UnauthorizedAccessException("You are not authorized to view this negotiation history.");
+                throw new ForbiddenException("You are not authorized to view this negotiation history.");
 
             var history = await _context.OfferNegotiationHistories
                 .Include(h => h.Actor).ThenInclude(a => a.Role)
@@ -494,11 +495,11 @@ namespace NibrasWeb.Service
         public async Task MarkOfferClosedAsync(int offerId, int contractId, int performedByUserId)
         {
             var offer = await _context.Offers.FirstOrDefaultAsync(o => o.Id == offerId)
-                ?? throw new KeyNotFoundException("Offer not found.");
+                ?? throw new NotFoundException("Offer not found.");
 
             var contractExists = await _context.Contracts.AnyAsync(c => c.Id == contractId);
             if (!contractExists)
-                throw new KeyNotFoundException("Contract not found.");
+                throw new NotFoundException("Contract not found.");
 
             offer.Status = OfferStatus.Closed;
             offer.UpdatedAt = DateTime.UtcNow;
@@ -520,8 +521,8 @@ namespace NibrasWeb.Service
         {
             return await _context.Users
                 .Include(u => u.Role)
-                .FirstOrDefaultAsync(u => u.Id == userId)
-                ?? throw new KeyNotFoundException("User not found.");
+                .FirstOrDefaultAsync(u => u.Id == userId && !u.IsDeleted)
+                ?? throw new NotFoundException("User not found.");
         }
 
         private async Task<Offer> GetOfferForActionAsync(int offerId, int userId)
@@ -530,13 +531,13 @@ namespace NibrasWeb.Service
                 .Include(o => o.Land)
                 .Include(o => o.OfferVersions)
                 .FirstOrDefaultAsync(o => o.Id == offerId)
-                ?? throw new KeyNotFoundException("Offer not found.");
+                ?? throw new NotFoundException("Offer not found.");
 
             var user = await GetUserAsync(userId);
             var isAdmin = user.Role.Name == RoleNames.Admin || user.Role.Name == RoleNames.SuperAdmin;
             var isParty = offer.InvestorId == userId || offer.Land.LandlordId == userId;
             if (!isAdmin && !isParty)
-                throw new UnauthorizedAccessException("You are not authorized to act on this offer.");
+                throw new ForbiddenException("You are not authorized to act on this offer.");
 
             return offer;
         }
@@ -545,7 +546,7 @@ namespace NibrasWeb.Service
         {
             if (Enum.TryParse<OfferStatus>(status, true, out var parsed))
                 return parsed;
-            throw new ArgumentException($"Unknown offer status: {status}");
+            throw new ValidationFailedException($"Unknown offer status: {status}");
         }
 
         private async Task<OfferDto> ToDtoAsync(Offer offer)

@@ -1,4 +1,6 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using NIBRAS.Models;
 using NIBRAS.API.DTOs;
 using NIBRAS.API.Services;
 
@@ -36,6 +38,7 @@ public class GridsController : ControllerBase
     }
 
     [HttpPost]
+    [Authorize(Roles = RoleNames.Admin + "," + RoleNames.SuperAdmin)]
     public async Task<ActionResult<GridDto>> Create(CreateGridRequest request)
     {
         var grid = await _gridService.CreateAsync(request);
@@ -43,6 +46,7 @@ public class GridsController : ControllerBase
     }
 
     [HttpPut("{id}")]
+    [Authorize(Roles = RoleNames.Admin + "," + RoleNames.SuperAdmin)]
     public async Task<IActionResult> Update(int id, UpdateGridRequest request)
     {
         var result = await _gridService.UpdateAsync(id, request);
@@ -56,6 +60,7 @@ public class GridsController : ControllerBase
     }
 
     [HttpDelete("{id}")]
+    [Authorize(Roles = RoleNames.Admin + "," + RoleNames.SuperAdmin)]
     public async Task<IActionResult> Delete(int id)
     {
         var result = await _gridService.DeleteAsync(id);

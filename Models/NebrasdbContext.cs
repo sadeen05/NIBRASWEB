@@ -494,7 +494,6 @@ public partial class NebrasdbContext : DbContext
                 .OnDelete(DeleteBehavior.ClientSetNull)
                 .HasConstraintName("FK_USERS_ROLES");
 
-            entity.HasQueryFilter(e => !e.IsDeleted);
             });
 
         // === SEED DATA ===
