@@ -22,7 +22,10 @@ public class CreateLandRequest
     [Required, NoControlCharacters, MaxLength(100)]
     public string ParcelNumber { get; set; } = "";
 
-    [Range(typeof(decimal), "0.0001", "1000000000")]
+    // Upper bound matches the LANDS.AREA_DONUM column, decimal(10,2) (SEC-14 / 4.10:
+    // numbers have Range matching the DB column). A larger bound would pass validation
+    // and then fail at the database with an arithmetic overflow (generic 500).
+    [Range(typeof(decimal), "0.0001", "99999999.99")]
     public decimal AreaDonum { get; set; }
 
     [Range(typeof(decimal), "0", "100")]

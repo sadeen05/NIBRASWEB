@@ -23,4 +23,10 @@ public interface ILandService
     Task<LandEligibilityResponse> GetEligibilityAsync(int id);
 
     Task<List<LandStatusHistoryDto>> GetAllStatusHistoryAsync(int landId);
+
+    Task<LandDocumentDto> UploadDocumentAsync(int landId, UploadLandDocumentRequest request);
+
+    Task<List<LandDocumentDto>> GetDocumentsAsync(int landId);
+
+    Task<LandDocumentDto> ReviewDocumentAsync(int landId, int documentId, ReviewLandDocumentRequest request);
 }

@@ -68,9 +68,9 @@ public class LandsController : ControllerBase
     }
 
     [HttpPost("{id}/reject")]
-    public async Task<IActionResult> Reject(int id, [FromQuery] string reason)
+    public async Task<IActionResult> Reject(int id, RejectLandRequest request)
     {
-        await _landService.RejectAsync(id, reason);
+        await _landService.RejectAsync(id, request.Reason);
         return Ok(new { message = "Land rejected." });
     }
 
@@ -84,5 +84,24 @@ public class LandsController : ControllerBase
     public async Task<ActionResult<List<LandStatusHistoryDto>>> GetHistory(int id)
     {
         return Ok(await _landService.GetAllStatusHistoryAsync(id));
+    }
+
+    [HttpPost("{id}/documents")]
+    public async Task<ActionResult<LandDocumentDto>> UploadDocument(int id, UploadLandDocumentRequest request)
+    {
+        var document = await _landService.UploadDocumentAsync(id, request);
+        return Created($"/api/lands/{id}/documents", document);
+    }
+
+    [HttpGet("{id}/documents")]
+    public async Task<ActionResult<List<LandDocumentDto>>> GetDocuments(int id)
+    {
+        return Ok(await _landService.GetDocumentsAsync(id));
+    }
+
+    [HttpPut("{id}/documents/{documentId}/review")]
+    public async Task<ActionResult<LandDocumentDto>> ReviewDocument(int id, int documentId, ReviewLandDocumentRequest request)
+    {
+        return Ok(await _landService.ReviewDocumentAsync(id, documentId, request));
     }
 }
