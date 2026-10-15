@@ -358,6 +358,58 @@ try {
   $expRel = if ($sT -eq 200) { '1' } else { '0' }
   Check 'S6-100' 'race: reservation released iff terminated' $expRel $c6Rel
 
+  # ================= Step 7 F1/F2: reservation expiry + unsigned rejection =================
+  Write-Output ''
+  Write-Output '== Step 7 F1/F2: reservation expiry + unsigned rejection =='
+
+  # F1: approval clears the reservation's hold expiry (EXPIRES_AT -> NULL)
+  $L7 = Create-Land "S6-L7-$stamp" "S6P-L7-$stamp" $grid $laTok $admin
+  $o7 = Accept-Approve $L7 $i1Tok
+  $r = Call 'POST' '/api/contracts' @{ offerId = $o7 } $admin
+  if ($r.Status -ne 201) { throw "F1 setup: contract create failed ($($r.Status))" }
+  $c7 = [int](($r.Body | ConvertFrom-Json).id)
+  $expBefore = Sql "SELECT CAST(COUNT(*) AS varchar(2)) FROM GRID_CAPACITY_RESERVATIONS WHERE CONTRACT_ID = $c7 AND EXPIRES_AT IS NOT NULL;"
+  Check 'S6-101' 'F1: reservation carries a hold expiry before approval' 1 $expBefore
+  $null = Call 'POST' "/api/contracts/$c7/sign" $null $i1Tok
+  $null = Call 'POST' "/api/contracts/$c7/sign" $null $laTok
+  $r = Call 'POST' "/api/contracts/$c7/review" @{ approve = $true } $admin
+  Check 'S6-102' 'F1: approval succeeds once both parties signed' 200 $r.Status
+  $expAfter = Sql "SELECT CAST(COUNT(*) AS varchar(2)) FROM GRID_CAPACITY_RESERVATIONS WHERE CONTRACT_ID = $c7 AND EXPIRES_AT IS NULL;"
+  Check 'S6-103' 'F1: approval clears the reservation hold expiry' 1 $expAfter
+
+  # F1: an expired hold cannot become a contract
+  $L8 = Create-Land "S6-L8-$stamp" "S6P-L8-$stamp" $grid $laTok $admin
+  $o8 = Accept-Approve $L8 $i1Tok
+  # sqlcmd defaults QUOTED_IDENTIFIER/ANSI_NULLS OFF; this table requires them ON for DML.
+  $null = Sql "SET QUOTED_IDENTIFIER ON; SET ANSI_NULLS ON; UPDATE GRID_CAPACITY_RESERVATIONS SET EXPIRES_AT = DATEADD(day, -1, GETUTCDATE()) WHERE OFFER_ID = $o8;"
+  $expSet = Sql "SELECT CAST(COUNT(*) AS varchar(2)) FROM GRID_CAPACITY_RESERVATIONS WHERE OFFER_ID = $o8 AND EXPIRES_AT <= GETUTCDATE();"
+  if ($expSet -ne '1') { throw "F1 setup: failed to expire the reservation (count=$expSet)" }
+  $r = Call 'POST' '/api/contracts' @{ offerId = $o8 } $admin
+  Check 'S6-104' 'F1: expired reservation -> 409' 409 $r.Status
+  Check 'S6-105' 'F1: exact expiry message' 'The grid reservation for this offer has expired.' ([string](($r.Body | ConvertFrom-Json).detail))
+
+  # F2: rejection is allowed while unsigned; approval still is not
+  $L9 = Create-Land "S6-L9-$stamp" "S6P-L9-$stamp" $grid $laTok $admin
+  $o9 = Accept-Approve $L9 $i1Tok
+  $r = Call 'POST' '/api/contracts' @{ offerId = $o9 } $admin
+  if ($r.Status -ne 201) { throw "F2 setup: contract create failed ($($r.Status))" }
+  $c9 = [int](($r.Body | ConvertFrom-Json).id)
+  $r = Call 'POST' "/api/contracts/$c9/review" @{ approve = $true } $admin
+  Check 'S6-106' 'F2: approve with no signatures -> 409' 409 $r.Status
+  $r = Call 'POST' "/api/contracts/$c9/review" @{ approve = $false } $admin
+  Check 'S6-107' 'F2: unsigned reject without reason -> 400' 400 $r.Status
+  $r = Call 'POST' "/api/contracts/$c9/review" @{ approve = $false; reason = 'Unsigned rejection' } $admin
+  Check 'S6-108' 'F2: unsigned reject with reason -> 200' 200 $r.Status
+  Check 'S6-109' 'F2: contract Rejected' 'Rejected' ([string](($r.Body | ConvertFrom-Json).status))
+  $relC9 = Sql "SELECT CAST(COUNT(*) AS varchar(2)) FROM GRID_CAPACITY_RESERVATIONS WHERE CONTRACT_ID = $c9 AND RELEASED_AT IS NOT NULL;"
+  Check 'S6-110' 'F2: reservation released on unsigned rejection' 1 $relC9
+  $landC9 = Sql "SELECT CAST(LAND_STATUS_ID AS varchar(2)) FROM LANDS WHERE ID = $L9;"
+  Check 'S6-111' 'F2: land back to Verified(3)' 3 $landC9
+  $histC9 = Sql "SELECT CAST(COUNT(*) AS varchar(2)) FROM LAND_STATUS_HISTORY WHERE LAND_ID = $L9 AND STATUS_ID = 3;"
+  Check 'S6-112' 'F2: land history row created' 'True' ([string]([int]$histC9 -ge 1))
+  $r = Call 'POST' "/api/contracts/$c9/review" @{ approve = $true } $admin
+  Check 'S6-113' 'F2: review of a non-PendingSignatures contract -> 409' 409 $r.Status
+
   $pass = @($rows | Where-Object { $_.Result -eq 'PASS' }).Count
   $fail = @($rows | Where-Object { $_.Result -eq 'FAIL' }).Count
   Write-Output ''

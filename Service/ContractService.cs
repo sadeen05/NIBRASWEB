@@ -14,6 +14,8 @@ namespace NIBRAS.API.Services;
 /// terminates an Active contract. Review/terminate release the linked grid reservation and
 /// return the land to Verified. Cancellation, force-terminate, background jobs and
 /// ProjectApproval tracking are intentionally out of scope.
+/// Step 7 hardening (F1/F2): creation refuses an expired hold, approval clears the
+/// reservation's hold expiry, and rejection is permitted before both parties sign.
 /// </summary>
 public class ContractService : IContractService
 {
@@ -114,6 +116,11 @@ public class ContractService : IContractService
             .FirstOrDefaultAsync(r => r.OfferId == offer.Id && r.ReleasedAt == null)
             ?? throw new BusinessRuleException("This offer has no active grid reservation.");
 
+        // Step 7 F1: an expired hold cannot become a contract. An active reservation is
+        // ReleasedAt IS NULL and (ExpiresAt IS NULL or ExpiresAt in the future).
+        if (reservation.ExpiresAt is { } expiresAt && expiresAt <= DateTime.UtcNow)
+            throw new BusinessRuleException("The grid reservation for this offer has expired.");
+
         await using var transaction = await _context.Database.BeginTransactionAsync();
 
         var contract = new Contract
@@ -191,20 +198,27 @@ public class ContractService : IContractService
 
         if (contract.Status != ContractStatus.PendingSignatures)
             throw new BusinessRuleException("Only contracts pending signatures can be reviewed.");
-        if (contract.InvestorSignedAt is null || contract.LandlordSignedAt is null)
-            throw new BusinessRuleException("Both parties must sign before the contract can be reviewed.");
 
         var now = DateTime.UtcNow;
 
         if (request.Approve)
         {
+            // Step 7 F2: approval still requires both parties to have signed.
+            if (contract.InvestorSignedAt is null || contract.LandlordSignedAt is null)
+                throw new BusinessRuleException("Both parties must sign before the contract can be reviewed.");
+
             contract.Status = ContractStatus.Active;
             contract.AdminReviewedAt = now;
             contract.AdminSignedAt = now;
             AddReview(contract.Id, adminId, ContractReviewDecisions.Approved, null, now);
+
+            // Step 7 F1: an approved contract's reservation becomes permanent (no hold expiry).
+            await ClearReservationExpiryAsync(contract);
         }
         else
         {
+            // Step 7 F2: rejection requires a reason but NOT signatures, so an unsigned
+            // contract can still be rejected (releasing the hold and returning the land).
             if (string.IsNullOrWhiteSpace(request.Reason))
                 throw new ValidationFailedException("A rejection reason is required.");
 
@@ -352,6 +366,20 @@ public class ContractService : IContractService
         reservation.ReleaseReason = reason.Length <= ReleaseReasonMaxLength
             ? reason
             : reason[..ReleaseReasonMaxLength];
+    }
+
+    /// <summary>
+    /// Step 7 F1: clears the linked reservation's hold expiry when its contract is approved,
+    /// so an Active contract's reservation no longer expires. No-op if the reservation is missing.
+    /// </summary>
+    private async Task ClearReservationExpiryAsync(Contract contract)
+    {
+        var reservation = await _context.GridCapacityReservations
+            .FirstOrDefaultAsync(r => r.ContractId == contract.Id);
+        if (reservation is null)
+            return;
+
+        reservation.ExpiresAt = null;
     }
 
     /// <summary>Returns the land to Verified and appends one land-status history row.</summary>

@@ -26,6 +26,8 @@
 @pendingOfferId = <non-accepted-offer-id>
 @contractId = <contract-id>
 @nonSignedContractId = <contract-id>
+@expiredOfferId = <offer-id-with-expired-reservation>
+@unsignedContractId = <unsigned-contract-id>
 
 # ================= Creation =================
 
@@ -235,6 +237,54 @@ Content-Type: application/json
 
 ### Review a contract whose land was verified under the older criterion - EXPECTED: 200 (Active; no re-verification during review)
 POST {{baseUrl}}/api/contracts/{{nonSignedContractId}}/review
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{ "approve": true }
+
+# ================= Step 7 hardening: F1 (reservation expiry) / F2 (unsigned rejection) =================
+# Executed by docs/tests/scripts/s6_contracts.ps1 (driver is the evidence): S6-101..S6-113.
+
+### F1: reservation carries a hold expiry before approval - EXPECTED: EXPIRES_AT IS NOT NULL (S6-101)
+#   SELECT COUNT(*) FROM GRID_CAPACITY_RESERVATIONS WHERE CONTRACT_ID = c7 AND EXPIRES_AT IS NOT NULL  =>  1
+
+### F1: approval clears the reservation hold expiry - EXPECTED: 200, then EXPIRES_AT IS NULL (S6-102, S6-103)
+POST {{baseUrl}}/api/contracts/{{contractId}}/review
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{ "approve": true }
+
+### F1: an expired reservation cannot become a contract - EXPECTED: 409, detail "The grid reservation for this offer has expired." (S6-104, S6-105)
+POST {{baseUrl}}/api/contracts
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{ "offerId": {{expiredOfferId}} }
+
+### F2: approve with no signatures - EXPECTED: 409 (S6-106)
+POST {{baseUrl}}/api/contracts/{{unsignedContractId}}/review
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{ "approve": true }
+
+### F2: reject an unsigned contract without a reason - EXPECTED: 400 (S6-107)
+POST {{baseUrl}}/api/contracts/{{unsignedContractId}}/review
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{ "approve": false }
+
+### F2: reject an unsigned contract with a reason - EXPECTED: 200 (Rejected; reservation released; land Verified + history) (S6-108..S6-112)
+POST {{baseUrl}}/api/contracts/{{unsignedContractId}}/review
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{ "approve": false, "reason": "Unsigned rejection" }
+
+### F2: review a non-PendingSignatures contract - EXPECTED: 409 (S6-113)
+POST {{baseUrl}}/api/contracts/{{unsignedContractId}}/review
 Authorization: Bearer {{adminToken}}
 Content-Type: application/json
 
