@@ -19,7 +19,11 @@ public partial class NebrasdbContext : DbContext
     {
         if (!optionsBuilder.IsConfigured)
         {
-            optionsBuilder.UseSqlServer("Server=SADEEN\\SQLEXPRESS;Database=NEBRASDB;Trusted_Connection=True;TrustServerCertificate=True;");
+            // No hard-coded fallback target: the database must be supplied through
+            // ConnectionStrings:DefaultConnection and validated by DatabaseTargetGuard.
+            throw new InvalidOperationException(
+                "NebrasdbContext was created without configured options. Configure the database target through " +
+                "ConnectionStrings:DefaultConnection (see DatabaseTargetGuard); no fallback database is used.");
         }
     }
 

@@ -150,6 +150,17 @@ builder.Services.AddSwaggerGen(options =>
 
 var app = builder.Build();
 
+// Fail fast before any database access or seeding: the resolved target must be
+// configured, and the production-like database is denied in every environment
+// unless its exact name is explicitly approved through deployment configuration.
+var databaseTarget = DatabaseTargetGuard.Validate(
+    app.Configuration.GetConnectionString("DefaultConnection"),
+    app.Configuration[DatabaseTargetGuard.ApprovedProductionLikeTargetsKey]);
+app.Logger.LogInformation(
+    "Database target: {Server}/{Database}",
+    databaseTarget.Server,
+    databaseTarget.Database);
+
 if (app.Environment.IsDevelopment())
 {
     await SuperAdminSeeder.SeedAsync(app.Services, app.Configuration, app.Environment);
