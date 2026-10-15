@@ -7,7 +7,7 @@ $base    = 'http://localhost:5181'
 $stamp   = (Get-Date).ToUniversalTime().ToString('yyyyMMddHHmmss')
 $pw = if ($env:NIBRAS_TEST_PASSWORD) { $env:NIBRAS_TEST_PASSWORD } else { 'T5t!N1' + [guid]::NewGuid().ToString('N').Substring(0,10) } # runtime-generated credential, never a literal
 $sqlcmd  = 'sqlcmd'   # resolved from PATH
-$server  = 'SADEEN\SQLEXPRESS'
+$server  = if ($env:NIBRAS_SQL_SERVER) { $env:NIBRAS_SQL_SERVER } else { '.\SQLEXPRESS' }
 $db      = 'NEBRASDB_Step1'   # approved target database (addendum)
 
 $client = New-Object System.Net.Http.HttpClient
@@ -15,6 +15,7 @@ $client.Timeout = [TimeSpan]::FromSeconds(60)
 
 $script:pass = 0
 $script:fail = 0
+$script:sqlFail = 0
 $script:lines = New-Object System.Collections.Generic.List[string]
 
 function Log([string]$s) { $script:lines.Add($s); Write-Host $s }
@@ -145,11 +146,32 @@ Assert 'query-string access_token (401)' 401 (Call GET ("/api/auth/me?access_tok
 # NOTE: the rate-limit boundary moved to the dedicated script step3_ratelimit.ps1,
 # which runs against a fresh app start with RateLimit__AuthPerMinute=5 (see README.md).
 
+function Invoke-SqlScalar {
+  param([string]$Query)
+  # Materialise the COMPLETE native output before filtering. Piping sqlcmd into
+  # `Select-Object -First` closes its stdout early, and this sqlcmd build then exits -1 even
+  # though the query succeeded; so collect all output, capture $LASTEXITCODE immediately
+  # after sqlcmd finishes, and only then select the row in memory.
+  $raw = @(& $sqlcmd -S $server -d $db -E -b -h -1 -W -Q $Query 2>&1 | ForEach-Object { [string]$_ })
+  $rc = $LASTEXITCODE
+  $rows = @($raw | Where-Object { $_ -ne '' })
+  return [pscustomobject]@{
+    ExitCode = $rc
+    Value    = $(if ($rows.Count -gt 0) { [string]$rows[0] } else { '' })
+    Output   = ($rows -join ' ')
+  }
+}
+
 Log "==================== PHASE D (approved DB mutation: role change + restore) ===================="
 Log ("  target disposable row ID={0} (is_deleted/role checked via read-only query)" -f $rcId)
 
 $schemaQ = "SET NOCOUNT ON; SELECT ROLE_ID FROM USERS WHERE ID = $rcId;"
-$before = (& $sqlcmd -S $server -d $db -E -b -h -1 -W -Q $schemaQ | Where-Object { $_ -ne '' } | Select-Object -First 1)
+$snapshot = Invoke-SqlScalar $schemaQ
+$before = $snapshot.Value
+if ($snapshot.ExitCode -ne 0) {
+  $script:sqlFail++
+  Log ("  ERROR: ROLE_ID snapshot query failed (sqlcmd rc={0}): {1}" -f $snapshot.ExitCode, $snapshot.Output)
+}
 Log ("  snapshot: ROLE_ID before = {0}" -f $before)
 
 $meBefore = Call GET '/api/auth/me' $rcToken $null
@@ -157,9 +179,20 @@ Assert 'role-change: /me before mutation (200)' 200 $meBefore | Out-Null
 
 $mutQ = "SET NOCOUNT ON; UPDATE USERS SET ROLE_ID = 2 WHERE ID = $rcId;"
 & $sqlcmd -S $server -d $db -E -b -h -1 -W -Q $mutQ | Out-Null
-Log "  mutation applied: ROLE_ID 1 -> 2 (Investor)"
+$mutRc = $LASTEXITCODE
+if ($mutRc -eq 0) {
+  Log "  mutation applied: ROLE_ID 1 -> 2 (Investor)"
+} else {
+  $script:sqlFail++
+  Log ("  ERROR: ROLE_ID mutation failed (sqlcmd rc={0})" -f $mutRc)
+}
 
-$after = (& $sqlcmd -S $server -d $db -E -b -h -1 -W -Q $schemaQ | Where-Object { $_ -ne '' } | Select-Object -First 1)
+$afterSnap = Invoke-SqlScalar $schemaQ
+$after = $afterSnap.Value
+if ($afterSnap.ExitCode -ne 0) {
+  $script:sqlFail++
+  Log ("  ERROR: post-mutation verify query failed (sqlcmd rc={0}): {1}" -f $afterSnap.ExitCode, $afterSnap.Output)
+}
 Log ("  verify: ROLE_ID after mutation = {0}" -f $after)
 
 $meAfter = Call GET '/api/auth/me' $rcToken $null
@@ -167,18 +200,31 @@ Assert 'role-change: old token now 401' 401 $meAfter | Out-Null
 
 $restoreQ = "SET NOCOUNT ON; UPDATE USERS SET ROLE_ID = $before WHERE ID = $rcId;"
 & $sqlcmd -S $server -d $db -E -b -h -1 -W -Q $restoreQ | Out-Null
-$restored = (& $sqlcmd -S $server -d $db -E -b -h -1 -W -Q $schemaQ | Where-Object { $_ -ne '' } | Select-Object -First 1)
+$restoreRc = $LASTEXITCODE
+if ($restoreRc -ne 0) {
+  $script:sqlFail++
+  Log ("  ERROR: RESTORE failed (sqlcmd rc={0}) - the disposable row may be left mutated" -f $restoreRc)
+}
+$restoredSnap = Invoke-SqlScalar $schemaQ
+$restored = $restoredSnap.Value
+if ($restoredSnap.ExitCode -ne 0) {
+  $script:sqlFail++
+  Log ("  ERROR: restore verification query failed (sqlcmd rc={0}): {1}" -f $restoredSnap.ExitCode, $restoredSnap.Output)
+}
 Log ("  restore applied: ROLE_ID -> {0}" -f $restored)
 
 $meRestored = Call GET '/api/auth/me' $rcToken $null
 Assert 'role-change: /me after restore (200)' 200 $meRestored | Out-Null
-$restoreOk = ($restored -eq $before)
+$restoreOk = ($restored -eq $before) -and ($restoreRc -eq 0) -and ($restoredSnap.ExitCode -eq 0)
 if ($restoreOk) { $script:pass++ } else { $script:fail++ }
 $restoreTag = if ($restoreOk) { 'PASS' } else { 'FAIL' }
 Log ("  restore verification: before={0} restored={1} -> {2}" -f $before,$restored,$restoreTag)
 
 Log "==================== SUMMARY ===================="
 Log ("PASS={0}  FAIL={1}" -f $script:pass,$script:fail)
+Log ("REQUIRED-SQL-FAILURES={0}" -f $script:sqlFail)
 $script:lines | Set-Content (Join-Path ([IO.Path]::GetTempPath()) 'step3_suite_results.txt')
-$global:suiteFail = $script:fail
-if ($script:fail -gt 0) { exit 1 }
+$global:suiteFail = $script:fail + $script:sqlFail
+# Explicit, Windows PowerShell 5.1-compatible exit: 0 only when every test passed AND every
+# required SQL operation (snapshot, mutation, restore, restore verification) succeeded.
+if ($script:fail -gt 0 -or $script:sqlFail -gt 0) { exit 1 } else { exit 0 }
