@@ -3,7 +3,7 @@ Add-Type -AssemblyName System.Net.Http
 $base = 'http://localhost:5181'
 $pw = if ($env:NIBRAS_TEST_PASSWORD) { $env:NIBRAS_TEST_PASSWORD } else { 'T5t!N1' + [guid]::NewGuid().ToString('N').Substring(0,10) } # runtime-generated credential, never a literal
 $stamp = (Get-Date).ToString('HHmmss') + (Get-Random -Minimum 100 -Maximum 999)
-$sqlServer = 'SADEEN\SQLEXPRESS'
+$sqlServer = if ($env:NIBRAS_SQL_SERVER) { $env:NIBRAS_SQL_SERVER } else { '.\SQLEXPRESS' }
 $db = 'NEBRASDB_Step1'
 $rows = New-Object System.Collections.ArrayList
 
@@ -24,7 +24,7 @@ function Check([string]$Id, [string]$Desc, $Expected, $Actual) {
 }
 function Q([string]$sql) { ((sqlcmd -S $sqlServer -E -d $db -W -h -1 -Q "SET NOCOUNT ON; $sql" 2>&1) -join ' ').Trim() }
 function New-Land([string]$ln, [string]$parcel, [decimal]$slope) {
-  @{ regionId = 2; gridId = 2; landNumber = $ln; village = 'Village-ADM'; basin = 'Basin-ADM';
+  @{ regionId = $fx.PrimaryRegionId; gridId = $fx.PrimaryGridId; landNumber = $ln; village = 'Village-ADM'; basin = 'Basin-ADM';
      parcelNumber = $parcel; areaDonum = 100; slopePercentage = $slope; distanceToGridKm = 10;
      solarIrradiance = 6; elevationM = 100 }
 }
@@ -56,6 +56,12 @@ $r = Call 'POST' '/api/auth/register' @{ fullName = 'Admin-Test Investor'; email
 Check 'A-01' 'register investor (unapproved)' 200 $r.Status
 $invId = ($r.Body | ConvertFrom-Json).id
 $inv = (Call 'POST' '/api/auth/login' @{ email = $invEmail; password = $pw } | ForEach-Object { ($_.Body | ConvertFrom-Json).token })
+
+# Shared, idempotent test fixtures: resolve the test region/grid IDs by name (never
+# assume numeric IDs). Created only when missing; nothing is deleted or overwritten.
+. (Join-Path $PSScriptRoot 'test_fixtures.ps1')
+$fx = Ensure-TestFixtures -SqlServer $sqlServer -Database $db
+Write-Output "fixtures: primaryRegion=$($fx.PrimaryRegionId) primaryGrid=$($fx.PrimaryGridId) secondaryRegion=$($fx.SecondaryRegionId)"
 
 # --- create three pending lands ---
 $r = Call 'POST' '/api/lands' (New-Land "ADM-L1-$stamp" "PA1-$stamp" 5) $la

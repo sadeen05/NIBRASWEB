@@ -1,4 +1,6 @@
 $ErrorActionPreference = 'Stop'
+$sqlServer = if ($env:NIBRAS_SQL_SERVER) { $env:NIBRAS_SQL_SERVER } else { '.\SQLEXPRESS' }
+$dbName = 'NEBRASDB_Step1'
 $base = 'http://localhost:5181'
 $pw = if ($env:NIBRAS_TEST_PASSWORD) { $env:NIBRAS_TEST_PASSWORD } else { 'T5t!N1' + [guid]::NewGuid().ToString('N').Substring(0,10) } # runtime-generated credential, never a literal
 $stamp = (Get-Date).ToString('HHmmss') + (Get-Random -Minimum 100 -Maximum 999)
@@ -57,10 +59,16 @@ $bToken = Login $lbEmail
 $iToken = Login $inEmail
 Write-Output 'logins: landlord A, landlord B, investor -> all 200 (tokens held in memory only)'
 
+# Shared, idempotent test fixtures: resolve the test region/grid IDs by name (never
+# assume numeric IDs). Created only when missing; nothing is deleted or overwritten.
+. (Join-Path $PSScriptRoot 'test_fixtures.ps1')
+$fx = Ensure-TestFixtures -SqlServer $sqlServer -Database $dbName
+Write-Output "fixtures: primaryRegion=$($fx.PrimaryRegionId) primaryGrid=$($fx.PrimaryGridId) secondaryRegion=$($fx.SecondaryRegionId)"
+
 Write-Output ''
 Write-Output '== CHECKPOINT A =='
 $create = @{
-  regionId = 2; gridId = 2; landNumber = "CP-$stamp"; village = 'Village-One'; basin = 'Basin-One'
+  regionId = $fx.PrimaryRegionId; gridId = $fx.PrimaryGridId; landNumber = "CP-$stamp"; village = 'Village-One'; basin = 'Basin-One'
   parcelNumber = "P-$stamp"; areaDonum = 25; slopePercentage = 5; distanceToGridKm = 10
   solarIrradiance = 6; elevationM = 100
 }

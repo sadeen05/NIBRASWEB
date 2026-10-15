@@ -3,7 +3,7 @@ Add-Type -AssemblyName System.Net.Http
 $base = 'http://localhost:5181'
 $pw = if ($env:NIBRAS_TEST_PASSWORD) { $env:NIBRAS_TEST_PASSWORD } else { 'T5t!N1' + [guid]::NewGuid().ToString('N').Substring(0,10) } # runtime-generated credential, never a literal
 $stamp = (Get-Date).ToString('HHmmss') + (Get-Random -Minimum 100 -Maximum 999)
-$sqlServer = 'SADEEN\SQLEXPRESS'
+$sqlServer = if ($env:NIBRAS_SQL_SERVER) { $env:NIBRAS_SQL_SERVER } else { '.\SQLEXPRESS' }
 $dbName = 'NEBRASDB_Step1'
 $rows = New-Object System.Collections.ArrayList
 
@@ -37,7 +37,7 @@ function Sql([string]$Query) {
 }
 
 function LandBody([string]$LandNumber, [string]$Parcel) {
-  return @{ regionId = 2; gridId = 2; landNumber = $LandNumber; village = 'Village-X'; basin = 'Basin-X'
+  return @{ regionId = $fx.PrimaryRegionId; gridId = $fx.PrimaryGridId; landNumber = $LandNumber; village = 'Village-X'; basin = 'Basin-X'
     parcelNumber = $Parcel; areaDonum = 25; slopePercentage = 5; distanceToGridKm = 10; solarIrradiance = 6; elevationM = 100 }
 }
 
@@ -46,6 +46,12 @@ $r = Call 'POST' '/api/auth/register' @{ fullName = 'S4X Landlord'; email = $ema
 $r = Call 'POST' '/api/auth/login' @{ email = $email; password = $pw }
 $tok = ($r.Body | ConvertFrom-Json).token
 Write-Output 'landlord created and logged in (token in memory only)'
+
+# Shared, idempotent test fixtures: resolve the test region/grid IDs by name (never
+# assume numeric IDs). Created only when missing; nothing is deleted or overwritten.
+. (Join-Path $PSScriptRoot 'test_fixtures.ps1')
+$fx = Ensure-TestFixtures -SqlServer $sqlServer -Database $dbName
+Write-Output "fixtures: primaryRegion=$($fx.PrimaryRegionId) primaryGrid=$($fx.PrimaryGridId) secondaryRegion=$($fx.SecondaryRegionId)"
 
 Write-Output ''
 Write-Output '== SEC-13 / SEC-17: control characters in filePath =='

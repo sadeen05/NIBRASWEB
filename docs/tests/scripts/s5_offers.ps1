@@ -3,7 +3,7 @@ Add-Type -AssemblyName System.Net.Http
 $base = 'http://localhost:5181'
 $pw = if ($env:NIBRAS_TEST_PASSWORD) { $env:NIBRAS_TEST_PASSWORD } else { 'T5t!N1' + [guid]::NewGuid().ToString('N').Substring(0,10) } # runtime-generated credential, never a literal
 $stamp = (Get-Date).ToString('HHmmss') + (Get-Random -Minimum 100 -Maximum 999)
-$sqlServer = 'SADEEN\SQLEXPRESS'
+$sqlServer = if ($env:NIBRAS_SQL_SERVER) { $env:NIBRAS_SQL_SERVER } else { '.\SQLEXPRESS' }
 $db = 'NEBRASDB_Step1'
 $rows = New-Object System.Collections.ArrayList
 $global:AuthCalls = 0
@@ -66,7 +66,7 @@ function Verify-Land([int]$landId, [string]$laTok, [string]$adminTok) {
   if ($r.Status -ne 200) { throw "land $landId verify failed: $($r.Status) body=$($r.Body)" }
 }
 function New-Land-Body([string]$ln, [string]$parcel, [int]$gid) {
-  @{ regionId = 2; gridId = $gid; landNumber = $ln; village = 'Village-S5'; basin = 'Basin-S5';
+  @{ regionId = $fx.PrimaryRegionId; gridId = $gid; landNumber = $ln; village = 'Village-S5'; basin = 'Basin-S5';
      parcelNumber = $parcel; areaDonum = 25; slopePercentage = 5; distanceToGridKm = 10;
      solarIrradiance = 6; elevationM = 100 }
 }
@@ -96,6 +96,14 @@ $admin = Login $adminEmail $adminPass
 Check 'S5-00' 'seeded SuperAdmin login' 200 200
 if (-not $admin) { Write-Output 'BLOCKED: admin login returned no token'; exit 3 }
 
+# Resolve the authenticated admin's own user id from GET /api/auth/me (its id comes from the
+# token's ClaimTypes.NameIdentifier, i.e. USERS.ID). S5-47b must prove the UnderContract
+# history row was written by THIS admin, not by "a user holding the SuperAdmin role" - the
+# database legitimately holds more than one such user.
+$r = Call 'GET' '/api/auth/me' $null $admin
+if ($r.Status -ne 200) { Write-Output "BLOCKED: admin /api/auth/me failed ($($r.Status))"; exit 3 }
+$adminId = [int](($r.Body | ConvertFrom-Json).id)
+
 $laEmail = "s5-$stamp-la@example.test"; $lbEmail = "s5-$stamp-lb@example.test"
 $i1Email = "s5-$stamp-i1@example.test"; $i2Email = "s5-$stamp-i2@example.test"
 $i3Email = "s5-$stamp-i3@example.test"; $uEmail = "s5-$stamp-u@example.test"
@@ -113,16 +121,22 @@ foreach ($id in @($i1Id, $i2Id, $i3Id)) {
 }
 Write-Output 'investors i1,i2,i3 approved (204)'
 
+# Shared, idempotent test fixtures: resolve the test region/grid IDs by name (never
+# assume numeric IDs). Created only when missing; nothing is deleted or overwritten.
+. (Join-Path $PSScriptRoot 'test_fixtures.ps1')
+$fx = Ensure-TestFixtures -SqlServer $sqlServer -Database $db
+Write-Output "fixtures: primaryRegion=$($fx.PrimaryRegionId) primaryGrid=$($fx.PrimaryGridId) secondaryRegion=$($fx.SecondaryRegionId)"
+
 # --- fixtures: 10-MW grid (G10) + Verified lands ---
-$r = Call 'POST' '/api/grids' @{ regionId = 2; name = "S5-G10-$stamp"; capacityMw = 10; status = 'Operational' } $admin
+$r = Call 'POST' '/api/grids' @{ regionId = $fx.PrimaryRegionId; name = "S5-G10-$stamp"; capacityMw = 10; status = 'Operational' } $admin
 Check 'S5-01' 'admin creates 10-MW grid' 201 $r.Status
 $g10 = [int](($r.Body | ConvertFrom-Json).id)
 
 $L1 = Create-Land "S5-L1-$stamp" "S5P-L1-$stamp" $g10 $laTok $admin        # S3 land
 $L1A = Create-Land "S5-L1A-$stamp" "S5P-L1A-$stamp" $g10 $laTok $admin      # S4 land A
 $L1B = Create-Land "S5-L1B-$stamp" "S5P-L1B-$stamp" $g10 $laTok $admin      # S4 land B
-$L2 = Create-Land "S5-L2-$stamp" "S5P-L2-$stamp" 2 $laTok $admin            # withdraw suite land
-$r = Call 'POST' '/api/lands' (New-Land-Body "S5-LRAW-$stamp" "S5P-LRAW-$stamp" 2) $laTok
+$L2 = Create-Land "S5-L2-$stamp" "S5P-L2-$stamp" $fx.PrimaryGridId $laTok $admin            # withdraw suite land
+$r = Call 'POST' '/api/lands' (New-Land-Body "S5-LRAW-$stamp" "S5P-LRAW-$stamp" $fx.PrimaryGridId) $laTok
 Check 'S5-02' 'draft land created (for not-verified 409)' 201 $r.Status
 $LRAW = [int](($r.Body | ConvertFrom-Json).id)
 Write-Output "lands: L1=$L1 L1A=$L1A L1B=$L1B L2=$L2 LRAW(draft)=$LRAW; grid10=$g10"
@@ -223,7 +237,7 @@ $accCount = Sql "SELECT CAST(COUNT(*) AS varchar(2)) FROM OFFERS WHERE LAND_ID =
 Check 'S5-53j' 'at most one Accepted offer per land (STATUS_ID=4)' 1 $accCount
 $landSt = Sql "SELECT CAST(LAND_STATUS_ID AS varchar(2)) FROM LANDS WHERE ID = $L1;"
 Check 'S5-47' 'DB L1 UnderContract(5)' 5 $landSt
-$hist = Sql "SELECT CAST(COUNT(*) AS varchar(2)) FROM LAND_STATUS_HISTORY WHERE LAND_ID = $L1 AND STATUS_ID = 5 AND CHANGED_BY_ID = (SELECT TOP 1 ID FROM USERS WHERE ROLE_ID = (SELECT TOP 1 ID FROM ROLES WHERE NAME = 'SuperAdmin'));"
+$hist = Sql "SELECT CAST(COUNT(*) AS varchar(2)) FROM LAND_STATUS_HISTORY WHERE LAND_ID = $L1 AND STATUS_ID = 5 AND CHANGED_BY_ID = $adminId;"
 Check 'S5-47b' 'DB L1 has UnderContract history row, actor=admin' 1 $hist
 $res = Sql "SELECT RESERVATION_TYPE + '|' + CAST(RESERVED_MW AS varchar(10)) + '|' + CAST(CASE WHEN RELEASED_AT IS NULL THEN 1 ELSE 0 END AS varchar(1)) + '|' + CAST(CASE WHEN EXPIRES_AT IS NULL THEN 0 ELSE 1 END AS varchar(1)) FROM GRID_CAPACITY_RESERVATIONS WHERE OFFER_ID = $oA;"
 Check 'S5-48' 'DB reservation Offer/2/active/with expiry' 'Offer|2.00|1|1' $res
@@ -268,7 +282,7 @@ Check 'S5-52' 'approve a competing offer while land UnderContract' 409 $r.Status
 # ================= F-3: competing-offer action raced against admin approval =================
 Write-Output ''
 Write-Output '== F-3: freeze race (admin approval vs competing withdraw) =='
-$r = Call 'POST' '/api/grids' @{ regionId = 2; name = "S5-F3G-$stamp"; capacityMw = 50; status = 'Operational' } $admin
+$r = Call 'POST' '/api/grids' @{ regionId = $fx.PrimaryRegionId; name = "S5-F3G-$stamp"; capacityMw = 50; status = 'Operational' } $admin
 Check 'S5-54-0' 'admin creates a dedicated grid for the F-3/F-2 fixtures' 201 $r.Status
 $gF3 = [int](($r.Body | ConvertFrom-Json).id)
 $jobScript = {

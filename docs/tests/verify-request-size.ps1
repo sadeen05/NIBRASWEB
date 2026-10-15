@@ -15,7 +15,7 @@
     start the application and performs no database access.
 
     Safety: use only a disposable test database (for example
-    NEBRASDB_Step3_Test on SADEEN\SQLEXPRESS) and the read-only login endpoint.
+    NEBRASDB_Step3_Test on your local SQL Server instance) and the read-only login endpoint.
     The login endpoint is rate limited (auth policy, default 10/min), so avoid
     running this in a tight loop.
 

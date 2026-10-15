@@ -26,7 +26,8 @@ function Start-S4App {
   $env:ASPNETCORE_URLS = "http://localhost:$Port"
   # Connection string override (env var set by the caller) wins; otherwise target NEBRASDB_Step1.
   if (-not $env:ConnectionStrings__DefaultConnection) {
-    $env:ConnectionStrings__DefaultConnection = 'Server=SADEEN\SQLEXPRESS;Database=NEBRASDB_Step1;Trusted_Connection=True;TrustServerCertificate=True;'
+    $sqlServer = if ($env:NIBRAS_SQL_SERVER) { $env:NIBRAS_SQL_SERVER } else { '.\SQLEXPRESS' }
+    $env:ConnectionStrings__DefaultConnection = "Server=$sqlServer;Database=NEBRASDB_Step1;Trusted_Connection=True;TrustServerCertificate=True;"
   }
   $env:RateLimit__AuthPerMinute = [string]$AuthPerMinute
   $out = Join-Path $script:LogDir "app_${Port}_out.log"

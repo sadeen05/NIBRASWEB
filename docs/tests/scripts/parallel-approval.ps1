@@ -28,7 +28,7 @@ Add-Type -AssemblyName System.Net.Http
 $base = 'http://localhost:5181'
 $pw = if ($env:NIBRAS_TEST_PASSWORD) { $env:NIBRAS_TEST_PASSWORD } else { 'T5t!N1' + [guid]::NewGuid().ToString('N').Substring(0,10) } # runtime-generated credential, never a literal
 $stamp = (Get-Date).ToString('HHmmss') + (Get-Random -Minimum 100 -Maximum 999)
-$sqlServer = 'SADEEN\SQLEXPRESS'
+$sqlServer = if ($env:NIBRAS_SQL_SERVER) { $env:NIBRAS_SQL_SERVER } else { '.\SQLEXPRESS' }
 $db = 'NEBRASDB_Step1'
 $fails = @()
 
@@ -91,8 +91,14 @@ foreach ($id in @($i1Id, $i2Id)) {
 }
 Write-Output 'users ready (tokens never printed)'
 
+# Shared, idempotent test fixtures: resolve the test region/grid IDs by name (never
+# assume numeric IDs). Created only when missing; nothing is deleted or overwritten.
+. (Join-Path $PSScriptRoot 'test_fixtures.ps1')
+$fx = Ensure-TestFixtures -SqlServer $sqlServer -Database $db
+Write-Output "fixtures: primaryRegion=$($fx.PrimaryRegionId) primaryGrid=$($fx.PrimaryGridId) secondaryRegion=$($fx.SecondaryRegionId)"
+
 # fresh 10-MW grid + two Verified lands on it
-$r = Call 'POST' '/api/grids' @{ regionId = 2; name = "S5P-G10-$stamp"; capacityMw = 10; status = 'Operational' } $admin
+$r = Call 'POST' '/api/grids' @{ regionId = $fx.PrimaryRegionId; name = "S5P-G10-$stamp"; capacityMw = 10; status = 'Operational' } $admin
 if ($r.Status -ne 201) { Write-Output 'BLOCKED: grid create failed'; exit 3 }
 $gridId = [int](($r.Body | ConvertFrom-Json).id)
 
@@ -114,7 +120,7 @@ function Verify-Land([int]$landId, [string]$laTok, [string]$adminTok) {
 }
 $landIds = @()
 foreach ($n in 1..2) {
-  $r = Call 'POST' '/api/lands' @{ regionId = 2; gridId = $gridId; landNumber = "S5P-L$n-$stamp"; village = 'V-S5P'; basin = 'B-S5P'; parcelNumber = "S5PP-L$n-$stamp"; areaDonum = 25; slopePercentage = 5; distanceToGridKm = 10; solarIrradiance = 6; elevationM = 100 } $laTok
+  $r = Call 'POST' '/api/lands' @{ regionId = $fx.PrimaryRegionId; gridId = $gridId; landNumber = "S5P-L$n-$stamp"; village = 'V-S5P'; basin = 'B-S5P'; parcelNumber = "S5PP-L$n-$stamp"; areaDonum = 25; slopePercentage = 5; distanceToGridKm = 10; solarIrradiance = 6; elevationM = 100 } $laTok
   if ($r.Status -ne 201) { Write-Output 'BLOCKED: land create failed'; exit 3 }
   $landId = [int](($r.Body | ConvertFrom-Json).id)
   Verify-Land $landId $laTok $admin

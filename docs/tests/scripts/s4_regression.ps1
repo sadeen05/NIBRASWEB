@@ -3,7 +3,7 @@ Add-Type -AssemblyName System.Net.Http
 $base = 'http://localhost:5181'
 $pw = if ($env:NIBRAS_TEST_PASSWORD) { $env:NIBRAS_TEST_PASSWORD } else { 'T5t!N1' + [guid]::NewGuid().ToString('N').Substring(0,10) } # runtime-generated credential, never a literal
 $stamp = (Get-Date).ToString('HHmmss') + (Get-Random -Minimum 100 -Maximum 999)
-$sqlServer = 'SADEEN\SQLEXPRESS'
+$sqlServer = if ($env:NIBRAS_SQL_SERVER) { $env:NIBRAS_SQL_SERVER } else { '.\SQLEXPRESS' }
 $dbName = 'NEBRASDB_Step1'
 $rows = New-Object System.Collections.ArrayList
 
@@ -41,7 +41,7 @@ function Sql([string]$Query) {
 }
 
 function LandBody([string]$LandNumber, [string]$Parcel) {
-  return @{ regionId = 2; gridId = 2; landNumber = $LandNumber; village = 'Village-R'; basin = 'Basin-R'
+  return @{ regionId = $fx.PrimaryRegionId; gridId = $fx.PrimaryGridId; landNumber = $LandNumber; village = 'Village-R'; basin = 'Basin-R'
     parcelNumber = $Parcel; areaDonum = 25; slopePercentage = 5; distanceToGridKm = 10; solarIrradiance = 6; elevationM = 100 }
 }
 
@@ -52,6 +52,12 @@ $laId = [int]($r.Body | ConvertFrom-Json).id
 $r = Call 'POST' '/api/auth/login' @{ email = $email; password = $pw }
 $tok = ($r.Body | ConvertFrom-Json).token
 Write-Output "landlord id=$laId, login 200 (token held in memory only)"
+
+# Shared, idempotent test fixtures: resolve the test region/grid IDs by name (never
+# assume numeric IDs). Created only when missing; nothing is deleted or overwritten.
+. (Join-Path $PSScriptRoot 'test_fixtures.ps1')
+$fx = Ensure-TestFixtures -SqlServer $sqlServer -Database $dbName
+Write-Output "fixtures: primaryRegion=$($fx.PrimaryRegionId) primaryGrid=$($fx.PrimaryGridId) secondaryRegion=$($fx.SecondaryRegionId)"
 
 Write-Output ''
 Write-Output '== duplicate LandNumber: create and update (BR-L5 / UQ_LAND_NUMBER_REGION) =='
@@ -96,7 +102,7 @@ $server = @($codes | Where-Object { $_ -ge 500 }).Count
 Check 'R-07' 'race: exactly one 201' 1 $created ("codes=" + ($codes -join ','))
 Check 'R-08' 'race: the other four return 409' 4 $conflict
 Check 'R-09' 'race: no 500 responses' 0 $server
-$rowsDb = Sql "SELECT COUNT(*) FROM LANDS WHERE LAND_NUMBER = N'$race' AND REGION_ID = 2;"
+$rowsDb = Sql "SELECT COUNT(*) FROM LANDS WHERE LAND_NUMBER = N'$race' AND REGION_ID = $($fx.PrimaryRegionId);"
 Check 'R-10' 'DB: exactly one row for the raced LandNumber' 1 $rowsDb
 $client.Dispose()
 
@@ -170,7 +176,7 @@ Check 'R-29' 'parcel race: exactly one 201' 1 @($pcodes | Where-Object { $_ -eq 
 Check 'R-30' 'parcel race: the other four return 409' 4 @($pcodes | Where-Object { $_ -eq 409 }).Count
 Check 'R-31' 'parcel race: no 500 responses' 0 @($pcodes | Where-Object { $_ -ge 500 }).Count
 Check 'R-32' 'parcel race: no SQL/index text in any body' 0 @($pbodies | Where-Object { $_ -match 'UQ_|SqlException|Cannot insert|duplicate key|Microsoft\.' }).Count
-$pdb = Sql "SELECT COUNT(*) FROM LANDS WHERE REGION_ID = 2 AND VILLAGE = N'Village-R' AND BASIN = N'Basin-R' AND PARCEL_NUMBER = N'$pr' AND IS_DELETED = 0;"
+$pdb = Sql "SELECT COUNT(*) FROM LANDS WHERE REGION_ID = $($fx.PrimaryRegionId) AND VILLAGE = N'Village-R' AND BASIN = N'Basin-R' AND PARCEL_NUMBER = N'$pr' AND IS_DELETED = 0;"
 Check 'R-33' 'DB: exactly one live row for the raced parcel' 1 $pdb
 $client.Dispose()
 

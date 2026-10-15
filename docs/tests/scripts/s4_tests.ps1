@@ -2,7 +2,7 @@ $ErrorActionPreference = 'Stop'
 $base = 'http://localhost:5181'
 $pw = if ($env:NIBRAS_TEST_PASSWORD) { $env:NIBRAS_TEST_PASSWORD } else { 'T5t!N1' + [guid]::NewGuid().ToString('N').Substring(0,10) } # runtime-generated credential, never a literal
 $stamp = (Get-Date).ToString('HHmmss') + (Get-Random -Minimum 100 -Maximum 999)
-$sqlServer = 'SADEEN\SQLEXPRESS'
+$sqlServer = if ($env:NIBRAS_SQL_SERVER) { $env:NIBRAS_SQL_SERVER } else { '.\SQLEXPRESS' }
 $db = 'NEBRASDB_Step1'
 $rows = New-Object System.Collections.ArrayList
 
@@ -58,7 +58,13 @@ $bTok = Login $lbEmail
 $iTok = Login $inEmail
 Write-Output "users: landlord A id=$laId, landlord B id=$lbId, investor unapproved; 3 logins 200"
 
-$good = @{ regionId = 2; gridId = 2; landNumber = "L-$stamp"; village = 'Village-A'; basin = 'Basin-A'
+# Shared, idempotent test fixtures: resolve the test region/grid IDs by name (never
+# assume numeric IDs). Created only when missing; nothing is deleted or overwritten.
+. (Join-Path $PSScriptRoot 'test_fixtures.ps1')
+$fx = Ensure-TestFixtures -SqlServer $sqlServer -Database $db
+Write-Output "fixtures: primaryRegion=$($fx.PrimaryRegionId) primaryGrid=$($fx.PrimaryGridId) secondaryRegion=$($fx.SecondaryRegionId)"
+
+$good = @{ regionId = $fx.PrimaryRegionId; gridId = $fx.PrimaryGridId; landNumber = "L-$stamp"; village = 'Village-A'; basin = 'Basin-A'
   parcelNumber = "P-$stamp"; areaDonum = 25; slopePercentage = 5; distanceToGridKm = 10; solarIrradiance = 6; elevationM = 100 }
 
 Write-Output ''
@@ -67,9 +73,9 @@ $r = Call 'POST' '/api/lands' $good $aTok
 Check 'S4-01' 'landlord A creates a valid land' 201 $r.Status
 $landId = [int]($r.Body | ConvertFrom-Json).id
 
-$x = $good.Clone(); $x.regionId = 1; $x.parcelNumber = "P2-$stamp"
+$x = $good.Clone(); $x.regionId = $fx.SecondaryRegionId; $x.parcelNumber = "P2-$stamp"
 $r = Call 'POST' '/api/lands' $x $aTok
-Check 'S4-02' 'grid 2 belongs to region 2, not region 1 (other-region grid)' 400 $r.Status
+Check 'S4-02' 'grid does not belong to the chosen (other) region' 400 $r.Status
 
 $x = $good.Clone(); $x.slopePercentage = 15; $x.parcelNumber = "P3-$stamp"; $x.landNumber = "L3-$stamp"
 $r = Call 'POST' '/api/lands' $x $aTok
@@ -110,7 +116,7 @@ Check 'S4-12' 'submit after a required-type upload' 200 $r.Status
 
 $r = Call 'GET' "/api/lands/$landId" $null $bTok
 Check 'S4-13' 'landlord B GETs A''s land' 403 $r.Status
-$upd = @{ regionId = 2; gridId = 2; landNumber = "L-$stamp"; village = 'Village-A'; basin = 'Basin-A'; parcelNumber = "P-$stamp"; areaDonum = 25; slopePercentage = 5; distanceToGridKm = 10; solarIrradiance = 6; elevationM = 100 }
+$upd = @{ regionId = $fx.PrimaryRegionId; gridId = $fx.PrimaryGridId; landNumber = "L-$stamp"; village = 'Village-A'; basin = 'Basin-A'; parcelNumber = "P-$stamp"; areaDonum = 25; slopePercentage = 5; distanceToGridKm = 10; solarIrradiance = 6; elevationM = 100 }
 $r = Call 'PUT' "/api/lands/$landId" $upd $bTok
 Check 'S4-14' 'landlord B PUTs A''s land' 403 $r.Status
 $r = Call 'POST' "/api/lands/$landId/submit" $null $bTok

@@ -3,7 +3,7 @@ Add-Type -AssemblyName System.Net.Http
 $base = 'http://localhost:5181'
 $pw = if ($env:NIBRAS_TEST_PASSWORD) { $env:NIBRAS_TEST_PASSWORD } else { 'T5t!N1' + [guid]::NewGuid().ToString('N').Substring(0,10) } # runtime-generated credential, never a literal
 $stamp = (Get-Date).ToString('HHmmss') + (Get-Random -Minimum 100 -Maximum 999)
-$sqlServer = 'SADEEN\SQLEXPRESS'
+$sqlServer = if ($env:NIBRAS_SQL_SERVER) { $env:NIBRAS_SQL_SERVER } else { '.\SQLEXPRESS' }
 $dbName = 'NEBRASDB_Step1'
 $rows = New-Object System.Collections.ArrayList
 
@@ -37,7 +37,7 @@ function Sql([string]$Query) {
 }
 
 function LandBody([string]$LandNumber, [string]$Parcel) {
-  return @{ regionId = 2; gridId = 2; landNumber = $LandNumber; village = 'Village-V'; basin = 'Basin-V'
+  return @{ regionId = $fx.PrimaryRegionId; gridId = $fx.PrimaryGridId; landNumber = $LandNumber; village = 'Village-V'; basin = 'Basin-V'
     parcelNumber = $Parcel; areaDonum = 25; slopePercentage = 5; distanceToGridKm = 10; solarIrradiance = 6; elevationM = 100 }
 }
 
@@ -71,6 +71,12 @@ $r = Call 'POST' '/api/auth/login' @{ email = $lbEmail; password = $pw }
 $bTok = ($r.Body | ConvertFrom-Json).token
 Write-Output 'two landlords created and logged in (tokens in memory only)'
 
+# Shared, idempotent test fixtures: resolve the test region/grid IDs by name (never
+# assume numeric IDs). Created only when missing; nothing is deleted or overwritten.
+. (Join-Path $PSScriptRoot 'test_fixtures.ps1')
+$fx = Ensure-TestFixtures -SqlServer $sqlServer -Database $dbName
+Write-Output "fixtures: primaryRegion=$($fx.PrimaryRegionId) primaryGrid=$($fx.PrimaryGridId) secondaryRegion=$($fx.SecondaryRegionId)"
+
 Write-Output ''
 Write-Output '== SEC-15 exact headers on error responses =='
 $csp = "default-src 'none'; frame-ancestors 'none'"
@@ -103,7 +109,7 @@ Check 'V-08' 'parcel race: the other four are 409' 4 @($codes | Where-Object { $
 Check 'V-09' 'parcel race: no 500 responses' 0 @($codes | Where-Object { $_ -ge 500 }).Count
 $leakBodies = @($res | Where-Object { $_.Body -match 'UQ_|SqlException|Cannot insert' }).Count
 Check 'V-10' 'parcel race: no SQL/index text in any response body' 0 $leakBodies
-$dbParcel = Sql "SELECT COUNT(*) FROM LANDS WHERE REGION_ID = 2 AND VILLAGE = N'Village-V' AND BASIN = N'Basin-V' AND PARCEL_NUMBER = N'PRACE-$stamp' AND IS_DELETED = 0;"
+$dbParcel = Sql "SELECT COUNT(*) FROM LANDS WHERE REGION_ID = $($fx.PrimaryRegionId) AND VILLAGE = N'Village-V' AND BASIN = N'Basin-V' AND PARCEL_NUMBER = N'PRACE-$stamp' AND IS_DELETED = 0;"
 Check 'V-11' 'DB: exactly one live row for the raced parcel' 1 $dbParcel
 
 Write-Output ''

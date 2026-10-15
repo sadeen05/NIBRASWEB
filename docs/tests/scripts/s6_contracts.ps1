@@ -59,7 +59,7 @@ function Verify-Land([int]$landId, [string]$laTok, [string]$adminTok) {
   if ($r.Status -ne 200) { throw "land $landId verify failed: $($r.Status)" }
 }
 function New-Land-Body([string]$ln, [string]$parcel, [int]$gid) {
-  @{ regionId = 2; gridId = $gid; landNumber = $ln; village = 'V-S6'; basin = 'B-S6';
+  @{ regionId = $fx.PrimaryRegionId; gridId = $gid; landNumber = $ln; village = 'V-S6'; basin = 'B-S6';
      parcelNumber = $parcel; areaDonum = 100; slopePercentage = 5; distanceToGridKm = 10;
      solarIrradiance = 6; elevationM = 100 }
 }
@@ -107,8 +107,14 @@ try {
   $i2Id = Reg 'S6 Investor 2' $i2Email 2; $r = Call 'POST' "/api/users/$i2Id/approve" $null $admin; if ($r.Status -ne 204) { throw "approve i2 failed" }; $i2Tok = Login $i2Email $pw
   Write-Output "users: la=$laId lb=$lbId i1=$i1Id i2=$i2Id"
 
+  # Shared, idempotent test fixtures: resolve the test region/grid IDs by name (never
+  # assume numeric IDs). Created only when missing; nothing is deleted or overwritten.
+  . (Join-Path $PSScriptRoot 'test_fixtures.ps1')
+  $fx = Ensure-TestFixtures -SqlServer $sqlServer -Database $db
+  Write-Output "fixtures: primaryRegion=$($fx.PrimaryRegionId) primaryGrid=$($fx.PrimaryGridId) secondaryRegion=$($fx.SecondaryRegionId)"
+
   # --- grid + verified lands ---
-  $r = Call 'POST' '/api/grids' @{ regionId = 2; name = "S6-G-$stamp"; capacityMw = 100; status = 'Operational' } $admin
+  $r = Call 'POST' '/api/grids' @{ regionId = $fx.PrimaryRegionId; name = "S6-G-$stamp"; capacityMw = 100; status = 'Operational' } $admin
   Check 'S6-02' 'admin creates grid' 201 $r.Status
   $grid = [int](($r.Body | ConvertFrom-Json).id)
 
