@@ -1,0 +1,528 @@
+@baseUrl = http://localhost:5181
+@landlordEmail = <disposable-landlord-a-email>
+@landlordPassword = <set-a-local-test-password>
+@landlordBEmail = <disposable-landlord-b-email>
+@investor1Email = <disposable-approved-investor-email>
+@investor2Email = <disposable-approved-investor-email>
+@investor3Email = <disposable-approved-investor-email>
+@unapprovedInvestorEmail = <disposable-unapproved-investor-email>
+@landlordToken = <capture-locally-do-not-commit>
+@landlordBToken = <capture-locally-do-not-commit>
+@investor1Token = <capture-locally-do-not-commit>
+@investor2Token = <capture-locally-do-not-commit>
+@investor3Token = <capture-locally-do-not-commit>
+@unapprovedInvestorToken = <capture-locally-do-not-commit>
+@adminToken = <capture-locally-do-not-commit>
+@landId = <verified-land-id>
+@offerId = <offer-id>
+
+# Step 5 - Offers (branch step-5-offers). Acceptance file.
+#
+# How these results were produced (read this before trusting a PASS):
+# - The requests below were NOT sent through this file in an HTTP client. Each case
+#   was executed as an equivalent request by the PowerShell driver
+#   (%TEMP%\opencode\s5_offers.ps1) against the running app (http://localhost:5181,
+#   Development, NEBRASDB_Step1). The method, path, body and expected status are the
+#   same; the driver is the evidence. Final driver run (stamp 013150354):
+#   91 PASS / 0 FAIL. The parallel-approval scenario is executed separately by
+#   docs/tests/parallel-approval.ps1 (final run stamp 014108617: 7 PASS / 0 FAIL).
+# - Identity is taken from the JWT only (ICurrentUser). Routes/bodies carry NO actor
+#   ids. Requests below therefore have no user ids in URLs or bodies.
+# - Fixture ids quoted below are the ones from the last full driver run:
+#   grid 5 = "S5-G10-013150354" (10 MW); lands L1=188, L1A=189, L1B=190, L2=191
+#   (all Verified), LRAW=192 (Draft). Offers 13..23 are that run's offers:
+#     13 = i1 on L1 (Accepted), 14 = i2 on L1 (PendingLandlordResponse, preserved), 15 = i3 on L1 (PendingAdminApproval, preserved),
+#     16 = i1 on L1A (Accepted), 17 = i2 on L1B (PendingAdminApproval),
+#     18/19 = i3 on L2 (WithdrawnByInvestor), 20 = i1 on L2 (WithdrawnByInvestor),
+#     21 = i2 on L2 (RejectedByInvestor), 22 = i1 on L2 (RejectedByLandlord),
+#     23 = i2 on L2 (RejectedByAdmin).
+# - Result legend, on the line under each case title:
+#   PASS     executed by the driver; the actual status matched the expectation
+#   FAIL     executed; the actual status did not match (none; final run 91/0 and 7/0)
+#   BLOCKED  not executed (none in Step 5).
+# - Status mapping (Enums/OfferStatus.cs): 1 PendingLandlordResponse, 2
+#   PendingInvestorResponse, 3 PendingAdminApproval, 4 Accepted, 5 RejectedByLandlord,
+#   6 RejectedByInvestor, 7 RejectedByAdmin, 8 WithdrawnByInvestor, 9 Closed.
+#
+# Coverage map (task T1..T15):
+#   T1  = 5.1 create gates (403/409/404/401)        T2  = 5.2 identity from token
+#   T3  = 5.3 negotiation turn rules                T4  = 5.3 read authorization
+#   T5  = 5.4 D-14 terminal does not block          T6  = 5.5 counter-offer versions
+#   T7  = 5.6 S3 approval (competitors preserved)   T8  = 5.6 reservation + ExpiresAt
+#   T9  = 5.6 S4 grid-capacity (10 MW / two 6 MW)   T10 = 5.6 no partial state on 409
+#   T11 = 5.7 admin rejection                       T12 = 5.7 BR-O3 withdraw allow-list
+#   T13 = 5.8 validation attributes                 T14 = 5.9 parallel approval
+#   T15 = removal of public close endpoint + GET my / land / pending-admin-approval
+
+### ============ T1 / 5.1 create gates (BR-O1) ============
+
+### Unapproved investor creates an offer — EXPECTED: 403
+# Result: PASS (403; driver S5-10, investor "u" never approved; everyone else duplicated
+# in S5-31/33/41 read checks)
+POST {{baseUrl}}/api/offers
+Authorization: Bearer {{unapprovedInvestorToken}}
+Content-Type: application/json
+
+{
+  "landId": 188,
+  "requiredCapacityMw": 2,
+  "connectionMechanism": 1,
+  "landlordSharePct": 30
+}
+
+### Land owner offers on their own land — EXPECTED: 409 (chosen over 403: the
+# owner rule is a business rule and runs before the investor-role gate, so the owner
+# landlord gets 409 while any OTHER non-investor is stopped by the role gate with 403)
+# Result: PASS (409; driver S5-11)
+POST {{baseUrl}}/api/offers
+Authorization: Bearer {{landlordToken}}
+Content-Type: application/json
+
+{
+  "landId": 188,
+  "requiredCapacityMw": 2,
+  "connectionMechanism": 1,
+  "landlordSharePct": 30
+}
+
+### Offer on a non-Verified (Draft) land — EXPECTED: 409
+# Result: PASS (409; driver S5-12, land 192 = Draft)
+POST {{baseUrl}}/api/offers
+Authorization: Bearer {{investor1Token}}
+Content-Type: application/json
+
+{
+  "landId": 192,
+  "requiredCapacityMw": 2,
+  "connectionMechanism": 1,
+  "landlordSharePct": 30
+}
+
+### Offer on a missing land — EXPECTED: 404
+# Result: PASS (404; driver S5-13, landId 2147480000)
+POST {{baseUrl}}/api/offers
+Authorization: Bearer {{investor1Token}}
+Content-Type: application/json
+
+{
+  "landId": 2147480000,
+  "requiredCapacityMw": 2,
+  "connectionMechanism": 1,
+  "landlordSharePct": 30
+}
+
+### One active offer per investor per land — EXPECTED: 409 on the second active offer
+# Result: PASS (409; driver S5-23; investor i1 already had offer 13 active on L1)
+POST {{baseUrl}}/api/offers
+Authorization: Bearer {{investor1Token}}
+Content-Type: application/json
+
+{
+  "landId": 188,
+  "requiredCapacityMw": 2,
+  "connectionMechanism": 1,
+  "landlordSharePct": 10
+}
+
+### ============ T2 / 5.2 identity from token ============
+
+### GET /api/offers/land/{landId} (no user id in URL) — owner or Admin only
+# Result: PASS (200 owner S5-36; 200 admin S5-38; 403 other landlord S5-37)
+GET {{baseUrl}}/api/offers/land/188
+Authorization: Bearer {{landlordToken}}
+
+### GET /api/offers/my — investor sees own offers only; admin sees all
+# Result: PASS (investor S5-39 contains offer 13 and NOT offer 14; admin S5-98 returns 200)
+GET {{baseUrl}}/api/offers/my
+Authorization: Bearer {{investor1Token}}
+
+### GET /api/offers/pending-admin-approval — Admin only
+# Result: PASS (200 admin S5-30 contains offer 13; 403 investor S5-31)
+GET {{baseUrl}}/api/offers/pending-admin-approval
+Authorization: Bearer {{adminToken}}
+
+### Anonymous access to offer list — EXPECTED: 401
+# Result: PASS (401; driver S5-14 and S5-35)
+GET {{baseUrl}}/api/offers
+
+### ============ T3 / 5.3 negotiation turn rules (BR-O1..O3) ============
+
+### Create -> PendingLandlordResponse, version 1
+# Result: PASS (201; driver S5-20 created offer 13 on land 188)
+POST {{baseUrl}}/api/offers
+Authorization: Bearer {{investor1Token}}
+Content-Type: application/json
+
+{
+  "landId": 188,
+  "requiredCapacityMw": 2,
+  "connectionMechanism": 1,
+  "landlordSharePct": 30
+}
+
+### Investor counters while PendingLandlordResponse (landlord's turn) — EXPECTED: 403
+# Result: PASS (403; driver S5-24)
+POST {{baseUrl}}/api/offers/13/counter-offer
+Authorization: Bearer {{investor1Token}}
+Content-Type: application/json
+
+{
+  "newAmount": 35
+}
+
+### Landlord counters (in turn) -> PendingInvestorResponse — EXPECTED: 200
+# Result: PASS (200; driver S5-25)
+POST {{baseUrl}}/api/offers/13/counter-offer
+Authorization: Bearer {{landlordToken}}
+Content-Type: application/json
+
+{
+  "newAmount": 35,
+  "message": "landlord counter v2"
+}
+
+### Investor counters -> PendingLandlordResponse — EXPECTED: 200
+# Result: PASS (200; driver S5-26)
+POST {{baseUrl}}/api/offers/13/counter-offer
+Authorization: Bearer {{investor1Token}}
+Content-Type: application/json
+
+{
+  "newAmount": 40,
+  "message": "investor counter v3"
+}
+
+### Investor accepts while PendingLandlordResponse (landlord's turn) — EXPECTED: 403
+# Result: PASS (403; driver S5-27)
+POST {{baseUrl}}/api/offers/13/accept
+Authorization: Bearer {{investor1Token}}
+
+### Landlord accepts (in turn) -> PendingAdminApproval; AcceptedVersionId = current
+# Result: PASS (200; driver S5-28; DB ACCEPTED_VERSION_ID = id of version 3, S5-29b)
+POST {{baseUrl}}/api/offers/13/accept
+Authorization: Bearer {{landlordToken}}
+
+### ============ T4 / 5.3 read authorization (BR-O9) ============
+
+### Party (investor) reads own offer — EXPECTED: 200
+# Result: PASS (200; driver S5-32)
+GET {{baseUrl}}/api/offers/13
+Authorization: Bearer {{investor1Token}}
+
+### Party (landlord) reads offer — EXPECTED: 200
+# Result: PASS (200; driver S5-32b)
+GET {{baseUrl}}/api/offers/13
+Authorization: Bearer {{landlordToken}}
+
+### Third-party investor reads offer — EXPECTED: 403
+# Result: PASS (403; driver S5-33)
+GET {{baseUrl}}/api/offers/13
+Authorization: Bearer {{investor2Token}}
+
+### Unrelated landlord reads offer — EXPECTED: 403
+# Result: PASS (403; driver S5-34)
+GET {{baseUrl}}/api/offers/13
+Authorization: Bearer {{landlordBToken}}
+
+### Negotiation history: parties + Admin only
+# Result: PASS (200 investor S5-40; 200 admin S5-42; 403 third-party S5-41)
+GET {{baseUrl}}/api/offers/13/negotiation-history
+Authorization: Bearer {{investor1Token}}
+
+### ============ T5 / 5.4 D-14: terminal status does not block new offers ============
+
+### Withdraw an offer (PendingLandlordResponse) — EXPECTED: 200
+# Result: PASS (200; driver S5-71 on offer 18)
+POST {{baseUrl}}/api/offers/18/withdraw
+Authorization: Bearer {{investor3Token}}
+
+### A NEW offer on the same land by the SAME investor after the terminal withdraw — EXPECTED: 201
+# (the old "Closed blocks new offers" rule was removed; only per-investor ACTIVE offers
+#  and the land status gate apply)
+# Result: PASS (201; driver S5-73 created offer 19)
+POST {{baseUrl}}/api/offers
+Authorization: Bearer {{investor3Token}}
+Content-Type: application/json
+
+{
+  "landId": 191,
+  "requiredCapacityMw": 1,
+  "connectionMechanism": 1,
+  "landlordSharePct": 25
+}
+
+### ============ T6 / 5.5 counter-offer versioning (one transaction) ============
+
+# Versions for offer 13 (created + landlord counter + investor counter):
+#   SELECT COUNT(*), SUM(CASE WHEN IS_CURRENT=1 THEN 1 ELSE 0 END), MAX(VERSION_NUMBER)
+#   FROM OFFER_VERSIONS WHERE OFFER_ID = 13;
+# Result: PASS (3 | 1 | 3; driver S5-29) - exactly one IsCurrent=1 row and versions 1..3.
+# The current version row is version 3, and OFFERS.ACCEPTED_VERSION_ID points at it
+# (S5-29b), so a signed/accepted offer always references the exact agreed version.
+#
+# Previous-version deactivation and the new-version insert happen inside ONE database
+# transaction: the deactivation is saved with its own SaveChanges BEFORE the insert
+# (required by the filtered unique index UX_OFFER_VERSIONS_CURRENT_OFFER from Step 1),
+# and a DbUpdateException on that index is mapped to 409.
+
+### ============ T7 / 5.6 S3 approval ============
+
+### Two competitors offer on the same land (both PendingLandlordResponse, lands Verified)
+# Result: PASS (201 i2 S5-21 -> offer 14; 201 i3 S5-22 -> offer 15; land was still
+# Verified so a third investor could still create)
+POST {{baseUrl}}/api/offers
+Authorization: Bearer {{investor2Token}}
+Content-Type: application/json
+
+{
+  "landId": 188,
+  "requiredCapacityMw": 2,
+  "connectionMechanism": 1,
+  "landlordSharePct": 25
+}
+
+### Admin approves offer 13 — EXPECTED: 200
+# In ONE Serializable transaction the grid row is pinned with
+#   SELECT * FROM GRIDS WITH (UPDLOCK, HOLDLOCK) WHERE ID = 5
+# (grid row belongs to L1 = 188 via GRID_ID), then the offer is re-read, land Verified
+# is re-checked, capacity (10 - active reservations) is re-read, and everything below is
+# written atomically.
+# Result: PASS (200; driver S5-45)
+POST {{baseUrl}}/api/offers/13/admin-approve
+Authorization: Bearer {{adminToken}}
+
+### Winner offer Accepted(4); competitors preserved (NOT closed), no CompetitorClosed history
+# Result: PASS (DB S5-46 STATUS_ID=4 for 13; S5-46b STATUS_ID=1 for 14 and 3 for 15;
+# S5-49b zero CompetitorClosed(9) OFFER_NEGOTIATION_HISTORY rows - driver S5-46/46b/49b)
+
+### Land under Contract(5) with a LandStatusHistory row, actor = admin
+#   SELECT STATUS_ID FROM LANDS WHERE ID = 188;                     -> 5
+#   SELECT COUNT(*) FROM LAND_STATUS_HISTORY WHERE LAND_ID = 188
+#     AND STATUS_ID = 5 AND CHANGED_BY_ID = (SELECT TOP 1 ID FROM USERS
+#     WHERE ROLE_ID = (SELECT TOP 1 ID FROM ROLES WHERE NAME = 'SuperAdmin'));  -> 1
+# Result: PASS (driver S5-47 and S5-47b)
+
+### The third investor now creates an offer on the same (UnderContract) land — EXPECTED: 409
+# The old "Closed permanently blocks" rule is gone; the land-status gate replaces it.
+# Result: PASS (409; driver S5-51)
+POST {{baseUrl}}/api/offers
+Authorization: Bearer {{investor3Token}}
+Content-Type: application/json
+
+{
+  "landId": 188,
+  "requiredCapacityMw": 2,
+  "connectionMechanism": 1,
+  "landlordSharePct": 15
+}
+
+### Approving an already-Accepted offer — EXPECTED: 409
+# Result: PASS (409; driver S5-50)
+POST {{baseUrl}}/api/offers/13/admin-approve
+Authorization: Bearer {{adminToken}}
+
+### Approving a competing offer while the land is UnderContract (frozen) — EXPECTED: 409
+# Result: PASS (409; driver S5-52; competing offer 14 keeps its status/history)
+POST {{baseUrl}}/api/offers/14/admin-approve
+Authorization: Bearer {{adminToken}}
+
+### ============ T7b / 5.6 freeze: competing-offer actions blocked during negotiation ============
+# While the land is UnderContract (offer 13 under active negotiation), competing offers keep
+# their status and history but are frozen. All of the following return 409 and mutate nothing
+# (driver S5-53a..S5-53i):
+#   - competing landlord counter   -> POST /api/offers/14/counter-offer   (409)
+#   - competing landlord accept    -> POST /api/offers/14/accept          (409)
+#   - competing landlord reject    -> POST /api/offers/14/reject          (409)
+#   - competing investor withdraw  -> POST /api/offers/14/withdraw        (409)
+#   - competing admin reject       -> POST /api/offers/15/admin-reject    (409)
+#   - competing admin approve      -> POST /api/offers/15/admin-approve   (409)
+#   - competitor statuses unchanged: 14 = 1 (PendingLandlordResponse), 15 = 3 (PendingAdminApproval)
+#   - no OFFER_NEGOTIATION_HISTORY rows written for 14/15 by the blocked calls
+#   - the selected offer 13 stays readable by its party (200) and is not blocked
+# Closing competitors is a Step 6 integration (contract -> ContractStatus.Active); not implemented.
+
+### ============ T8 / 5.6 reservation + ExpiresAt ============
+
+#   SELECT OFFER_ID, RESERVATION_TYPE, RESERVED_MW, EXPIRES_AT,
+#          CASE WHEN RELEASED_AT IS NULL THEN 'ACTIVE' ELSE 'RELEASED' END
+#   FROM GRID_CAPACITY_RESERVATIONS WHERE OFFER_ID = 13;
+# Result (Offer|2.00|2027-01-09 22:33:34|ACTIVE):
+#   PASS - ReservationType='Offer', ReservedMw=RequiredCapacityMw, ReleasedAt NULL
+#   (driver S5-48). ExpiresAt = approval time + Grid:HoldDays (configuration default 90):
+#   DATEDIFF(day, GETUTCDATE(), EXPIRES_AT) = 90 (driver S5-48b). appsettings.json:
+#   "Grid": { "HoldDays": 90 }.
+
+### ============ T9 / 5.6 S4 grid capacity (10 MW grid, two 6 MW offers) ============
+
+### Offer on L1A (grid 5) for 6 MW — EXPECTED: 201 (no create-time capacity gate)
+# Result: PASS (201; driver S5-60 created offer 16)
+POST {{baseUrl}}/api/offers
+Authorization: Bearer {{investor1Token}}
+Content-Type: application/json
+
+{
+  "landId": 189,
+  "requiredCapacityMw": 6,
+  "connectionMechanism": 1,
+  "landlordSharePct": 30
+}
+
+### Offer on L1B (same grid 5) for 6 MW — EXPECTED: 201 (12 MW active offers > 10 MW grid:
+# aware of it, but capacity is enforced at approval, not at creation per BR-O6)
+# Result: PASS (201; driver S5-61 created offer 17)
+POST {{baseUrl}}/api/offers
+Authorization: Bearer {{investor2Token}}
+Content-Type: application/json
+
+{
+  "landId": 190,
+  "requiredCapacityMw": 6,
+  "connectionMechanism": 1,
+  "landlordSharePct": 30
+}
+
+### Landlord accepts both -> PendingAdminApproval — EXPECTED: 200, 200
+# Result: PASS (driver S5-62/S5-62b)
+POST {{baseUrl}}/api/offers/16/accept
+Authorization: Bearer {{landlordToken}}
+
+### Admin approves offer 16 — EXPECTED: 200 (2 from S3 + 6 = 8 <= 10)
+# Result: PASS (200; driver S5-63)
+POST {{baseUrl}}/api/offers/16/admin-approve
+Authorization: Bearer {{adminToken}}
+
+### Admin approves offer 17 — EXPECTED: 409 (8 + 6 = 14 > 10)
+# Result: PASS (409; driver S5-64)
+POST {{baseUrl}}/api/offers/17/admin-approve
+Authorization: Bearer {{adminToken}}
+
+# Active reserved capacity on grid 5 after the whole run:
+#   SELECT SUM(RESERVED_MW) FROM GRID_CAPACITY_RESERVATIONS
+#   WHERE GRID_ID = 5 AND RELEASED_AT IS NULL;   -> 8.00 (2 + 6; driver S5-65)
+# The reservation sum never exceeds the 10 MW grid capacity.
+
+### ============ T10 / 5.6 no partial state on 409 ============
+
+# After the rejected second approval (S5-64 - 409):
+#   SELECT STATUS_ID FROM OFFERS WHERE ID = 17;                       -> 3 (PendingAdminApproval)
+#   SELECT LAND_STATUS_ID FROM LANDS WHERE ID = 190;                  -> 3 (Verified)
+#   SELECT COUNT(*) FROM GRID_CAPACITY_RESERVATIONS WHERE OFFER_ID = 17; -> 0
+# Result: PASS (3|3|0; driver S5-66) - the failed approval rolled back completely:
+# no reservation, no status change, land still Verified.
+
+### ============ T11 / 5.7 admin rejection ============
+
+### Admin rejects offer 23 with a reason — EXPECTED: 200 -> RejectedByAdmin(7)
+# Result: PASS (200; driver S5-85; DB STATUS_ID=7)
+POST {{baseUrl}}/api/offers/23/admin-reject
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{
+  "reason": "not viable"
+}
+
+### Admin rejects with an empty reason — EXPECTED: 400
+# Result: PASS (400; driver S5-88)
+POST {{baseUrl}}/api/offers/23/admin-reject
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{
+  "reason": ""
+}
+
+### Admin rejects with a 501-char reason — EXPECTED: 400
+# Result: PASS (400; driver S5-88b)
+POST {{baseUrl}}/api/offers/23/admin-reject
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{
+  "reason": "R...501 chars..."
+}
+
+### Party reject with a blank reason — EXPECTED: 400
+# Result: PASS (400; driver S5-74b)
+POST {{baseUrl}}/api/offers/19/reject
+Authorization: Bearer {{investor3Token}}
+Content-Type: application/json
+
+{
+  "reason": "   "
+}
+
+### ============ T12 / 5.7 BR-O3 withdraw allow-list ============
+
+# Investor may withdraw ONLY from PendingLandlordResponse or PendingInvestorResponse.
+# Result set (all PASS):
+#   PendingLandlordResponse withdraw -> 200   (S5-71, offer 18)
+#   PendingInvestorResponse  withdraw -> 200  (S5-77 offer 20, S5-96 offer 19)
+#   WithdrawnByInvestor again          -> 409 (S5-72, offer 18; DB unchanged 8|2 S5-72b)
+#   PendingAdminApproval   withdraw -> 409   (S5-84 offer 23 in run; DB still 3 S5-84b)
+#   RejectedByInvestor     withdraw -> 409   (S5-80 offer 21)
+#   RejectedByLandlord     withdraw -> 409   (S5-82 offer 22)
+#   RejectedByAdmin        withdraw -> 409   (S5-86 offer 23)
+#   Landlord trying to withdraw            -> 403 (S5-87 wrong role)
+# Last-ever transitions only: each DB row shows exactly one Withdrawn(3) history action
+
+### Withdraw from PendingLandlordResponse — EXPECTED: 200
+POST {{baseUrl}}/api/offers/18/withdraw
+Authorization: Bearer {{investor3Token}}
+
+### Withdraw from PendingAdminApproval — EXPECTED: 409 (terminal hold for the admin queue)
+POST {{baseUrl}}/api/offers/23/withdraw
+Authorization: Bearer {{investor2Token}}
+
+### ============ T13 / 5.8 validation attributes ============
+
+# Result set (all PASS):
+#   requiredCapacityMw = 0            -> 400 (S5-90)
+#   landlordSharePct  = 0             -> 400 (S5-91)
+#   landlordSharePct  = 1000          -> 400 (outside 0.01..999.99; S5-93b; 999 is legal)
+#   connectionMechanism = 99          -> 400 (undefined enum; S5-92)
+#   message = 501 chars               -> 400 (MaxLength 500; S5-93)
+#   counter newAmount = -5            -> 400 (S5-94)
+#   counter newAmount = 0             -> 400 (S5-95)
+# No client-settable status field exists on any request DTO (removed).
+
+### requiredCapacityMw = 0 — EXPECTED: 400
+POST {{baseUrl}}/api/offers
+Authorization: Bearer {{investor1Token}}
+Content-Type: application/json
+
+{
+  "landId": 188,
+  "requiredCapacityMw": 0,
+  "connectionMechanism": 1,
+  "landlordSharePct": 30
+}
+
+### ============ T14 / 5.9 parallel admin approval ============
+
+# docs/tests/parallel-approval.ps1 fires two admin-approve POSTs concurrently
+# (two PowerShell jobs, two processes, real overlapping HTTP, normal Bearer auth) at
+# two different 6 MW offers on a FRESH 10 MW grid (run stamp 014108617:
+# grid 10, lands 201/202, offers 30/31). Final result (7 PASS / 0 FAIL):
+#   PASS  exactly one approval 200 and one 409       (act=200 409)
+#   PASS  active reserved capacity = 6 MW (> 10 never) (act=6.00)
+#   PASS  exactly one Accepted(4) and one PendingAdminApproval(3) (act=1|1)
+#   PASS  winner land UnderContract(5), loser land Verified(3)    (act=1|1)
+#   PASS  loser offer has no reservation                          (act=0)
+#   PASS  winner reservation not expired and has future ExpiresAt (act=0)
+# Evidence available in the DB (grid 10, offers 30/31, reservation OFFER_ID=30).
+# Fixtures are intentionally NOT cleaned up.
+
+### ============ T15 / close endpoint removed + listing ============
+
+### POST /api/offers/{id}/close — EXPECTED: 404 (endpoint removed; MarkOfferClosedAsync
+# is internal-only and now requires the contract to belong to the offer and the offer
+# to be Accepted)
+# Result: PASS (404; driver S5-97)
+POST {{baseUrl}}/api/offers/13/close
+Authorization: Bearer {{adminToken}}
+
+### GET /api/offers/my as admin (all offers) — EXPECTED: 200
+# Result: PASS (200; driver S5-98)
+GET {{baseUrl}}/api/offers/my
+Authorization: Bearer {{adminToken}}

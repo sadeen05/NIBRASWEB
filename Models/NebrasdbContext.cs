@@ -210,6 +210,7 @@ public partial class NebrasdbContext : DbContext
             entity.Property(e => e.CreatedAt).HasDefaultValueSql("(getdate())").HasColumnName("CREATED_AT");
             entity.Property(e => e.ReleasedAt).HasColumnName("RELEASED_AT");
             entity.Property(e => e.ReleaseReason).HasMaxLength(300).HasColumnName("RELEASE_REASON");
+            entity.Property(e => e.ExpiresAt).HasColumnName("EXPIRES_AT");
             entity.Property(e => e.GridId).HasColumnName("GRID_ID");
             entity.Property(e => e.ReservedMw).HasColumnType("decimal(10, 2)").HasColumnName("RESERVED_MW");
 

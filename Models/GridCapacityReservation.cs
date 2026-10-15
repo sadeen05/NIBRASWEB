@@ -23,6 +23,8 @@ public partial class GridCapacityReservation
 
     public string? ReleaseReason { get; set; }
 
+    public DateTime? ExpiresAt { get; set; }
+
     public virtual Contract? Contract { get; set; }
 
     public virtual Grid Grid { get; set; } = null!;

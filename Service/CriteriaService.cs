@@ -18,11 +18,12 @@ public class CriteriaService : ICriteriaService
 
     public async Task<LandCriterionDto> GetCurrentAsync()
     {
+        // Id-descending only, never UpdatedAt: getdate() (seed, server local time) vs
+        // DateTime.UtcNow (new versions) skew — see LandService.GetCurrentCriterionAsync.
         var criterion = await _context.LandCriteria
             .AsNoTracking()
             .Include(c => c.UpdatedBy)
-            .OrderByDescending(c => c.UpdatedAt)
-            .ThenByDescending(c => c.Id)
+            .OrderByDescending(c => c.Id)
             .FirstOrDefaultAsync()
             ?? throw new NotFoundException("No eligibility criteria are configured.");
 
@@ -31,11 +32,11 @@ public class CriteriaService : ICriteriaService
 
     public async Task<List<LandCriterionDto>> GetHistoryAsync()
     {
+        // History is ordered the same way as "current" (Id desc), for the same reason.
         var criteria = await _context.LandCriteria
             .AsNoTracking()
             .Include(c => c.UpdatedBy)
-            .OrderByDescending(c => c.UpdatedAt)
-            .ThenByDescending(c => c.Id)
+            .OrderByDescending(c => c.Id)
             .ToListAsync();
 
         return criteria.Select(ToDto).ToList();

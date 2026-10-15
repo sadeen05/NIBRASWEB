@@ -9,4 +9,6 @@ public class GridCapacityReservationDto
     public string? ReservationType { get; set; }
     public decimal ReservedMw { get; set; }
     public DateTime? CreatedAt { get; set; }
+    public DateTime? ExpiresAt { get; set; }
+    public DateTime? ReleasedAt { get; set; }
 }

@@ -327,6 +327,10 @@ namespace NIBRAS.API.Migrations
                         .HasColumnName("CREATED_AT")
                         .HasDefaultValueSql("(getdate())");
 
+                    b.Property<DateTime?>("ExpiresAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("EXPIRES_AT");
+
                     b.Property<int>("GridId")
                         .HasColumnType("int")
                         .HasColumnName("GRID_ID");

@@ -503,10 +503,14 @@ public class LandService : ILandService
             throw new BusinessRuleException(LandLocationConflictMessage);
     }
 
+    // Criteria ordering is by Id ONLY, never UpdatedAt (approved Step-4 correction A1):
+    // the seeded criterion's UPDATED_AT comes from the database default getdate() (server
+    // LOCAL time) while new versions store DateTime.UtcNow (3 hours behind in Jordan), so
+    // for up to ~3 hours after a fresh database build a new version can look OLDER than
+    // the seed. The newest version is therefore the one with the highest Id.
     private async Task<LandCriterion?> GetCurrentCriterionAsync() =>
         await _context.LandCriteria
-            .OrderByDescending(c => c.UpdatedAt)
-            .ThenByDescending(c => c.Id)
+            .OrderByDescending(c => c.Id)
             .FirstOrDefaultAsync();
 
     private static IReadOnlyList<LandCriterionResult> EvaluateEligibility(Land land, LandCriterion? criterion) =>

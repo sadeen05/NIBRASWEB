@@ -96,7 +96,7 @@ Not verified (agent must inspect before touching): tail of `GridCapacityReservat
 - BR-D2 Uploads allowed only in Draft, Rejected, PendingVerification.
 
 **Criteria**
-- BR-C1 Versions are immutable: no PUT/DELETE. Admin `POST` creates a new row; `Reason` required; creator from token; current = newest.
+- BR-C1 Versions are immutable: no PUT/DELETE. Admin `POST` creates a new row; `Reason` required; creator from token; current = newest. The newest (current) version is the row with the greatest `Id`, i.e. insertion/version order. `UpdatedAt` is not used as the ordering key: the seeded version's `UPDATED_AT` comes from the SQL Server `getdate()` default (server-local time) while `POST`-created versions store `DateTime.UtcNow`, so the two conventions can differ by the server's UTC offset and make a newer version appear older. **Decision record (human-approved):** the greatest-`Id` ordering above is the approved behavior. The external Step-4 specification `03_OPENCODE_STEPS.md` §4.2 still reads "newest by UpdatedAt, then Id"; that file is outside this repository, was **not** modified, and requires a future update to match this decision.
 - BR-C2 A new version never changes the status of existing lands or contracts (they keep `VerifiedAgainstCriterionId` / `CriterionId`).
 - BR-C3 Thresholds are nullable; null = not enforced and shown as such.
 
@@ -112,7 +112,7 @@ Not verified (agent must inspect before touching): tail of `GridCapacityReservat
 - BR-O3 Only the party whose turn it is can counter/accept/reject. Investor may withdraw before PendingAdminApproval.
 - BR-O4 Each counter creates `OfferVersion` N+1, previous `IsCurrent=false`, exactly one current (DB-enforced).
 - BR-O5 Accept → PendingAdminApproval, `AcceptedVersionId` = current version.
-- BR-O6 Admin approve runs in ONE serializable transaction: offer is PendingAdminApproval; land is Verified; sum(active reservations) + RequiredCapacityMw ≤ Grid.CapacityMw; create reservation (`ReservationType="Offer"`, `ExpiresAt = now + HoldDays`); offer → Accepted; land → UnderContract (+history); all other active offers on the land → Closed (+history `CompetitorClosed`).
+- BR-O6 Admin approve runs in ONE serializable transaction: offer is PendingAdminApproval; land is Verified; sum(active reservations) + RequiredCapacityMw ≤ Grid.CapacityMw; create reservation (`ReservationType="Offer"`, `ExpiresAt = now + HoldDays`); offer → Accepted; land → UnderContract (+history). Competing offers on the land are **preserved** (status and history unchanged). While the land is `UnderContract` (an offer under active negotiation) competing offers are **frozen**: their state-changing operations (counter / accept / reject / withdraw / admin-approve / admin-reject) return 409 without changing their status or history. Competitors are closed (+history `CompetitorClosed`) only when the contract reaches `ContractStatus.Active` (Step 6 integration, not implemented in Step 5).
 - BR-O7 Admin reject → RejectedByAdmin with reason.
 - BR-O8 Every action writes `OfferNegotiationHistory` (existing action types).
 - BR-O9 Offers visible only to the two parties and Admin.
@@ -166,7 +166,9 @@ Not verified (agent must inspect before touching): tail of `GridCapacityReservat
 | PendingAdminApproval | approve | Admin | Accepted |
 | PendingAdminApproval | reject | Admin | RejectedByAdmin |
 | Accepted | contract created | System | Closed |
-| any active | another offer approved on same land | System | Closed |
+| any active | contract becomes `Active` (Step 6) | System | Closed |
+
+> **Step 5 interim freeze (approved 15 Oct 2026).** Approving an offer no longer closes the other offers on the land: competitors keep their status and history. While the land is `UnderContract` (an offer under active negotiation) competing offers are frozen — counter / accept / reject / withdraw and admin approve / reject on a competing offer return 409 without mutating it or writing history. New offers on the land remain blocked (land is not `Verified`). Competitors are closed only when the contract reaches `ContractStatus.Active` (Step 6 integration, not implemented in Step 5).
 
 **Contract**
 

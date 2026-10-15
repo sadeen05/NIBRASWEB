@@ -21,27 +21,20 @@ public class OffersController : ControllerBase
     [HttpGet("{id}")]
     public async Task<ActionResult<OfferDto>> GetById(int id)
     {
-        var offer = await _offerService.GetByIdAsync(id);
-
-        if (offer == null)
-        {
-            return NotFound();
-        }
-
-        return Ok(offer);
+        return Ok(await _offerService.GetByIdAsync(id));
     }
 
-    [HttpGet("land/{landId}/user/{requestingUserId}")]
-    public async Task<ActionResult<List<OfferDto>>> GetForLand(int landId, int requestingUserId)
+    [HttpGet("land/{landId}")]
+    public async Task<ActionResult<List<OfferDto>>> GetForLand(int landId)
     {
-        var offers = await _offerService.GetOffersForLandAsync(landId, requestingUserId);
+        var offers = await _offerService.GetOffersForLandAsync(landId);
         return Ok(offers);
     }
 
-    [HttpGet("investor/{investorId}")]
-    public async Task<ActionResult<List<OfferDto>>> GetForInvestor(int investorId, [FromQuery] string? statusFilter = null)
+    [HttpGet("my")]
+    public async Task<ActionResult<List<OfferDto>>> GetMy([FromQuery] string? statusFilter = null)
     {
-        var offers = await _offerService.GetOfferDtosAsync(investorId, statusFilter);
+        var offers = await _offerService.GetMyOffersAsync(statusFilter);
         return Ok(offers);
     }
 
@@ -60,58 +53,51 @@ public class OffersController : ControllerBase
     }
 
     [HttpPost("{id}/counter-offer")]
-    public async Task<ActionResult<OfferDto>> CounterOffer(int id, [FromBody] CounterOfferRequest request)
+    public async Task<ActionResult<OfferDto>> CounterOffer(int id, CounterOfferRequest request)
     {
-        var offer = await _offerService.CounterOfferAsync(id, request.UserId, request.NewAmount, request.Message);
+        var offer = await _offerService.CounterOfferAsync(id, request);
         return Ok(offer);
     }
 
     [HttpPost("{id}/accept")]
-    public async Task<ActionResult<OfferDto>> Accept(int id, [FromBody] UserActionRequest request)
+    public async Task<ActionResult<OfferDto>> Accept(int id)
     {
-        var offer = await _offerService.AcceptAsync(id, request.UserId);
+        var offer = await _offerService.AcceptAsync(id);
         return Ok(offer);
     }
 
     [HttpPost("{id}/reject")]
-    public async Task<ActionResult<OfferDto>> Reject(int id, [FromBody] RejectOfferRequest request)
+    public async Task<ActionResult<OfferDto>> Reject(int id, RejectOfferRequest request)
     {
-        var offer = await _offerService.RejectAsync(id, request.UserId, request.Reason);
+        var offer = await _offerService.RejectAsync(id, request.Reason);
         return Ok(offer);
     }
 
     [HttpPost("{id}/withdraw")]
-    public async Task<ActionResult<OfferDto>> Withdraw(int id, [FromBody] UserActionRequest request)
+    public async Task<ActionResult<OfferDto>> Withdraw(int id)
     {
-        var offer = await _offerService.WithdrawAsync(id, request.UserId);
+        var offer = await _offerService.WithdrawAsync(id);
         return Ok(offer);
     }
 
     [HttpPost("{id}/admin-approve")]
-    public async Task<ActionResult<OfferDto>> AdminApprove(int id, [FromBody] UserActionRequest request)
+    public async Task<ActionResult<OfferDto>> AdminApprove(int id)
     {
-        var offer = await _offerService.AdminApproveAsync(id, request.UserId);
+        var offer = await _offerService.AdminApproveAsync(id);
         return Ok(offer);
     }
 
     [HttpPost("{id}/admin-reject")]
-    public async Task<ActionResult<OfferDto>> AdminReject(int id, [FromBody] RejectOfferRequest request)
+    public async Task<ActionResult<OfferDto>> AdminReject(int id, RejectOfferRequest request)
     {
-        var offer = await _offerService.AdminRejectAsync(id, request.UserId, request.Reason);
+        var offer = await _offerService.AdminRejectAsync(id, request.Reason);
         return Ok(offer);
     }
 
     [HttpGet("{id}/negotiation-history")]
-    public async Task<ActionResult<List<OfferNegotiationHistoryDto>>> GetNegotiationHistory(int id, [FromQuery] int requestingUserId)
+    public async Task<ActionResult<List<OfferNegotiationHistoryDto>>> GetNegotiationHistory(int id)
     {
-        var history = await _offerService.GetNegotiationHistoryAsync(id, requestingUserId);
+        var history = await _offerService.GetNegotiationHistoryAsync(id);
         return Ok(history);
-    }
-
-    [HttpPost("{id}/close")]
-    public async Task<IActionResult> CloseByContract(int id, [FromBody] CloseOfferRequest request)
-    {
-        await _offerService.MarkOfferClosedAsync(id, request.ContractId, request.UserId);
-        return NoContent();
     }
 }
