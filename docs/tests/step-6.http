@@ -1,0 +1,241 @@
+# Step 6 - Contracts MVP (branch step-6-contracts). Acceptance file.
+#
+# How these results were produced (read this before trusting a PASS):
+# - The requests below were NOT sent through this file in an HTTP client. Each case was
+#   executed as an equivalent request by the PowerShell driver
+#   docs/tests/scripts/s6_contracts.ps1 against the running app
+#   (http://localhost:5181, Development, database NEBRASDB_Step1). Method, path, body and
+#   expected status are the same; the driver is the evidence. The driver starts the app once
+#   with RateLimit__AuthPerMinute=1000.
+# - Identity is taken from the JWT only (ICurrentUser). Routes/bodies carry NO actor ids and
+#   no server-controlled fields (status/timestamps/ids).
+# - Status mapping (Enums/ContractStatus.cs): 1 PendingSignatures, 2 Active, 3 Terminated,
+#   4 Rejected.
+# - Result legend, on the line under each case title:
+#   PASS     executed by the driver; the actual status/DB value matched the expectation
+#   FAIL     executed; the actual value did not match
+#   BLOCKED  not executed (none in Step 6; privileged credentials were available)
+
+@baseUrl = http://localhost:5181
+@landlordToken = <capture-locally-do-not-commit>
+@landlordBToken = <capture-locally-do-not-commit>
+@investor1Token = <capture-locally-do-not-commit>
+@investor2Token = <capture-locally-do-not-commit>
+@adminToken = <capture-locally-do-not-commit>
+@acceptedOfferId = <accepted-offer-id>
+@pendingOfferId = <non-accepted-offer-id>
+@contractId = <contract-id>
+@nonSignedContractId = <contract-id>
+
+# ================= Creation =================
+
+### Anonymous create contract - EXPECTED: 401
+POST {{baseUrl}}/api/contracts
+Content-Type: application/json
+
+{ "offerId": {{acceptedOfferId}} }
+
+### Landlord create contract - EXPECTED: 403
+POST {{baseUrl}}/api/contracts
+Authorization: Bearer {{landlordToken}}
+Content-Type: application/json
+
+{ "offerId": {{acceptedOfferId}} }
+
+### Investor create contract - EXPECTED: 403
+POST {{baseUrl}}/api/contracts
+Authorization: Bearer {{investor1Token}}
+Content-Type: application/json
+
+{ "offerId": {{acceptedOfferId}} }
+
+### Unknown offer - EXPECTED: 404
+POST {{baseUrl}}/api/contracts
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{ "offerId": 2147480000 }
+
+### Offer not Accepted - EXPECTED: 409
+POST {{baseUrl}}/api/contracts
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{ "offerId": {{pendingOfferId}} }
+
+### Valid accepted offer - EXPECTED: 201 (status PendingSignatures; criterion = land.VerifiedAgainstCriterionId; offerVersion = offer.AcceptedVersionId; reservation.ContractId set; offer Closed with ClosedByContract history)
+POST {{baseUrl}}/api/contracts
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{ "offerId": {{acceptedOfferId}} }
+
+### Duplicate contract for the same offer - EXPECTED: 409
+POST {{baseUrl}}/api/contracts
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{ "offerId": {{acceptedOfferId}} }
+
+### Extra JSON properties must not set server-controlled fields - EXPECTED: 201, status stays PendingSignatures, id is server-generated
+POST {{baseUrl}}/api/contracts
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{ "offerId": {{pendingOfferId}}, "id": 12345, "status": "Active", "investorId": 999 }
+
+# ================= Signing =================
+
+### Non-party sign - EXPECTED: 403
+POST {{baseUrl}}/api/contracts/{{contractId}}/sign
+Authorization: Bearer {{investor2Token}}
+
+### Admin sign - EXPECTED: 403
+POST {{baseUrl}}/api/contracts/{{contractId}}/sign
+Authorization: Bearer {{adminToken}}
+
+### Investor signs once - EXPECTED: 200 (investorSignedAt set)
+POST {{baseUrl}}/api/contracts/{{contractId}}/sign
+Authorization: Bearer {{investor1Token}}
+
+### Repeated investor signature - EXPECTED: 409
+POST {{baseUrl}}/api/contracts/{{contractId}}/sign
+Authorization: Bearer {{investor1Token}}
+
+### Landlord signs once - EXPECTED: 200 (landlordSignedAt set)
+POST {{baseUrl}}/api/contracts/{{contractId}}/sign
+Authorization: Bearer {{landlordToken}}
+
+# ================= Review =================
+
+### Review before both parties signed - EXPECTED: 409
+POST {{baseUrl}}/api/contracts/{{nonSignedContractId}}/review
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{ "approve": true }
+
+### Landlord review - EXPECTED: 403
+POST {{baseUrl}}/api/contracts/{{contractId}}/review
+Authorization: Bearer {{landlordToken}}
+Content-Type: application/json
+
+{ "approve": true }
+
+### Successful approval - EXPECTED: 200 (status Active; Approved review row; adminReviewedAt set; no new reservation)
+POST {{baseUrl}}/api/contracts/{{contractId}}/review
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{ "approve": true }
+
+### Repeated review - EXPECTED: 409
+POST {{baseUrl}}/api/contracts/{{contractId}}/review
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{ "approve": true }
+
+### Reviews readable by admin - EXPECTED: 200
+GET {{baseUrl}}/api/contracts/{{contractId}}/reviews
+Authorization: Bearer {{adminToken}}
+
+# ================= Rejection =================
+
+### Reject without reason - EXPECTED: 400
+POST {{baseUrl}}/api/contracts/{{contractId}}/review
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{ "approve": false }
+
+### Reject with reason - EXPECTED: 200 (status Rejected; reservation released; land Verified + history; a new offer is then allowed)
+POST {{baseUrl}}/api/contracts/{{contractId}}/review
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{ "approve": false, "reason": "Terms not acceptable" }
+
+# ================= Termination =================
+
+### Landlord terminate - EXPECTED: 403
+POST {{baseUrl}}/api/contracts/{{contractId}}/terminate
+Authorization: Bearer {{landlordToken}}
+Content-Type: application/json
+
+{ "reason": "Project cancelled" }
+
+### Terminate a non-Active contract - EXPECTED: 409
+POST {{baseUrl}}/api/contracts/{{nonSignedContractId}}/terminate
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{ "reason": "Project cancelled" }
+
+### Terminate without reason - EXPECTED: 400
+POST {{baseUrl}}/api/contracts/{{contractId}}/terminate
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{ "reason": "" }
+
+### Terminate an Active contract - EXPECTED: 200 (status Terminated; reservation released; land Verified + history)
+POST {{baseUrl}}/api/contracts/{{contractId}}/terminate
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{ "reason": "Project cancelled" }
+
+### Sign a non-PendingSignatures contract - EXPECTED: 409
+POST {{baseUrl}}/api/contracts/{{contractId}}/sign
+Authorization: Bearer {{investor1Token}}
+
+# ================= Visibility & validation =================
+
+### Third-party read an existing contract - EXPECTED: 403
+GET {{baseUrl}}/api/contracts/{{contractId}}
+Authorization: Bearer {{investor2Token}}
+
+### Third-party read reviews - EXPECTED: 403
+GET {{baseUrl}}/api/contracts/{{contractId}}/reviews
+Authorization: Bearer {{investor2Token}}
+
+### Missing contract - EXPECTED: 404
+GET {{baseUrl}}/api/contracts/2147480000
+Authorization: Bearer {{adminToken}}
+
+### Other landlord lists only their own contracts - EXPECTED: 200, empty
+GET {{baseUrl}}/api/contracts
+Authorization: Bearer {{landlordBToken}}
+
+### Admin lists all contracts - EXPECTED: 200
+GET {{baseUrl}}/api/contracts
+Authorization: Bearer {{adminToken}}
+
+### Invalid status - EXPECTED: 400
+GET {{baseUrl}}/api/contracts?status=Bogus
+Authorization: Bearer {{adminToken}}
+
+### pageSize above the maximum - EXPECTED: 400
+GET {{baseUrl}}/api/contracts?pageSize=1000
+Authorization: Bearer {{adminToken}}
+
+### Valid status filter - EXPECTED: 200
+GET {{baseUrl}}/api/contracts?status=Active
+Authorization: Bearer {{adminToken}}
+
+# ================= Criteria compatibility =================
+
+### Admin adds a stricter criterion - EXPECTED: 201
+POST {{baseUrl}}/api/criteria
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{ "minAreaDonum": 20, "maxSlopePct": 8, "maxGridDistanceKm": 15, "minSolarIrradiance": 5, "minElevationM": null, "reason": "S6 stricter criterion" }
+
+### Review a contract whose land was verified under the older criterion - EXPECTED: 200 (Active; no re-verification during review)
+POST {{baseUrl}}/api/contracts/{{nonSignedContractId}}/review
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{ "approve": true }

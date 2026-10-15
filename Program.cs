@@ -114,6 +114,7 @@ builder.Services.AddScoped<IRegionService, RegionService>();
 builder.Services.AddScoped<IOfferService, OfferService>();
 builder.Services.AddScoped<IGridService, GridService>();
 builder.Services.AddScoped<ILandService, LandService>();
+builder.Services.AddScoped<IContractService, ContractService>();
 builder.Services.AddScoped<ICriteriaService, CriteriaService>();
 builder.Services.AddScoped<IDocumentTypeService, DocumentTypeService>();
 builder.Services.AddScoped<IGridCapacityReservationService, GridCapacityReservationService>();
