@@ -32,8 +32,22 @@ public static class SuperAdminSeeder
         var superAdminRole = await context.Roles
             .SingleAsync(role => role.Name == RoleNames.SuperAdmin);
 
-        if (await context.Users.AnyAsync(user => user.RoleId == superAdminRole.Id))
+        // Idempotent by the configured email (USERS has a unique index on EMAIL). Holding the
+        // SuperAdmin role is NOT proof that the configured administrator exists: the model
+        // seeds an unusable placeholder (system@nibras.internal, PasswordHash "N/A"), which
+        // previously short-circuited this seeder and left no login-capable SuperAdmin.
+        var existing = await context.Users
+            .IgnoreQueryFilters()
+            .FirstOrDefaultAsync(user => user.Email == email);
+
+        if (existing is not null)
         {
+            if (existing.RoleId != superAdminRole.Id || !existing.IsApproved || existing.IsDeleted)
+            {
+                logger.LogWarning(
+                    "A user already owns the configured SuperAdmin email but is not an approved, active SuperAdmin; leaving it unchanged.");
+            }
+
             return;
         }
 
