@@ -164,6 +164,7 @@ app.Logger.LogInformation(
 if (app.Environment.IsDevelopment())
 {
     await SuperAdminSeeder.SeedAsync(app.Services, app.Configuration, app.Environment);
+    await DemoDataSeeder.SeedAsync(app.Services, app.Configuration, app.Environment);
 }
 
 app.Use(async (context, next) =>
