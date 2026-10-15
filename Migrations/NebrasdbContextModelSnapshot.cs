@@ -710,9 +710,13 @@ namespace NIBRAS.API.Migrations
 
                     b.HasIndex("InvestorId");
 
-                    b.HasIndex("LandId");
-
                     b.HasIndex("RelatedToRejectedOfferId");
+
+                    b.HasIndex(new[] { "LandId" }, "IX_OFFERS_LAND_ID");
+
+                    b.HasIndex(new[] { "LandId", "InvestorId" }, "UX_OFFERS_ACTIVE_INVESTOR_LAND")
+                        .IsUnique()
+                        .HasFilter("[STATUS_ID] IN (1, 2, 3, 4)");
 
                     b.ToTable("OFFERS", (string)null);
                 });

@@ -134,7 +134,11 @@ namespace NibrasWeb.Service
                 throw new ValidationFailedException("ConnectionMechanism is not a defined value.");
 
             // BR-O1: the land must be Verified (land status, not the offer statuses).
-            if (land.Status != LandStatus.Verified)
+            // Step 5 M-1: take the same land UPDLOCK that AdminApproveAsync uses and perform the
+            // fresh status check + the insert inside one transaction, so a create cannot pass this
+            // check, wait behind an approval, and then insert onto a land that became UnderContract.
+            await using var transaction = await _context.Database.BeginTransactionAsync();
+            if (await LockLandStatusAsync(land.Id) != LandStatus.Verified)
                 throw new BusinessRuleException("Only verified lands can receive offers.");
 
             // BR-O2 / D-14: one active (non-terminal) offer per investor per land.
@@ -194,7 +198,18 @@ namespace NibrasWeb.Service
             });
 
             _context.Offers.Add(offer);
-            await _context.SaveChangesAsync();
+            try
+            {
+                await _context.SaveChangesAsync();
+            }
+            catch (DbUpdateException ex) when (IsUniqueViolation(ex, "UX_OFFERS_ACTIVE_INVESTOR_LAND"))
+            {
+                // BR-O2 (Step 5 F-2): the filtered unique index rejected a concurrent duplicate
+                // active offer for this investor+land. A single SaveChanges persists nothing on
+                // failure, so no partial offer/version/history rows remain.
+                throw new BusinessRuleException("You already have an active offer on this land.");
+            }
+            await transaction.CommitAsync();
 
             return await GetByIdInternalAsync(offer.Id) ?? throw new BusinessRuleException("Offer creation failed.");
         }
@@ -206,7 +221,6 @@ namespace NibrasWeb.Service
                 throw new ValidationFailedException("Counter amount must be greater than zero.");
 
             var offer = await GetOfferForActionAsync(offerId, userId);
-            EnsureNotFrozenCompetitor(offer.Land.Status, offer.Status);
 
             if (offer.Status != OfferStatus.PendingLandlordResponse &&
                 offer.Status != OfferStatus.PendingInvestorResponse)
@@ -232,6 +246,11 @@ namespace NibrasWeb.Service
             await using var transaction = await _context.Database.BeginTransactionAsync();
             try
             {
+                // Step 5 F-3: hold a land update lock and re-check the freeze inside the same
+                // transaction so a competing counter cannot slip through while an admin approval
+                // moves the land to UnderContract.
+                EnsureNotFrozenCompetitor(await LockLandStatusAsync(offer.LandId), offer.Status);
+
                 var previousCurrent = offer.OfferVersions.Where(v => v.IsCurrent).ToList();
                 foreach (var v in previousCurrent) v.IsCurrent = false;
                 await _context.SaveChangesAsync();
@@ -271,7 +290,10 @@ namespace NibrasWeb.Service
         {
             var userId = RequireUserId();
             var offer = await GetOfferForActionAsync(offerId, userId);
-            EnsureNotFrozenCompetitor(offer.Land.Status, offer.Status);
+            // Step 5 F-3: hold a land update lock for the duration of the action so the freeze
+            // check cannot race an admin approval that moves the land to UnderContract.
+            await using var transaction = await _context.Database.BeginTransactionAsync();
+            EnsureNotFrozenCompetitor(await LockLandStatusAsync(offer.LandId), offer.Status);
 
             if (offer.Status != OfferStatus.PendingLandlordResponse &&
                 offer.Status != OfferStatus.PendingInvestorResponse)
@@ -306,6 +328,7 @@ namespace NibrasWeb.Service
             });
 
             await _context.SaveChangesAsync();
+            await transaction.CommitAsync();
 
             return await GetByIdInternalAsync(offer.Id) ?? throw new BusinessRuleException("Accept failed.");
         }
@@ -318,7 +341,10 @@ namespace NibrasWeb.Service
                 throw new ValidationFailedException("A rejection reason is required.");
 
             var offer = await GetOfferForActionAsync(offerId, userId);
-            EnsureNotFrozenCompetitor(offer.Land.Status, offer.Status);
+            // Step 5 F-3: hold a land update lock for the duration of the action so the freeze
+            // check cannot race an admin approval that moves the land to UnderContract.
+            await using var transaction = await _context.Database.BeginTransactionAsync();
+            EnsureNotFrozenCompetitor(await LockLandStatusAsync(offer.LandId), offer.Status);
 
             if (offer.Status != OfferStatus.PendingLandlordResponse &&
                 offer.Status != OfferStatus.PendingInvestorResponse)
@@ -353,6 +379,7 @@ namespace NibrasWeb.Service
             });
 
             await _context.SaveChangesAsync();
+            await transaction.CommitAsync();
 
             return await GetByIdInternalAsync(offer.Id) ?? throw new BusinessRuleException("Reject failed.");
         }
@@ -361,7 +388,10 @@ namespace NibrasWeb.Service
         {
             var userId = RequireUserId();
             var offer = await GetOfferForActionAsync(offerId, userId);
-            EnsureNotFrozenCompetitor(offer.Land.Status, offer.Status);
+            // Step 5 F-3: hold a land update lock for the duration of the action so the freeze
+            // check cannot race an admin approval that moves the land to UnderContract.
+            await using var transaction = await _context.Database.BeginTransactionAsync();
+            EnsureNotFrozenCompetitor(await LockLandStatusAsync(offer.LandId), offer.Status);
 
             var actor = await GetUserAsync(userId);
             if (actor.Role.Name != RoleNames.Investor)
@@ -389,6 +419,7 @@ namespace NibrasWeb.Service
             });
 
             await _context.SaveChangesAsync();
+            await transaction.CommitAsync();
 
             return await GetByIdInternalAsync(offer.Id) ?? throw new BusinessRuleException("Withdraw failed.");
         }
@@ -421,7 +452,12 @@ namespace NibrasWeb.Service
                 if (currentVersion == null)
                     throw new BusinessRuleException("Offer has no versions to approve.");
 
-                var land = await _context.Lands.FirstOrDefaultAsync(l => l.Id == offer.LandId)
+                // Step 5 F-3: take an update lock on the land row so a competing-offer action
+                // (which takes the same UPDLOCK) cannot mutate an offer concurrently with this
+                // land transition to UnderContract.
+                var land = await _context.Lands
+                    .FromSqlInterpolated($"SELECT * FROM LANDS WITH (UPDLOCK, HOLDLOCK) WHERE ID = {offer.LandId}")
+                    .FirstOrDefaultAsync()
                     ?? throw new NotFoundException("Land not found.");
                 // Step 5 interim freeze: if another offer on this land is under active
                 // negotiation, a competing offer cannot be approved. The selected offer is the
@@ -506,7 +542,10 @@ namespace NibrasWeb.Service
                 throw new ValidationFailedException("A rejection reason is required.");
 
             var offer = await GetOfferForActionAsync(offerId, adminId);
-            EnsureNotFrozenCompetitor(offer.Land.Status, offer.Status);
+            // Step 5 F-3: hold a land update lock for the duration of the action so the freeze
+            // check cannot race an admin approval that moves the land to UnderContract.
+            await using var transaction = await _context.Database.BeginTransactionAsync();
+            EnsureNotFrozenCompetitor(await LockLandStatusAsync(offer.LandId), offer.Status);
 
             if (offer.Status != OfferStatus.PendingAdminApproval)
                 throw new BusinessRuleException("Only offers pending admin approval can be rejected.");
@@ -530,6 +569,7 @@ namespace NibrasWeb.Service
             });
 
             await _context.SaveChangesAsync();
+            await transaction.CommitAsync();
 
             return await GetByIdInternalAsync(offer.Id) ?? throw new BusinessRuleException("Rejection failed.");
         }
@@ -624,6 +664,21 @@ namespace NibrasWeb.Service
                 return;
             throw new BusinessRuleException(
                 "Another offer on this land is under active negotiation; competing offers cannot be changed until that negotiation concludes.");
+        }
+
+        // Step 5 F-3: take an update lock on the land row and return its current status. Callers
+        // invoke this inside a transaction before a competing-offer mutation so the freeze check
+        // and the mutation are serialized against AdminApproveAsync's land transition to
+        // UnderContract (which takes the same UPDLOCK on the land row). The lock is held until the
+        // caller commits or rolls back.
+        private async Task<LandStatus> LockLandStatusAsync(int landId)
+        {
+            var land = await _context.Lands
+                .FromSqlInterpolated($"SELECT * FROM LANDS WITH (UPDLOCK, HOLDLOCK) WHERE ID = {landId}")
+                .AsNoTracking()
+                .FirstOrDefaultAsync()
+                ?? throw new NotFoundException("Land not found.");
+            return land.Status;
         }
 
         private async Task<User> GetUserAsync(int userId)

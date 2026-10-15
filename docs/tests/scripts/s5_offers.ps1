@@ -265,6 +265,112 @@ Check 'S5-51' 'new offer on UnderContract land (replaced Closed-block rule)' 409
 $r = Call 'POST' "/api/offers/$oB/admin-approve" $null $admin
 Check 'S5-52' 'approve a competing offer while land UnderContract' 409 $r.Status
 
+# ================= F-3: competing-offer action raced against admin approval =================
+Write-Output ''
+Write-Output '== F-3: freeze race (admin approval vs competing withdraw) =='
+$r = Call 'POST' '/api/grids' @{ regionId = 2; name = "S5-F3G-$stamp"; capacityMw = 50; status = 'Operational' } $admin
+Check 'S5-54-0' 'admin creates a dedicated grid for the F-3/F-2 fixtures' 201 $r.Status
+$gF3 = [int](($r.Body | ConvertFrom-Json).id)
+$jobScript = {
+  param($baseUrl, $token, $path, $method, $body)
+  $h = @{ Authorization = 'Bearer ' + $token }
+  $p = @{ Uri = ($baseUrl + $path); Method = $method; Headers = $h; UseBasicParsing = $true; ErrorAction = 'Stop' }
+  if ($body) { $p.Body = $body; $p.ContentType = 'application/json' }
+  try { $r = Invoke-WebRequest @p; return [int]$r.StatusCode }
+  catch { $resp = $_.Exception.Response; if ($null -eq $resp) { throw }; return [int]$resp.StatusCode }
+}
+$L3 = Create-Land "S5-L3-$stamp" "S5P-L3-$stamp" $gF3 $laTok $admin
+$r = Call 'POST' '/api/offers' @{ landId = $L3; requiredCapacityMw = 1; connectionMechanism = 1; landlordSharePct = 30 } $i1Tok
+Check 'S5-54a' 'i1 creates offer A on L3' 201 $r.Status
+$oR1 = [int](($r.Body | ConvertFrom-Json).id)
+$r = Call 'POST' '/api/offers' @{ landId = $L3; requiredCapacityMw = 1; connectionMechanism = 1; landlordSharePct = 25 } $i2Tok
+Check 'S5-54b' 'i2 creates offer B on L3 (competitor stays PendingLandlordResponse)' 201 $r.Status
+$oR2 = [int](($r.Body | ConvertFrom-Json).id)
+$r = Call 'POST' "/api/offers/$oR1/accept" $null $laTok
+Check 'S5-54c' 'landlord accepts A -> PendingAdminApproval' 200 $r.Status
+$jobA = Start-Job -ScriptBlock $jobScript -ArgumentList $base, $admin, "/api/offers/$oR1/admin-approve", 'Post', $null
+$jobB = Start-Job -ScriptBlock $jobScript -ArgumentList $base, $i2Tok, "/api/offers/$oR2/withdraw", 'Post', $null
+$null = Wait-Job $jobA, $jobB -Timeout 90
+$sA = [int](Receive-Job $jobA); $sB = [int](Receive-Job $jobB)
+Remove-Job $jobA, $jobB -Force
+Check 'S5-54d' 'admin approval of A succeeds (no 500)' 200 $sA
+Check 'S5-54e' 'competing withdraw is 200 (ran before approval) or 409 (frozen), never 500' 'True' ([string]($sB -eq 200 -or $sB -eq 409))
+$stR2 = Sql "SELECT CAST(STATUS_ID AS varchar(2)) FROM OFFERS WHERE ID = $oR2;"
+$expR2 = if ($sB -eq 200) { '8' } else { '1' }
+Check 'S5-54f' 'competitor state consistent (withdrawn=8 if it won, else unchanged=1)' $expR2 $stR2
+$hR2 = Sql "SELECT CAST(COUNT(*) AS varchar(2)) FROM OFFER_NEGOTIATION_HISTORY WHERE OFFER_ID = $oR2;"
+$expHR2 = if ($sB -eq 200) { '2' } else { '1' }
+Check 'S5-54g' 'competitor history consistent (no append when frozen)' $expHR2 $hR2
+$landR3 = Sql "SELECT CAST(LAND_STATUS_ID AS varchar(2)) FROM LANDS WHERE ID = $L3;"
+Check 'S5-54h' 'L3 UnderContract(5) after approval' 5 $landR3
+if ($stR2 -eq '1') {
+  # Deterministic follow-up: after the approval won, the land is UnderContract, so a
+  # competing action must be frozen (409) and must not mutate the competitor.
+  $r = Call 'POST' "/api/offers/$oR2/withdraw" $null $i2Tok
+  Check 'S5-54i' 'post-race deterministic: competing withdraw frozen (409)' 409 $r.Status
+  $stR2b = Sql "SELECT CAST(STATUS_ID AS varchar(2)) FROM OFFERS WHERE ID = $oR2;"
+  Check 'S5-54j' 'post-race deterministic: competitor unchanged (no mutation)' '1' $stR2b
+}
+
+# ================= F-2: one active offer per investor per land (DB-enforced) =================
+Write-Output ''
+Write-Output '== F-2: concurrent duplicate active offer (needs UX_OFFERS_ACTIVE_INVESTOR_LAND) =='
+$hasIdx = Sql "SELECT CAST(COUNT(*) AS varchar(2)) FROM sys.indexes WHERE name = 'UX_OFFERS_ACTIVE_INVESTOR_LAND';"
+if ($hasIdx -eq '1') {
+  $L4 = Create-Land "S5-L4-$stamp" "S5P-L4-$stamp" $gF3 $laTok $admin
+  $body = (ConvertTo-Json -InputObject @{ landId = $L4; requiredCapacityMw = 1; connectionMechanism = 1; landlordSharePct = 30 } -Compress)
+  $job1 = Start-Job -ScriptBlock $jobScript -ArgumentList $base, $i1Tok, '/api/offers', 'Post', $body
+  $job2 = Start-Job -ScriptBlock $jobScript -ArgumentList $base, $i1Tok, '/api/offers', 'Post', $body
+  $null = Wait-Job $job1, $job2 -Timeout 90
+  $c1 = [int](Receive-Job $job1); $c2 = [int](Receive-Job $job2)
+  Remove-Job $job1, $job2 -Force
+  $codes = ((@($c1, $c2) | Sort-Object) -join ' ')
+  Check 'S5-55a' 'concurrent duplicate create: exactly one 201 and one 409 (no 500)' '201 409' $codes
+  $cnt = Sql "SELECT CAST(COUNT(*) AS varchar(2)) FROM OFFERS WHERE LAND_ID = $L4 AND INVESTOR_ID = $i1Id AND STATUS_ID IN (1,2,3,4);"
+  Check 'S5-55b' 'DB exactly one active offer for (land, investor)' 1 $cnt
+  $tot = Sql "SELECT CAST(COUNT(*) AS varchar(2)) FROM OFFERS WHERE LAND_ID = $L4 AND INVESTOR_ID = $i1Id;"
+  Check 'S5-55c' 'no orphan/partial offer rows after the failed request' 1 $tot
+} else {
+  Write-Output 'BLOCKED S5-55: UX_OFFERS_ACTIVE_INVESTOR_LAND absent (migration Step5_OffersActiveInvestorLandUnique not applied)'
+}
+
+# ================= M-1: create vs approval race =================
+Write-Output ''
+Write-Output '== M-1: a create cannot slip onto a land that approval moved to UnderContract =='
+# Deterministic: approve an offer, then a competing create on the now-UnderContract land.
+$L5 = Create-Land "S5-L5-$stamp" "S5P-L5-$stamp" $gF3 $laTok $admin
+$r = Call 'POST' '/api/offers' @{ landId = $L5; requiredCapacityMw = 1; connectionMechanism = 1; landlordSharePct = 30 } $i1Tok
+Check 'S5-56a' 'i1 creates offer A on L5 (Verified land)' 201 $r.Status
+$oM1 = [int](($r.Body | ConvertFrom-Json).id)
+$r = Call 'POST' "/api/offers/$oM1/accept" $null $laTok
+Check 'S5-56b' 'landlord accepts A on L5' 200 $r.Status
+$r = Call 'POST' "/api/offers/$oM1/admin-approve" $null $admin
+Check 'S5-56c' 'admin approves A -> L5 UnderContract' 200 $r.Status
+$r = Call 'POST' '/api/offers' @{ landId = $L5; requiredCapacityMw = 1; connectionMechanism = 1; landlordSharePct = 25 } $i2Tok
+Check 'S5-56d' 'competing create on the UnderContract land -> 409' 409 $r.Status
+$cntM1 = Sql "SELECT CAST(COUNT(*) AS varchar(2)) FROM OFFERS WHERE LAND_ID = $L5 AND INVESTOR_ID = $i2Id;"
+Check 'S5-56e' 'rejected create left no offer row (and thus no version/history)' 0 $cntM1
+# Concurrency: race the approval against a competing create on a fresh land.
+$L6 = Create-Land "S5-L6-$stamp" "S5P-L6-$stamp" $gF3 $laTok $admin
+$r = Call 'POST' '/api/offers' @{ landId = $L6; requiredCapacityMw = 1; connectionMechanism = 1; landlordSharePct = 30 } $i1Tok
+Check 'S5-56f' 'i1 creates offer A on L6' 201 $r.Status
+$oM2 = [int](($r.Body | ConvertFrom-Json).id)
+$r = Call 'POST' "/api/offers/$oM2/accept" $null $laTok
+Check 'S5-56g' 'landlord accepts A on L6' 200 $r.Status
+$bodyM = (ConvertTo-Json -InputObject @{ landId = $L6; requiredCapacityMw = 1; connectionMechanism = 1; landlordSharePct = 20 } -Compress)
+$jobApp = Start-Job -ScriptBlock $jobScript -ArgumentList $base, $admin, "/api/offers/$oM2/admin-approve", 'Post', $null
+$jobCre = Start-Job -ScriptBlock $jobScript -ArgumentList $base, $i2Tok, '/api/offers', 'Post', $bodyM
+$null = Wait-Job $jobApp, $jobCre -Timeout 90
+$sApp = [int](Receive-Job $jobApp); $sCre = [int](Receive-Job $jobCre)
+Remove-Job $jobApp, $jobCre -Force
+Check 'S5-56h' 'race: approval succeeds (no 500)' 200 $sApp
+Check 'S5-56i' 'race: competing create is 201 (before approval) or 409 (after), never 500' 'True' ([string]($sCre -eq 201 -or $sCre -eq 409))
+$landM2 = Sql "SELECT CAST(LAND_STATUS_ID AS varchar(2)) FROM LANDS WHERE ID = $L6;"
+Check 'S5-56j' 'race: L6 UnderContract(5)' 5 $landM2
+$cntM2 = Sql "SELECT CAST(COUNT(*) AS varchar(2)) FROM OFFERS WHERE LAND_ID = $L6 AND INVESTOR_ID = $i2Id;"
+$expM2 = if ($sCre -eq 201) { '1' } else { '0' }
+Check 'S5-56k' 'race: offer row matches the create result (1 if 201, 0 if 409)' $expM2 $cntM2
+
 # ================= S4: capacity =================
 Write-Output ''
 Write-Output '== S4: 10-MW grid, two 6-MW offers, second approval 409 =='

@@ -369,6 +369,20 @@ public partial class NebrasdbContext : DbContext
             entity.Property(e => e.AcceptedVersionId).HasColumnName("ACCEPTED_VERSION_ID");
             entity.Property(e => e.RelatedToRejectedOfferId).HasColumnName("RELATED_TO_REJECTED_OFFER_ID");
 
+            // Keep the pre-existing FK index on LAND_ID explicit so the F-2 migration adds only
+            // the new unique index and does not silently drop this (EF would treat it as redundant
+            // because the composite index below is prefixed by LAND_ID).
+            entity.HasIndex(e => e.LandId, "IX_OFFERS_LAND_ID");
+
+            // BR-O2 (Step 5 F-2): at most one ACTIVE offer per (land, investor). Active statuses
+            // are PendingLandlordResponse(1), PendingInvestorResponse(2), PendingAdminApproval(3),
+            // Accepted(4). Terminal statuses (RejectedBy*, WithdrawnByInvestor, Closed) are
+            // excluded by the filter, so the same investor may bid again once an offer leaves the
+            // active set, and different investors/lands are unaffected.
+            entity.HasIndex(e => new { e.LandId, e.InvestorId }, "UX_OFFERS_ACTIVE_INVESTOR_LAND")
+                .IsUnique()
+                .HasFilter("[STATUS_ID] IN (1, 2, 3, 4)");
+
             entity.HasOne(d => d.Investor).WithMany(p => p.Offers)
                 .HasForeignKey(d => d.InvestorId)
                 .OnDelete(DeleteBehavior.ClientSetNull)
