@@ -606,7 +606,9 @@ public class LandService : ILandService
         if (string.IsNullOrWhiteSpace(status))
             return null;
 
-        if (!Enum.TryParse<LandStatus>(status, ignoreCase: false, out var parsed) || parsed.ToString() != status)
+        if (!Enum.TryParse<LandStatus>(status, ignoreCase: false, out var parsed) ||
+            !Enum.IsDefined(parsed) ||
+            parsed.ToString() != status)
             throw new ValidationFailedException("Status must be the name of a land status.");
 
         return parsed;

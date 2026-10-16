@@ -91,6 +91,12 @@ Stop-S4App
 Start-S4App -Port 5181 -AuthPerMinute 5
 & .\docs\tests\scripts\step3_ratelimit.ps1
 Stop-S4App
+
+# 8) Step-6 contracts suite (starts and stops its own app)
+& .\docs\tests\scripts\s6_contracts.ps1
+
+# 9) Step-7 status-filter regression (starts and stops its own app)
+& .\docs\tests\scripts\s7_status_filter.ps1
 ```
 
 `s4_tests.ps1` must run **before** `s4_admin.ps1`: it creates a criteria v2
@@ -114,6 +120,9 @@ Every suite script exits non-zero when any case fails, so a wrapper can check
 | `s4_regression.ps1` | Step-4 regression suite (R-01..R-45): boundaries, overflow, decimal precision, paging. | 0/1 |
 | `s5_offers.ps1` | Step-5 offers suite: investor offers on Verified lands, offer lifecycle, contract guards. | 0/1 |
 | `parallel-approval.ps1` | Step-5 parallel-approval race: two concurrent verify requests, exactly one wins. | 0/1 |
+| `s6_contracts.ps1` | Step-6 contracts suite: create from an Accepted offer, signatures, review (approve/reject), termination, reservation release, and Step-7 competing-offer closure when a contract becomes Active. Starts/stops its own app. | 0/1 |
+| `s7_status_filter.ps1` | Step-7 status-filter regression: undefined numeric (`?status=99`), unknown and injection status values return 400 (previously 200 / 500) for both lands and offers. Starts/stops its own app. | 0/1 |
+| `test_fixtures.ps1` | Shared idempotent fixtures: ensures the two `TEST Region …` regions and the `TEST Grid - Primary 100MW` grid exist (insert-only, matched by name) and resolves their IDs. Dot-sourced by the suites; never assumes numeric IDs. | n/a |
 | `s4_checkpoint_a.ps1` | Step-4 checkpoint evidence script (supplementary). | 0/1 |
 | `s4_probe.ps1`, `s4_page.ps1`, `s4_overflow.ps1` | Supplementary Step-4 probes (each starts/stops its own app via `s4_app.ps1`). | 0/1 |
 | `s4_review.ps1`, `s4_review2.ps1` | Supplementary Step-4 review-workflow evidence. | 0/1 |

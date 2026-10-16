@@ -124,6 +124,13 @@ try {
   $L4 = Create-Land "S6-L4-$stamp" "S6P-L4-$stamp" $grid $laTok $admin
   Write-Output "lands: L1=$L1 L2=$L2 L3=$L3 L4=$L4 grid=$grid"
 
+  # Step 7: a COMPETING offer on L1 by a second investor, created while the land is still
+  # Verified. It stays non-terminal (frozen) while L1 is UnderContract and must be closed
+  # with a CompetitorClosed history row when the contract on L1 becomes Active.
+  $r = Call 'POST' '/api/offers' @{ landId = $L1; requiredCapacityMw = 1; connectionMechanism = 1; landlordSharePct = 25 } $i2Tok
+  Check 'S6-03' 'competing offer on L1 created (land Verified)' 201 $r.Status
+  $oc1 = [int](($r.Body | ConvertFrom-Json).id)
+
   # --- accepted offers (L1/L2/L3) + a non-accepted offer (L4) ---
   function Accept-Approve([int]$land, [string]$iTok) {
     $r = Call 'POST' '/api/offers' @{ landId = $land; requiredCapacityMw = 1; connectionMechanism = 1; landlordSharePct = 30 } $iTok
@@ -220,6 +227,10 @@ try {
   Check 'S6-46' 'review does not create a reservation' $resBefore $resAfter
   $appr = Sql "SELECT CAST(COUNT(*) AS varchar(2)) FROM CONTRACT_REVIEWS WHERE CONTRACT_ID = $c1 AND DECISION = 'Approved';"
   Check 'S6-47' 'Approved review row recorded' 1 $appr
+  $compStatus = Sql "SELECT CAST(STATUS_ID AS varchar(2)) FROM OFFERS WHERE ID = $oc1;"
+  Check 'S6-47a' 'competing offer closed when contract becomes Active (Closed=9)' 9 $compStatus
+  $compHist = Sql "SELECT CAST(COUNT(*) AS varchar(2)) FROM OFFER_NEGOTIATION_HISTORY WHERE OFFER_ID = $oc1 AND ACTION_TYPE = 9;"
+  Check 'S6-47b' 'CompetitorClosed history row recorded' 1 $compHist
   $r = Call 'POST' "/api/contracts/$c1/review" @{ approve = $true } $admin
   Check 'S6-48' 'repeated review -> 409' 409 $r.Status
   $r = Call 'GET' "/api/contracts/$c1/reviews" $null $admin
@@ -278,7 +289,7 @@ try {
   $r = Call 'GET' '/api/contracts' $null $i2Tok
   $i2Items = 0; if ($r.Status -eq 200) { $i2Items = @(($r.Body | ConvertFrom-Json).items).Count }
   Check 'S6-74' 'third-party investor lists no contracts' 0 $i2Items
-  $r = Call 'GET' '/api/contracts' $null $admin
+  $r = Call 'GET' '/api/contracts?pageNumber=1&pageSize=50' $null $admin
   $admHas = ($r.Body -match ('"id":' + $c1 + '(?![0-9])'))
   Check 'S6-75' 'admin lists all contracts (contains c1)' 'True' ([string]$admHas)
   $r = Call 'GET' "/api/contracts/$c1" $null $i1Tok

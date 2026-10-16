@@ -79,7 +79,14 @@ namespace NibrasWeb.Service
                 query = query.Where(o => o.InvestorId == userId);
 
             if (!string.IsNullOrWhiteSpace(statusFilter))
-                query = query.Where(o => o.Status == ParseStatus(statusFilter));
+            {
+                // Parsed BEFORE the query expression: a throwing call inside the
+                // predicate is evaluated by EF Core's parameter extractor and the
+                // ValidationFailedException gets wrapped in an InvalidOperationException,
+                // which the global handler reports as a generic 500 instead of 400.
+                var status = ParseStatus(statusFilter);
+                query = query.Where(o => o.Status == status);
+            }
 
             var offers = await query.OrderByDescending(o => o.UpdatedAt).ToListAsync();
 
@@ -742,7 +749,9 @@ namespace NibrasWeb.Service
 
         private static OfferStatus ParseStatus(string status)
         {
-            if (Enum.TryParse<OfferStatus>(status, true, out var parsed))
+            // Only defined enum names/values are accepted; an undefined value such as
+            // "99" must be rejected rather than silently producing an empty page.
+            if (Enum.TryParse<OfferStatus>(status, true, out var parsed) && Enum.IsDefined(parsed))
                 return parsed;
             throw new ValidationFailedException($"Unknown offer status: {status}");
         }

@@ -214,6 +214,11 @@ public class ContractService : IContractService
 
             // Step 7 F1: an approved contract's reservation becomes permanent (no hold expiry).
             await ClearReservationExpiryAsync(contract);
+
+            // BR-O6 / state machine: once the contract is Active the project is live, so the
+            // competing offers on the land are closed (they were only frozen while the land was
+            // UnderContract). Closed offers keep their history and are never resumed.
+            await CloseCompetitorOffersAsync(contract, adminId, now);
         }
         else
         {
@@ -349,6 +354,41 @@ public class ContractService : IContractService
             Reason = reason,
             CreatedAt = now
         });
+    }
+
+    /// <summary>
+    /// BR-O6 / state machine: when a contract becomes Active, every non-terminal competing
+    /// offer on the same land is closed with a <c>CompetitorClosed</c> history row. Terminal
+    /// statuses (already accepted/rejected/withdrawn/closed) are left untouched, and the
+    /// contract's own offer is excluded.
+    /// </summary>
+    private async Task CloseCompetitorOffersAsync(Contract contract, int actorId, DateTime now)
+    {
+        var competitors = await _context.Offers
+            .Where(o => o.LandId == contract.LandId
+                        && o.Id != contract.OfferId
+                        && o.Status != OfferStatus.Accepted
+                        && o.Status != OfferStatus.RejectedByLandlord
+                        && o.Status != OfferStatus.RejectedByInvestor
+                        && o.Status != OfferStatus.RejectedByAdmin
+                        && o.Status != OfferStatus.WithdrawnByInvestor
+                        && o.Status != OfferStatus.Closed)
+            .ToListAsync();
+
+        foreach (var offer in competitors)
+        {
+            offer.Status = OfferStatus.Closed;
+            offer.UpdatedAt = now;
+            _context.OfferNegotiationHistories.Add(new OfferNegotiationHistory
+            {
+                OfferId = offer.Id,
+                ActionType = OfferHistoryActionType.CompetitorClosed,
+                ActorId = actorId,
+                Amount = offer.CurrentAmount,
+                Message = "Competing offer closed when the contract became active.",
+                CreatedAt = now
+            });
+        }
     }
 
     /// <summary>
