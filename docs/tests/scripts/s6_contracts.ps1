@@ -289,8 +289,21 @@ try {
   $r = Call 'GET' '/api/contracts' $null $i2Tok
   $i2Items = 0; if ($r.Status -eq 200) { $i2Items = @(($r.Body | ConvertFrom-Json).items).Count }
   Check 'S6-74' 'third-party investor lists no contracts' 0 $i2Items
-  $r = Call 'GET' '/api/contracts?pageNumber=1&pageSize=50' $null $admin
-  $admHas = ($r.Body -match ('"id":' + $c1 + '(?![0-9])'))
+  # S6-75: the admin's list must contain c1. The list is paged (pageSize <= 50) and ordered by
+  # Id ascending, so a contract created by this run sits on a LATER page once the table holds
+  # more rows than one page. Walk the pages using the response's own pagination metadata
+  # (totalPages) and parse the JSON structurally instead of matching raw text. Empty or error
+  # responses end the walk safely with $admHas = $false.
+  $admHas = $false
+  $page = 1
+  do {
+    $r = Call 'GET' ("/api/contracts?pageNumber=$page&pageSize=50") $null $admin
+    if ($r.Status -ne 200) { break }
+    $body = $r.Body | ConvertFrom-Json
+    if (@($body.items | Where-Object { $_.id -eq $c1 }).Count -gt 0) { $admHas = $true; break }
+    $totalPages = [int]$body.totalPages
+    $page++
+  } while ($page -le $totalPages -and $page -le 100)
   Check 'S6-75' 'admin lists all contracts (contains c1)' 'True' ([string]$admHas)
   $r = Call 'GET' "/api/contracts/$c1" $null $i1Tok
   Check 'S6-76' 'investor party reads own contract -> 200' 200 $r.Status
