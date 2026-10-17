@@ -123,6 +123,17 @@ dotnet list package --vulnerable --include-transitive   → no vulnerable packag
 npm audit --omit=dev                                    → found 0 vulnerabilities (exit 0)
 ```
 
+### 2.8 API contract consistency (Amendment A1)
+
+`docs/tests/verify-swagger-export.ps1` compares the committed `docs/api/swagger.json`
+with the specification served by the current build: **63 operations and 47 schemas on both
+sides, no difference.** The export is therefore not stale.
+
+### 2.9 Frontend build baseline
+
+`npm run typecheck` → exit 0; `npm run lint` → exit 0; `npm run build` → exit 0
+(only the pre-existing bundle-size advisory).
+
 ## 3. Open items, deviations and risks
 
 ### 3.1 SEC-05 — demo rate-limit default (REQUIRES DECISION)
@@ -157,10 +168,25 @@ lands/offers/contracts) or a privilege change, which is a new database write sco
   by design (pre-existing); `pageSize` is capped at 50 where paging exists.
 - No automated CI: the `.http` suites are executed manually (accepted risk G7 in the spec).
 
-## 4. Commits produced by this review
+## 4. Standalone verification scripts
+
+Checked into `docs/tests/`; each exits non-zero when the property it guards regresses.
+
+| Script | Guards | Needs |
+| --- | --- | --- |
+| `verify-frontend-csp.ps1` | SEC-16 production CSP present and byte-exact; no inline `<script>` in the built page | `npm` + `frontend/` (`-SkipBuild` reuses `dist/`) |
+| `verify-swagger-export.ps1` | `docs/api/swagger.json` matches the live API surface (Amendment A1) | starts its own app, or `-BaseUrl` |
+| `verify-request-size.ps1` | SEC-14 `MaxRequestBodySize` (2 MiB body → 413) | an already-running app |
+
+The three startup seeders never run in these checks: the app-based ones are started with
+`Seed__SuperAdminEmail` forced to whitespace and `Seed__DemoData` unset, so no write is
+possible.
+
+## 5. Commits produced by this review
 
 | Commit | Subject |
 | --- | --- |
 | `54b0586` | Apply the SEC-16 production Content-Security-Policy to the frontend build |
 | `1260393` | Remove the unused AdminReviewRequest DTO that violates SEC-07 |
-| _(this commit)_ | Add the security specification and the SEC-01 … SEC-20 traceability matrix |
+| `160205c` | Add the security specification and the SEC-01..SEC-20 traceability matrix |
+| _(this commit)_ | Add the Swagger-export drift check and record the review evidence |
