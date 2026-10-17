@@ -6,6 +6,9 @@
 #   * The direct reservation POST/PUT/DELETE routes are gone (405) and reservations are
 #     created only by workflow code (offer approval).
 #   * Releasing a reservation returns its capacity to the grid (accounting stays intact).
+#   * Concurrency (F1/F2): overlapping releases cannot overwrite the first release's audit
+#     fields, and a release racing a contract creation can never leave the hold both
+#     released and linked to a live contract.
 # Expiry behaviour (ExpiresAt/HoldDays) is intentionally NOT exercised here: its removal
 # is deferred to a separate, separately-approved increment.
 #
@@ -221,6 +224,88 @@ try {
   $null = Sql "SET QUOTED_IDENTIFIER ON; SET ANSI_NULLS ON; UPDATE GRID_CAPACITY_RESERVATIONS SET RELEASED_AT = NULL, RELEASE_REASON = NULL WHERE ID = $($h.Reservation);"
   Check 'S7R-51' 'ended contract + unreleased hold is releasable' 200 (Call 'POST' "/api/GridCapacityReservations/$($h.Reservation)/release" @{ reason = 'manual after ended contract' } $admin).Status
   Check 'S7R-52' 'allowed release records the manual reason' 'manual after ended contract' (Sql "SELECT RELEASE_REASON FROM GRID_CAPACITY_RESERVATIONS WHERE ID = $($h.Reservation);")
+
+  # ---------- F1/F2: concurrency hardening ----------
+  Write-Output ''
+  Write-Output '== concurrency: release vs release, release vs contract creation =='
+
+  # Real overlapping HTTP from separate PowerShell processes (same approach as the s6 M-1 block
+  # and parallel-approval.ps1). Every job waits for ONE shared start instant so the calls hit the
+  # API together instead of relying on process-startup jitter.
+  $jobPost = {
+    param($baseUrl, $token, $path, $body, $startMs)
+    if ($startMs) { while ([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() -lt [long]$startMs) { Start-Sleep -Milliseconds 5 } }
+    $h = @{ Authorization = 'Bearer ' + $token }
+    $p = @{ Uri = ($baseUrl + $path); Method = 'Post'; Headers = $h; UseBasicParsing = $true; ErrorAction = 'Stop' }
+    if ($body) { $p.Body = $body; $p.ContentType = 'application/json' }
+    try { $r = Invoke-WebRequest @p; return [pscustomobject]@{ Status = [int]$r.StatusCode; Body = [string]$r.Content } }
+    catch {
+      $resp = $_.Exception.Response
+      if ($null -eq $resp) { throw }
+      $t = (New-Object System.IO.StreamReader($resp.GetResponseStream())).ReadToEnd()
+      return [pscustomobject]@{ Status = [int]$resp.StatusCode; Body = $t }
+    }
+  }
+  function Receive-Race($jobs) {
+    $out = @()
+    foreach ($j in $jobs) {
+      $o = @(Receive-Job $j); Remove-Job $j -Force
+      if ($o.Count -eq 0) { throw 'race job produced no result' }
+      $out += $o[-1]
+    }
+    return $out
+  }
+  # The API may serialise an in-memory Utc value with a trailing 'Z' and the same instant read
+  # back from the database without one, so normalise before comparing instants.
+  function Release-Instant([string]$Body) {
+    $v = [string](($Body | ConvertFrom-Json).releasedAt)
+    return (($v -replace 'Z$', '') -replace '\+00:00$', '')
+  }
+
+  # F2: overlapping releases of the SAME hold. Exactly one call writes ReleasedAt/ReleaseReason;
+  # every other call must observe the already-released row and change nothing.
+  $hRR = New-ApprovedHold 'RR' $fx.PrimaryRegionId $laTok $ivTok $admin
+  $rrReasons = @('race release A', 'race release B', 'race release C')
+  $raceMs = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() + 4000
+  $rrJobs = @()
+  foreach ($rsn in $rrReasons) {
+    $rrJobs += Start-Job -ScriptBlock $jobPost -ArgumentList $base, $admin, "/api/GridCapacityReservations/$($hRR.Reservation)/release", (ConvertTo-Json -InputObject @{ reason = $rsn } -Compress), $raceMs
+  }
+  $null = Wait-Job $rrJobs -Timeout 60
+  $rrRes = Receive-Race $rrJobs
+  Check 'S7R-60' 'overlapping releases all return 200 (one writes, rest idempotent)' '200 200 200' (@($rrRes | ForEach-Object { [int]$_.Status }) -join ' ')
+
+  $rrTimes = @($rrRes | Where-Object { [int]$_.Status -eq 200 } | ForEach-Object { Release-Instant $_.Body })
+  Check 'S7R-61' 'overlapping releases report ONE release event (no overwrite)' 1 (@($rrTimes | Sort-Object -Unique).Count)
+
+  # Bind the API-reported instant to the persisted row at full datetime2(7) precision, without
+  # depending on how the serializer formats a Database-read vs in-memory DateTime.
+  $rrMatch = 0
+  if ($rrTimes.Count -gt 0) {
+    $rrMatch = [int](Sql "SELECT CAST(COUNT(*) AS varchar(2)) FROM GRID_CAPACITY_RESERVATIONS WHERE ID = $($hRR.Reservation) AND RELEASED_AT IS NOT NULL AND TODATETIMEOFFSET(RELEASED_AT, 0) = CAST('$($rrTimes[0])' AS datetimeoffset);")
+  }
+  Check 'S7R-62' 'the persisted ReleasedAt is the value the API reported' 1 $rrMatch
+  $rrReason = Sql "SELECT RELEASE_REASON FROM GRID_CAPACITY_RESERVATIONS WHERE ID = $($hRR.Reservation);"
+  Check 'S7R-63' 'the persisted reason is exactly one submitted reason' 'True' ([string]($rrReasons -contains $rrReason))
+
+  # F1: a manual release and a contract creation racing on the same hold. Both paths pin the
+  # reservation row, so exactly one wins and the hold can never end up released while it is
+  # linked to a live contract.
+  $hRC = New-ApprovedHold 'RC' $fx.PrimaryRegionId $laTok $ivTok $admin
+  $raceMs = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() + 4000
+  $jRel = Start-Job -ScriptBlock $jobPost -ArgumentList $base, $admin, "/api/GridCapacityReservations/$($hRC.Reservation)/release", (ConvertTo-Json -InputObject @{ reason = 'race release vs create' } -Compress), $raceMs
+  $jCre = Start-Job -ScriptBlock $jobPost -ArgumentList $base, $admin, '/api/contracts', (ConvertTo-Json -InputObject @{ offerId = $hRC.Offer } -Compress), $raceMs
+  $null = Wait-Job $jRel, $jCre -Timeout 60
+  $rcRes = Receive-Race @($jRel, $jCre)
+  $relSt = [int]$rcRes[0].Status
+  $creSt = [int]$rcRes[1].Status
+  Check 'S7R-70' 'release vs create: exactly one side wins (200 xor 201)' 'True' ([string]((($relSt -eq 200) -and ($creSt -eq 409)) -or (($relSt -eq 409) -and ($creSt -eq 201))))
+  Check 'S7R-71' 'release vs create: the loser fails cleanly, never with 5xx' 'True' ([string](($relSt -lt 500) -and ($creSt -lt 500)))
+  Check 'S7R-72' 'no hold is both released and linked to a live contract' 0 ([int](Sql "SELECT CAST(COUNT(*) AS varchar(2)) FROM GRID_CAPACITY_RESERVATIONS r JOIN CONTRACTS c ON c.ID = r.CONTRACT_ID WHERE r.ID = $($hRC.Reservation) AND r.RELEASED_AT IS NOT NULL AND c.STATUS_ID IN (1, 2);"))
+  $expectHold = if ($relSt -eq 200) { 'released=1,linked=0' } else { 'released=0,linked=1' }
+  $holdRel = Sql "SELECT CAST(CASE WHEN RELEASED_AT IS NULL THEN 0 ELSE 1 END AS varchar(2)) FROM GRID_CAPACITY_RESERVATIONS WHERE ID = $($hRC.Reservation);"
+  $holdCon = Sql "SELECT CAST(CASE WHEN CONTRACT_ID IS NULL THEN 0 ELSE 1 END AS varchar(2)) FROM GRID_CAPACITY_RESERVATIONS WHERE ID = $($hRC.Reservation);"
+  Check 'S7R-73' 'the persisted hold matches the winning call' $expectHold ("released=$holdRel,linked=$holdCon")
 }
 finally { Stop-S4App $app }
 

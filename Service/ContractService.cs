@@ -112,16 +112,23 @@ public class ContractService : IContractService
         if (land.Status != LandStatus.UnderContract)
             throw new BusinessRuleException("The land is not under contract.");
 
+        await using var transaction = await _context.Database.BeginTransactionAsync();
+
+        // Step 7 F1 (concurrency): pin this offer's active reservation row for the rest of the
+        // transaction (repo convention: UPDLOCK, HOLDLOCK) so a concurrent admin release cannot
+        // release the hold between this read and the ContractId attach below. Lock order: this
+        // method takes the reservation lock before inserting the contract, while
+        // GridCapacityReservationService.ReleaseAsync reads the CONTRACTS row before taking the
+        // same reservation lock, so the two orderings can never form a cycle.
         var reservation = await _context.GridCapacityReservations
-            .FirstOrDefaultAsync(r => r.OfferId == offer.Id && r.ReleasedAt == null)
+            .FromSqlInterpolated($"SELECT * FROM GRID_CAPACITY_RESERVATIONS WITH (UPDLOCK, HOLDLOCK) WHERE OFFER_ID = {offer.Id} AND RELEASED_AT IS NULL")
+            .FirstOrDefaultAsync()
             ?? throw new BusinessRuleException("This offer has no active grid reservation.");
 
         // Step 7 F1: an expired hold cannot become a contract. An active reservation is
         // ReleasedAt IS NULL and (ExpiresAt IS NULL or ExpiresAt in the future).
         if (reservation.ExpiresAt is { } expiresAt && expiresAt <= DateTime.UtcNow)
             throw new BusinessRuleException("The grid reservation for this offer has expired.");
-
-        await using var transaction = await _context.Database.BeginTransactionAsync();
 
         var contract = new Contract
         {
