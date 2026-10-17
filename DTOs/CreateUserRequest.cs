@@ -3,20 +3,29 @@ using System.ComponentModel.DataAnnotations;
 namespace NIBRAS.API.DTOs;
 
 public record CreateUserRequest
-([property: Required]
-    [property: MaxLength(100)]
+([param: Required, NoControlCharacters]
+    [param: MaxLength(100)]
     string FullName,
 
-    [property: Required]
-    [property: EmailAddress]
-    [property: MaxLength(255)]
+    [param: Required, NoControlCharacters]
+    [param: EmailAddress]
+    [param: MaxLength(255)]
     string Email,
 
-    [property: Required]
-    [property: MaxLength(20)]
+    [param: Required, NoControlCharacters]
+    [param: MaxLength(20)]
     string Phone,
 
-    [property: Required]
-    [property: Range(1, 3)]
-    int RoleId
+    [param: Required, MinLength(10), MaxLength(128), NoControlCharacters, MaxUtf8Bytes(72)]
+    string Password,
+
+    [param: Required]
+    [param: Range(1, 3)]
+    int RoleId,
+
+    [param: MaxLength(200), NoControlCharacters]
+    string? CompanyName = null,
+
+    [param: MaxLength(100), NoControlCharacters]
+    string? CompanyRegistrationNumber = null
 );

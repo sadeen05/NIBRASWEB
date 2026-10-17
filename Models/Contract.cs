@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using NibrasWeb.Enums;
 
 namespace NIBRAS.Models;
 
@@ -15,8 +16,6 @@ public partial class Contract
 
     public int LandlordId { get; set; }
 
-    public int StatusId { get; set; }
-
     public DateTime? InvestorSignedAt { get; set; }
 
     public DateTime? AdminReviewedAt { get; set; }
@@ -28,6 +27,8 @@ public partial class Contract
     public DateTime? CreatedAt { get; set; }
 
     public int? OfferVersionId { get; set; }
+
+    public int? CriterionId { get; set; }
 
     public int NoticePeriodDays { get; set; }
 
@@ -43,6 +44,8 @@ public partial class Contract
 
     public decimal? CompensationAmount { get; set; }
 
+    public ContractStatus Status { get; set; }
+
     public virtual ICollection<ContractReview> ContractReviews { get; set; } = new List<ContractReview>();
 
     public virtual GridCapacityReservation? GridCapacityReservation { get; set; }
@@ -55,9 +58,9 @@ public partial class Contract
 
     public virtual Offer Offer { get; set; } = null!;
 
-    public virtual ContractStatus Status { get; set; } = null!;
-
     public virtual OfferVersion? OfferVersion { get; set; }
+
+    public virtual LandCriterion? Criterion { get; set; }
 
     public virtual User? CancellationRequestedBy { get; set; }
 }

@@ -1,0 +1,335 @@
+@baseUrl = http://localhost:5181
+@landlordToken = <capture-locally-do-not-commit>
+@landlordBToken = <capture-locally-do-not-commit>
+@investorToken = <capture-locally-do-not-commit>
+@adminToken = <capture-locally-do-not-commit>
+@landId = <land-id-from-create>
+@documentId = <document-id-from-upload>
+
+# Security cases for step 4 (SEC-06, 07, 09, 11, 13, 14, 15, 17, 18).
+# Result legend:
+#   PASS           executed by a driver; the actual result matched the expectation
+#   FAIL           executed; the actual result did not match
+#   BLOCKED        not executed here. The admin cases in this file were BLOCKED until the
+#                  approved C1 recovery (the placeholder SuperAdmin was removed and the app's
+#                  own Development SuperAdminSeeder created a working account from Seed:*);
+#                  the driver %TEMP%\opencode\s4_admin.ps1 then executed them: 39 PASS / 0 FAIL.
+#   NOT VERIFIED   not executed in this remediation; no safe trigger exists here
+# Code-review-only checks are labelled as such and are not counted as PASS.
+# These requests were NOT sent through this file in an HTTP client. Each case was
+# executed as an equivalent request by a PowerShell driver (s4_tests.ps1,
+# s4_regression.ps1, s4_review.ps1, s4_review2.ps1 in %TEMP%\opencode) against the
+# running app on localhost:5181.
+# The admin cases (S4-50..S4-62) were BLOCKED until the approved C1 recovery. The driver
+# s4_admin.ps1 (in %TEMP%\opencode) reads Seed:SuperAdminEmail/Password from user-secrets
+# and never prints them; its first run returned 401 because NEBRASDB_Step1's sole SuperAdmin
+# was the unauthenticatable model-seed placeholder (PASSWORD_HASH = 'N/A', no query filter,
+# so the Development SuperAdminSeeder stayed a no-op while any RoleId=4 row existed). After
+# the approved C1 change (placeholder removed; the app's own seeder created a working
+# SuperAdmin from Seed:* on restart; normal login verified 200 and a SuperAdmin-gated call
+# returned 200), the driver executed all 13 cases plus setup/verification checks:
+# 39 PASS / 0 FAIL. Results per case are recorded on the case lines below.
+# Post-remediation reruns: regression 47 PASS / 0 FAIL; full driver 51 PASS / 0 FAIL
+# (the 13 admin cases previously reported BLOCKED were executed separately by
+# s4_admin.ps1: 39 PASS / 0 FAIL); s4_review.ps1 (V-01..V-14) 14 PASS / 0 FAIL;
+# s4_review2.ps1 (X-01..X-09) 9 PASS / 0 FAIL. Regression/V/X were rerun on fresh
+# instances after the admin run and stayed green. Drivers are run on a fresh app:
+# the auth endpoints are rate limited to 10 requests/minute per IP, so running them in
+# the same minute as the other drivers yields 429 on login and empty tokens (401s).
+# Never commit real tokens or passwords; replace the variables locally.
+
+### SEC-13 filePath: http:// with a scheme — EXPECTED: 400
+# Result: PASS (400)
+POST {{baseUrl}}/api/lands/{{landId}}/documents
+Authorization: Bearer {{landlordToken}}
+Content-Type: application/json
+
+{ "documentTypeId": 2, "filePath": "http://169.254.169.254/" }
+
+### SEC-13 filePath: file:/// scheme — EXPECTED: 400
+# Result: PASS (400)
+POST {{baseUrl}}/api/lands/{{landId}}/documents
+Authorization: Bearer {{landlordToken}}
+Content-Type: application/json
+
+{ "documentTypeId": 2, "filePath": "file:///c:/windows/win.ini" }
+
+### SEC-13 filePath: UNC share — EXPECTED: 400
+# Result: PASS (400)
+POST {{baseUrl}}/api/lands/{{landId}}/documents
+Authorization: Bearer {{landlordToken}}
+Content-Type: application/json
+
+{ "documentTypeId": 2, "filePath": "\\\\server\\share" }
+
+### SEC-13 filePath: parent-directory segments — EXPECTED: 400
+# Result: PASS (400)
+POST {{baseUrl}}/api/lands/{{landId}}/documents
+Authorization: Bearer {{landlordToken}}
+Content-Type: application/json
+
+{ "documentTypeId": 2, "filePath": "..\\..\\x" }
+
+### SEC-13 filePath: 501 characters — EXPECTED: 400
+# Result: PASS (400)
+POST {{baseUrl}}/api/lands/{{landId}}/documents
+Authorization: Bearer {{landlordToken}}
+Content-Type: application/json
+
+{ "documentTypeId": 2, "filePath": "<501 characters generated locally>" }
+
+### SEC-13 filePath: Windows drive letter with backslash — EXPECTED: 400
+# Result: PASS (400; regression R-11)
+POST {{baseUrl}}/api/lands/{{landId}}/documents
+Authorization: Bearer {{landlordToken}}
+Content-Type: application/json
+
+{ "documentTypeId": 2, "filePath": "C:\\Windows\\win.ini" }
+
+### SEC-13 filePath: Windows drive letter with forward slash — EXPECTED: 400
+# Result: PASS (400; regression R-12)
+POST {{baseUrl}}/api/lands/{{landId}}/documents
+Authorization: Bearer {{landlordToken}}
+Content-Type: application/json
+
+{ "documentTypeId": 2, "filePath": "c:/windows/win.ini" }
+
+### SEC-13 filePath: drive-relative path — EXPECTED: 400
+# Result: PASS (400; regression R-13, R-14)
+POST {{baseUrl}}/api/lands/{{landId}}/documents
+Authorization: Bearer {{landlordToken}}
+Content-Type: application/json
+
+{ "documentTypeId": 2, "filePath": "C:Windows\\win.ini" }
+
+### SEC-13 filePath: leading slash — EXPECTED: 400
+# Result: PASS (400; regression R-19)
+POST {{baseUrl}}/api/lands/{{landId}}/documents
+Authorization: Bearer {{landlordToken}}
+Content-Type: application/json
+
+{ "documentTypeId": 2, "filePath": "/etc/passwd" }
+
+### SEC-13 filePath: a C letter not in the drive position — EXPECTED: 201 (no false positive)
+# Result: PASS (201; regression R-22)
+POST {{baseUrl}}/api/lands/{{landId}}/documents
+Authorization: Bearer {{landlordToken}}
+Content-Type: application/json
+
+{ "documentTypeId": 2, "filePath": "docs/C-drive-notes.pdf" }
+
+### SEC-13 filePath: normal relative path — EXPECTED: 201
+# Result: PASS (201)
+POST {{baseUrl}}/api/lands/{{landId}}/documents
+Authorization: Bearer {{landlordToken}}
+Content-Type: application/json
+
+{ "documentTypeId": 2, "filePath": "docs/titledeed-001.pdf" }
+
+### SEC-06/07 ownership: other landlord GETs the land — EXPECTED: 403
+# Result: PASS (403)
+GET {{baseUrl}}/api/lands/{{landId}}
+Authorization: Bearer {{landlordBToken}}
+
+### SEC-06/07 ownership: other landlord PUTs the land — EXPECTED: 403
+# Result: PASS (403)
+PUT {{baseUrl}}/api/lands/{{landId}}
+Authorization: Bearer {{landlordBToken}}
+Content-Type: application/json
+
+{
+  "regionId": 2, "gridId": 2, "landNumber": "L-x", "village": "Village-A", "basin": "Basin-A",
+  "parcelNumber": "P-x", "areaDonum": 25, "slopePercentage": 5, "distanceToGridKm": 10,
+  "solarIrradiance": 6, "elevationM": 100
+}
+
+### SEC-06/07 ownership: other landlord submits the land — EXPECTED: 403
+# Result: PASS (403)
+POST {{baseUrl}}/api/lands/{{landId}}/submit
+Authorization: Bearer {{landlordBToken}}
+
+### SEC-06/07 ownership: other landlord uploads a document — EXPECTED: 403
+# Result: PASS (403)
+POST {{baseUrl}}/api/lands/{{landId}}/documents
+Authorization: Bearer {{landlordBToken}}
+Content-Type: application/json
+
+{ "documentTypeId": 2, "filePath": "docs/x.pdf" }
+
+### SEC-06/07 ownership: other landlord lists the documents — EXPECTED: 403
+# Result: PASS (403)
+GET {{baseUrl}}/api/lands/{{landId}}/documents
+Authorization: Bearer {{landlordBToken}}
+
+### SEC-09 role: landlord verifies — EXPECTED: 403
+# Result: PASS (403)
+POST {{baseUrl}}/api/lands/{{landId}}/verify
+Authorization: Bearer {{landlordToken}}
+
+### SEC-09 role: landlord reviews a document — EXPECTED: 403
+# Result: PASS (403)
+PUT {{baseUrl}}/api/lands/{{landId}}/documents/{{documentId}}/review
+Authorization: Bearer {{landlordToken}}
+Content-Type: application/json
+
+{ "approved": true }
+
+### SEC-09 role: landlord creates a criterion — EXPECTED: 403
+# Result: PASS (403)
+POST {{baseUrl}}/api/criteria
+Authorization: Bearer {{landlordToken}}
+Content-Type: application/json
+
+{ "maxSlopePct": 1, "reason": "landlord attempt" }
+
+### SEC-09 role: landlord reads criteria history — EXPECTED: 403
+# Result: PASS (403)
+GET {{baseUrl}}/api/criteria/history
+Authorization: Bearer {{landlordToken}}
+
+### SEC-09 role: landlord creates a document type — EXPECTED: 403
+# Result: PASS (403)
+POST {{baseUrl}}/api/document-types
+Authorization: Bearer {{landlordToken}}
+Content-Type: application/json
+
+{ "name": "Landlord-created", "isRequiredForVerification": false }
+
+### SEC-09 role: landlord deletes a document type — EXPECTED: 403
+# Result: PASS (403)
+DELETE {{baseUrl}}/api/document-types/1
+Authorization: Bearer {{landlordToken}}
+
+### SEC-11 browse: unapproved investor — EXPECTED: 403
+# Result: PASS (403)
+GET {{baseUrl}}/api/lands
+Authorization: Bearer {{investorToken}}
+
+### SEC-11 browse: page size above maximum — EXPECTED: 400
+# Result: PASS (400)
+GET {{baseUrl}}/api/lands?pageSize=1000
+Authorization: Bearer {{landlordToken}}
+
+### SEC-14 status injection — EXPECTED: 400
+# Result: PASS (400)
+GET {{baseUrl}}/api/lands?status=%27%20OR%201%3D1--%20-
+Authorization: Bearer {{landlordToken}}
+
+### SEC-17 mass assignment: landlordId/status/dataVerifiedByAdmin ignored — EXPECTED: 201, DB unchanged by the body
+# Result: PASS (see step-4.http extra-fields case)
+POST {{baseUrl}}/api/lands
+Authorization: Bearer {{landlordToken}}
+Content-Type: application/json
+
+{
+  "regionId": 2, "gridId": 2, "landNumber": "L4-sec-<stamp>", "village": "Village-A", "basin": "Basin-A",
+  "parcelNumber": "P4-sec-<stamp>", "areaDonum": 25, "slopePercentage": 5, "distanceToGridKm": 10,
+  "solarIrradiance": 6, "elevationM": 100, "landlordId": 999999, "status": "Verified", "dataVerifiedByAdmin": true
+}
+
+### SEC-11 admin-only: Admin reviews a document — EXPECTED: 200
+# Result: PASS (200; driver S4-56b for approval; reject-without-note variant 400 in S4-56a)
+PUT {{baseUrl}}/api/lands/{{landId}}/documents/{{documentId}}/review
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{ "approved": false, "note": "Scan is illegible." }
+
+### SEC-11 admin-only: Admin verify — EXPECTED: 200 or 409 by state
+# Result: PASS (200; driver S4-51; the 409 variants S4-50/S4-61 also executed)
+POST {{baseUrl}}/api/lands/{{landId}}/verify
+Authorization: Bearer {{adminToken}}
+
+### SEC-06 admin-only: Admin browses ?status=PendingVerification — EXPECTED: 200 (S4-55)
+# Result: PASS (200; driver S4-55)
+GET {{baseUrl}}/api/lands?status=PendingVerification
+Authorization: Bearer {{adminToken}}
+
+### SEC-06: a v1-verified land keeps its criterion after a new criterion (S4-58)
+# Result: PASS (DB unchanged; driver S4-58a). The land's VerifiedAgainstCriterionId
+# does not change; a later criterion version is not applied retroactively.
+GET {{baseUrl}}/api/lands/{{landId}}
+Authorization: Bearer {{adminToken}}
+
+### SEC-14 admin-only: document-types DELETE of a used type — EXPECTED: 409 (S4-59)
+# Result: PASS (409; driver S4-59b; an unused type is deleted 204 first — driver S4-59a)
+DELETE {{baseUrl}}/api/document-types/1
+Authorization: Bearer {{adminToken}}
+
+# ============================================================================
+# Security re-review cases (V-01..V-14, X-01..X-09), rerun during remediation.
+# Parallel and header cases cannot be expressed faithfully as single .http
+# requests; each is executed by the driver named on the result line.
+# ============================================================================
+
+### SEC-15 headers on 404 / 201 / 401 — EXPECTED: exact CSP, nosniff, DENY, no-referrer
+# Result: PASS 4/4 (V-01..V-04, rerun). Content-Security-Policy is exactly
+# "default-src 'none'; frame-ancestors 'none'" on a 201, 401 and 404, with
+# X-Content-Type-Options: nosniff, X-Frame-Options: DENY, Referrer-Policy: no-referrer.
+GET {{baseUrl}}/api/lands/999999
+Authorization: Bearer {{landlordToken}}
+
+### SEC-09 visibility: missing resource vs another owner's resource
+# Result: PASS (V-05 missing land -> 404; V-06 another landlord's land -> 403, rerun;
+# and regression R-24..R-28 for lands, documents and eligibility). Convention: a
+# missing/soft-deleted resource is 404, an existing resource the caller cannot access
+# is 403. The 403 therefore reveals that the resource exists; this is accepted and is
+# not described as concealment.
+GET {{baseUrl}}/api/lands/{{landId}}
+Authorization: Bearer {{landlordBToken}}
+
+### SEC-06/18 race: five parallel creates with the same parcel — EXPECTED: one 201, four 409, no 500
+# Result: PASS (V-07..V-11, rerun; regression R-29..R-33). UQ_LAND_LOCATION is mapped to
+# 409 like UQ_LAND_NUMBER_REGION; the response body exposes no SQL or index text, and the
+# database holds exactly one live row. Driver: s4_review.ps1 / s4_regression.ps1.
+
+### H1 race: concurrent document uploads must get distinct sequential versions
+# Result: PASS (V-12..V-14 rerun: five parallel uploads -> five rows, versions 1..5;
+# regression R-34.1..R-37: three rounds of five -> 15 rows, 15 distinct versions 1..15,
+# no 500s). Driver: s4_review.ps1 / s4_regression.ps1.
+
+### SEC-13/17: control characters in filePath — EXPECTED: 400
+# Result: PASS (X-01 U+0001 -> 400; X-02 tab -> 400, rerun). FilePath keeps the strict
+# NoControlCharacters rule; the free-text relaxation below does not apply to it.
+POST {{baseUrl}}/api/lands/{{landId}}/documents
+Authorization: Bearer {{landlordToken}}
+Content-Type: application/json
+
+{ "documentTypeId": 2, "filePath": "docs/a\u0001b.pdf" }
+
+### SEC-17: tab and newline are allowed in free text
+# Result: PASS (X-03 newline and X-04 tab reach the service role check and return 403 for
+# a landlord, rerun; regression R-38/R-39 reject, R-41 review note). The rule now allows
+# U+0009 and U+000A and rejects the other U+0000..U+001F characters (X-05 U+0001 -> 400).
+# Validation runs before the service role check, so a 403 proves the input was accepted.
+POST {{baseUrl}}/api/lands/{{landId}}/reject
+Authorization: Bearer {{landlordToken}}
+Content-Type: application/json
+
+{ "reason": "line one\nline two" }
+
+### SEC-07: protected fields on PUT are ignored; database confirmed unchanged
+# Result: PASS (X-06 204; X-07 DB shows LAND_STATUS_ID=1, DATA_VERIFIED_BY_ADMIN=0,
+# VERIFIED_AGAINST_CRITERION_ID=NULL after status/dataVerifiedByAdmin/
+# verifiedAgainstCriterionId/landlordId were sent, rerun).
+PUT {{baseUrl}}/api/lands/{{landId}}
+Authorization: Bearer {{landlordToken}}
+Content-Type: application/json
+
+{
+  "regionId": 2, "gridId": 2, "landNumber": "L-<stamp>", "village": "Village-A", "basin": "Basin-A",
+  "parcelNumber": "P-<stamp>", "areaDonum": 25, "slopePercentage": 5, "distanceToGridKm": 10,
+  "solarIrradiance": 6, "elevationM": 100,
+  "status": "Verified", "dataVerifiedByAdmin": true, "verifiedAgainstCriterionId": 999, "landlordId": 999999
+}
+
+### SEC-18: generic 500 body — EXPECTED: generic detail + traceId, no SQL/exception text
+# Result: PASS (executed at runtime during this verification). A land create with
+# areaDonum = 200,000,000 passed the old DTO bound but overflowed LANDS.AREA_DONUM
+# decimal(10,2) in the database, and the handler returned exactly:
+#   {"title":"An unexpected error occurred.","status":500,"detail":"An unexpected error
+#    occurred.","errorCode":"INTERNAL_ERROR","traceId":"<correlation-id>"}
+# with Content-Security-Policy: default-src 'none'; frame-ancestors 'none'. No SQL, stack
+# trace or exception text was in the body; the SqlException text appeared only in the
+# server log. That input now returns 400 (SEC-14 fix, driver R-43), so this trigger no
+# longer exists; the duplicate-parcel race also yields zero 500s (X-08/X-09).

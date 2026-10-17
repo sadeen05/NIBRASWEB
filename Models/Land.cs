@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using NibrasWeb.Enums;
 
 namespace NIBRAS.Models;
 
@@ -11,7 +12,17 @@ public partial class Land
 
     public int RegionId { get; set; }
 
+    public int GridId { get; set; }
+
+    public virtual Grid Grid { get; set; } = null!;
+
     public string LandNumber { get; set; } = null!;
+
+    public string? Village { get; set; }
+
+    public string? Basin { get; set; }
+
+    public string? ParcelNumber { get; set; }
 
     public decimal AreaDonum { get; set; }
 
@@ -25,7 +36,7 @@ public partial class Land
 
     public bool IsDeleted { get; set; }
 
-    public int LandStatusId { get; set; }
+    public LandStatus Status { get; set; }
 
     public bool DataVerifiedByAdmin { get; set; }
 
@@ -38,8 +49,6 @@ public partial class Land
     public virtual ICollection<DeletionRequest> DeletionRequests { get; set; } = new List<DeletionRequest>();
 
     public virtual ICollection<LandDocument> LandDocuments { get; set; } = new List<LandDocument>();
-
-    public virtual LandStatus LandStatus { get; set; } = null!;
 
     public virtual ICollection<LandStatusHistory> LandStatusHistories { get; set; } = new List<LandStatusHistory>();
 

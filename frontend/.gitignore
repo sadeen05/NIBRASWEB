@@ -1,0 +1,9 @@
+# Frontend-local ignores (keeps generated output out of the repository).
+node_modules
+dist
+dist-ssr
+coverage
+*.local
+*.tsbuildinfo
+.eslintcache
+.vite

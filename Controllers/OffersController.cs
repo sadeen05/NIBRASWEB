@@ -1,11 +1,14 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using NIBRAS.API.DTOs;
-using NIBRAS.API.Services;
+using NibrasWeb.DTOs;
+using NibrasWeb.Service;
 
 namespace NIBRAS.API.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
+[Authorize]
 public class OffersController : ControllerBase
 {
     private readonly IOfferService _offerService;
@@ -15,24 +18,31 @@ public class OffersController : ControllerBase
         _offerService = offerService;
     }
 
-    [HttpGet]
-    public async Task<ActionResult<List<OfferDto>>> GetAll()
-    {
-        var offers = await _offerService.GetAllAsync();
-        return Ok(offers);
-    }
-
     [HttpGet("{id}")]
     public async Task<ActionResult<OfferDto>> GetById(int id)
     {
-        var offer = await _offerService.GetByIdAsync(id);
+        return Ok(await _offerService.GetByIdAsync(id));
+    }
 
-        if (offer == null)
-        {
-            return NotFound();
-        }
+    [HttpGet("land/{landId}")]
+    public async Task<ActionResult<List<OfferDto>>> GetForLand(int landId)
+    {
+        var offers = await _offerService.GetOffersForLandAsync(landId);
+        return Ok(offers);
+    }
 
-        return Ok(offer);
+    [HttpGet("my")]
+    public async Task<ActionResult<List<OfferDto>>> GetMy([FromQuery] string? statusFilter = null)
+    {
+        var offers = await _offerService.GetMyOffersAsync(statusFilter);
+        return Ok(offers);
+    }
+
+    [HttpGet("pending-admin-approval")]
+    public async Task<ActionResult<List<OfferDto>>> GetPendingAdminApproval()
+    {
+        var offers = await _offerService.GetPendingAdminApprovalAsync();
+        return Ok(offers);
     }
 
     [HttpPost]
@@ -42,29 +52,52 @@ public class OffersController : ControllerBase
         return CreatedAtAction(nameof(GetById), new { id = offer.Id }, offer);
     }
 
-    [HttpPut("{id}")]
-    public async Task<IActionResult> Update(int id, UpdateOfferRequest request)
+    [HttpPost("{id}/counter-offer")]
+    public async Task<ActionResult<OfferDto>> CounterOffer(int id, CounterOfferRequest request)
     {
-        var result = await _offerService.UpdateAsync(id, request);
-
-        if (result == false)
-        {
-            return NotFound();
-        }
-
-        return NoContent();
+        var offer = await _offerService.CounterOfferAsync(id, request);
+        return Ok(offer);
     }
 
-    [HttpDelete("{id}")]
-    public async Task<IActionResult> Delete(int id)
+    [HttpPost("{id}/accept")]
+    public async Task<ActionResult<OfferDto>> Accept(int id)
     {
-        var result = await _offerService.DeleteAsync(id);
+        var offer = await _offerService.AcceptAsync(id);
+        return Ok(offer);
+    }
 
-        if (result == false)
-        {
-            return NotFound();
-        }
+    [HttpPost("{id}/reject")]
+    public async Task<ActionResult<OfferDto>> Reject(int id, RejectOfferRequest request)
+    {
+        var offer = await _offerService.RejectAsync(id, request.Reason);
+        return Ok(offer);
+    }
 
-        return NoContent();
+    [HttpPost("{id}/withdraw")]
+    public async Task<ActionResult<OfferDto>> Withdraw(int id)
+    {
+        var offer = await _offerService.WithdrawAsync(id);
+        return Ok(offer);
+    }
+
+    [HttpPost("{id}/admin-approve")]
+    public async Task<ActionResult<OfferDto>> AdminApprove(int id)
+    {
+        var offer = await _offerService.AdminApproveAsync(id);
+        return Ok(offer);
+    }
+
+    [HttpPost("{id}/admin-reject")]
+    public async Task<ActionResult<OfferDto>> AdminReject(int id, RejectOfferRequest request)
+    {
+        var offer = await _offerService.AdminRejectAsync(id, request.Reason);
+        return Ok(offer);
+    }
+
+    [HttpGet("{id}/negotiation-history")]
+    public async Task<ActionResult<List<OfferNegotiationHistoryDto>>> GetNegotiationHistory(int id)
+    {
+        var history = await _offerService.GetNegotiationHistoryAsync(id);
+        return Ok(history);
     }
 }

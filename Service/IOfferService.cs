@@ -1,12 +1,24 @@
 using NIBRAS.API.DTOs;
-namespace NIBRAS.API.Services;
+using NibrasWeb.DTOs;
 
-
-public interface IOfferService
+namespace NibrasWeb.Service
 {
-    Task<List<OfferDto>> GetAllAsync();
-    Task<OfferDto?> GetByIdAsync(int id);
-    Task<OfferDto> CreateAsync(CreateOfferRequest request);
-    Task<bool> UpdateAsync(int id, UpdateOfferRequest request);
-    Task<bool> DeleteAsync(int id);
+    public interface IOfferService
+    {
+        Task<OfferDto> GetByIdAsync(int offerId);
+        Task<List<OfferDto>> GetOffersForLandAsync(int landId);
+        Task<List<OfferDto>> GetMyOffersAsync(string? statusFilter = null);
+        Task<List<OfferDto>> GetPendingAdminApprovalAsync();
+
+        Task<OfferDto> CreateAsync(CreateOfferRequest request);
+        Task<OfferDto> CounterOfferAsync(int offerId, CounterOfferRequest request);
+        Task<OfferDto> AcceptAsync(int offerId);
+        Task<OfferDto> RejectAsync(int offerId, string reason);
+        Task<OfferDto> WithdrawAsync(int offerId);
+        Task<OfferDto> AdminApproveAsync(int offerId);
+        Task<OfferDto> AdminRejectAsync(int offerId, string reason);
+
+        Task<List<OfferNegotiationHistoryDto>> GetNegotiationHistoryAsync(int offerId);
+        Task MarkOfferClosedAsync(int offerId, int contractId, int performedByUserId);
+    }
 }

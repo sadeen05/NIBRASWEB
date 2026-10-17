@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using NIBRAS.API.DTOs;
 using NIBRAS.API.Services;
@@ -6,6 +7,7 @@ namespace NIBRAS.API.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
+[Authorize]
 public class ContractsController : ControllerBase
 {
     private readonly IContractService _contractService;
@@ -16,18 +18,18 @@ public class ContractsController : ControllerBase
     }
 
     [HttpGet]
-    public async Task<ActionResult<List<ContractDto>>> GetAll()
+    public async Task<ActionResult<ContractListResponse>> GetAll(
+        [FromQuery] int pageNumber = 1,
+        [FromQuery] int pageSize = 20,
+        [FromQuery] string? status = null)
     {
-        var contracts = await _contractService.GetAllAsync();
-        return Ok(contracts);
+        return Ok(await _contractService.GetAllAsync(pageNumber, pageSize, status));
     }
 
     [HttpGet("{id}")]
     public async Task<ActionResult<ContractDto>> GetById(int id)
     {
-        var contract = await _contractService.GetByIdAsync(id);
-        if (contract == null) return NotFound();
-        return Ok(contract);
+        return Ok(await _contractService.GetByIdAsync(id));
     }
 
     [HttpPost]
@@ -37,84 +39,27 @@ public class ContractsController : ControllerBase
         return CreatedAtAction(nameof(GetById), new { id = contract.Id }, contract);
     }
 
-    [HttpPut("{id}")]
-    public async Task<IActionResult> Update(int id, UpdateContractRequest request)
+    [HttpPost("{id}/sign")]
+    public async Task<ActionResult<ContractDto>> Sign(int id)
     {
-        var result = await _contractService.UpdateAsync(id, request);
-        if (result == false) return NotFound();
-        return NoContent();
+        return Ok(await _contractService.SignAsync(id));
     }
-
-    [HttpDelete("{id}")]
-    public async Task<IActionResult> Delete(int id)
-    {
-        var result = await _contractService.DeleteAsync(id);
-        if (result == false) return NotFound();
-        return NoContent();
-    }
-
-    // ============ SIGNING ============
-
-    [HttpPost("{id}/sign/investor")]
-    public async Task<IActionResult> SignAsInvestor(int id, SignContractRequest request)
-    {
-        var result = await _contractService.SignAsInvestorAsync(id, request.UserId);
-        if (!result) return NotFound();
-        return Ok(new { message = "Investor signature recorded." });
-    }
-
-    [HttpPost("{id}/sign/landlord")]
-    public async Task<IActionResult> SignAsLandlord(int id, SignContractRequest request)
-    {
-        var result = await _contractService.SignAsLandlordAsync(id, request.UserId);
-        if (!result) return NotFound();
-        return Ok(new { message = "Landlord signature recorded." });
-    }
-
-    // ============ ADMIN REVIEW ============
 
     [HttpPost("{id}/review")]
-    public async Task<ActionResult<ContractReviewDto>> Review(int id, AdminReviewRequest request)
+    public async Task<ActionResult<ContractDto>> Review(int id, ReviewContractRequest request)
     {
-        var review = await _contractService.AdminReviewAsync(id, request.AdminId, request.Decision, request.Reason);
-        return Ok(review);
+        return Ok(await _contractService.ReviewAsync(id, request));
     }
-
-    // ============ CANCELLATION ============
-
-    [HttpPost("{id}/cancellation/request")]
-    public async Task<IActionResult> RequestCancellation(int id, RequestCancellationRequest request)
-    {
-        var result = await _contractService.RequestCancellationAsync(
-            id, request.UserId, request.Reason, request.InvestorPenaltyAmount);
-        if (!result) return NotFound();
-        return Ok(new { message = "Cancellation requested." });
-    }
-
-    [HttpPost("{id}/cancellation/respond")]
-    public async Task<IActionResult> RespondToCancellation(int id, RespondToCancellationRequest request)
-    {
-        var result = await _contractService.RespondToCancellationAsync(id, request.UserId, request.Agree);
-        if (!result) return NotFound();
-        return Ok(new { message = request.Agree ? "Cancellation agreed." : "Dispute flagged." });
-    }
-
-    // ============ TERMINATION ============
 
     [HttpPost("{id}/terminate")]
-    public async Task<IActionResult> Terminate(int id, ForceTerminateRequest request)
+    public async Task<ActionResult<ContractDto>> Terminate(int id, TerminateContractRequest request)
     {
-        var result = await _contractService.TerminateAsync(id, request.AdminId, request.Justification);
-        if (!result) return NotFound();
-        return Ok(new { message = "Contract terminated." });
+        return Ok(await _contractService.TerminateAsync(id, request));
     }
 
-    [HttpPost("{id}/force-terminate")]
-    public async Task<IActionResult> ForceTerminate(int id, ForceTerminateRequest request)
+    [HttpGet("{id}/reviews")]
+    public async Task<ActionResult<List<ContractReviewDto>>> GetReviews(int id)
     {
-        var result = await _contractService.AdminForceTerminateAsync(
-            id, request.AdminId, request.Justification, request.CompensationOverride);
-        if (!result) return NotFound();
-        return Ok(new { message = "Contract force-terminated by admin." });
+        return Ok(await _contractService.GetReviewsAsync(id));
     }
 }

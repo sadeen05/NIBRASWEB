@@ -4,28 +4,29 @@ namespace NIBRAS.API.Services;
 
 public interface ILandService
 {
-	Task<List<LandDto>> GetAllAsync();
+    Task<LandListResponse> GetAllAsync(int pageNumber, int pageSize, string? status);
 
-	Task<LandDto?> GetByIdAsync(int id);
+    Task<LandDto> GetByIdAsync(int id);
 
-	Task<LandDto> CreateAsync(CreateLandRequest request);
+    Task<LandDto> CreateAsync(CreateLandRequest request);
 
-	Task<bool> UpdateAsync(int id, UpdateLandRequest request);
+    Task UpdateAsync(int id, UpdateLandRequest request);
 
-	Task<bool> DeleteAsync(int id);
+    Task SubmitAsync(int id);
 
+    Task ReviseAsync(int id);
 
-	Task<bool> SubmitAsync(int landId);
+    Task VerifyAsync(int id);
 
-	Task<bool> VerifyAsync(int landId, int adminId);
+    Task RejectAsync(int id, string reason);
 
-	Task<bool> RejectAsync(int landId, int adminId, string reason);
+    Task<LandEligibilityResponse> GetEligibilityAsync(int id);
 
+    Task<List<LandStatusHistoryDto>> GetAllStatusHistoryAsync(int landId);
 
-	Task<bool> AddDocumentAsync(int landId, CreateLandDocumentRequest request);
+    Task<LandDocumentDto> UploadDocumentAsync(int landId, UploadLandDocumentRequest request);
 
-	Task<List<LandDocumentDto>> GetDocumentsAsync(int landId);
+    Task<List<LandDocumentDto>> GetDocumentsAsync(int landId);
 
-
-	Task<bool> CheckEligibilityAsync(int landId);
+    Task<LandDocumentDto> ReviewDocumentAsync(int landId, int documentId, ReviewLandDocumentRequest request);
 }

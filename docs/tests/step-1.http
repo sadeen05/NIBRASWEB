@@ -1,0 +1,55 @@
+@baseUrl = http://localhost:5181
+
+### Create Region
+POST {{baseUrl}}/api/regions
+Content-Type: application/json
+
+{
+  "nameAr": "Acceptance Region",
+  "nameEn": "Acceptance Region",
+  "peakSunHoursPerDay": 5.5,
+  "wheelingFeePerKwh": 0.1,
+  "lossPercentage": 2
+}
+
+### Create Grid
+POST {{baseUrl}}/api/grids
+Content-Type: application/json
+
+{
+  "regionId": 1,
+  "name": "Acceptance Grid",
+  "capacityMw": 100,
+  "status": "Active"
+}
+
+### Create Landlord
+POST {{baseUrl}}/api/users
+Content-Type: application/json
+
+{
+  "fullName": "Acceptance Landlord",
+  "email": "acceptance-landlord@example.com",
+  "phone": "0500000001",
+  "roleId": 1
+}
+
+### Create Draft Land
+POST {{baseUrl}}/api/lands
+Content-Type: application/json
+
+{
+  "landlordId": 1,
+  "regionId": 1,
+  "gridId": 1,
+  "landNumber": "ACCEPTANCE-LAND-1",
+  "areaDonum": 10,
+  "slopePercentage": 1,
+  "distanceToGridKm": 1,
+  "solarIrradiance": 5,
+  "elevationM": 100
+}
+
+### Submit Land
+POST {{baseUrl}}/api/lands/1/submit?landlordId=1
+

@@ -1,5 +1,5 @@
-using Mapster;
 using Microsoft.EntityFrameworkCore;
+using NIBRAS;
 using NIBRAS.API.DTOs;
 using NIBRAS.Models;
 
@@ -8,52 +8,64 @@ namespace NIBRAS.API.Services;
 public class DocumentTypeService : IDocumentTypeService
 {
     private readonly NebrasdbContext _context;
-    private readonly ILogger<DocumentTypeService> _logger;
 
-    public DocumentTypeService(NebrasdbContext context, ILogger<DocumentTypeService> logger)
+    public DocumentTypeService(NebrasdbContext context)
     {
         _context = context;
-        _logger = logger;
     }
 
     public async Task<List<DocumentTypeDto>> GetAllAsync()
     {
-        var items = await _context.DocumentTypes.ToListAsync();
-        var result = new List<DocumentTypeDto>();
-        foreach (var item in items) result.Add(item.Adapt<DocumentTypeDto>());
-        return result;
+        return await _context.DocumentTypes
+            .AsNoTracking()
+            .OrderBy(t => t.Id)
+            .Select(t => new DocumentTypeDto(t.Id, t.Name, t.IsRequiredForVerification))
+            .ToListAsync();
     }
 
-    public async Task<DocumentTypeDto?> GetByIdAsync(int id)
+    public async Task<DocumentTypeDto> CreateAsync(DocumentTypeRequest request)
     {
-        var item = await _context.DocumentTypes.FindAsync(id);
-        if (item == null) return null;
-        return item.Adapt<DocumentTypeDto>();
-    }
+        var documentType = new DocumentType
+        {
+            Name = request.Name,
+            IsRequiredForVerification = request.IsRequiredForVerification
+        };
 
-    public async Task<DocumentTypeDto> CreateAsync(CreateDocumentTypeRequest request)
-    {
-        var item = request.Adapt<DocumentType>();
-        _context.DocumentTypes.Add(item);
+        _context.DocumentTypes.Add(documentType);
         await _context.SaveChangesAsync();
-        return item.Adapt<DocumentTypeDto>();
+
+        return ToDto(documentType);
     }
 
-    public async Task<bool> UpdateAsync(int id, UpdateDocumentTypeRequest request)
+    public async Task<DocumentTypeDto> UpdateAsync(int id, DocumentTypeRequest request)
     {
-        var item = await _context.DocumentTypes.FindAsync(id);
-        if (item == null) return false;
-        item.Name = request.Name;
+        var documentType = await _context.DocumentTypes.FirstOrDefaultAsync(t => t.Id == id)
+            ?? throw new NotFoundException("Document type not found.");
+
+        // Changing IsRequiredForVerification only affects future verifications. Lands
+        // that are already Verified keep their recorded VerifiedAgainstCriterionId and
+        // DataVerifiedByAdmin, and VerifyAsync only runs for PendingVerification lands,
+        // so this update does not silently invalidate or rewrite an existing
+        // verification snapshot.
+        documentType.Name = request.Name;
+        documentType.IsRequiredForVerification = request.IsRequiredForVerification;
+
         await _context.SaveChangesAsync();
-        return true;
+        return ToDto(documentType);
     }
 
-    public async Task<bool> DeleteAsync(int id)
+    public async Task DeleteAsync(int id)
     {
-        var item = await _context.DocumentTypes.FindAsync(id);
-        if (item == null) return false;
-        _context.DocumentTypes.Remove(item);
+        var documentType = await _context.DocumentTypes.FirstOrDefaultAsync(t => t.Id == id)
+            ?? throw new NotFoundException("Document type not found.");
+
+        if (await _context.LandDocuments.AnyAsync(d => d.DocumentTypeId == id))
+            throw new BusinessRuleException("This document type is used by uploaded documents and cannot be deleted.");
+
+        _context.DocumentTypes.Remove(documentType);
         await _context.SaveChangesAsync();
-        return true;
     }
+
+    private static DocumentTypeDto ToDto(DocumentType documentType) =>
+        new(documentType.Id, documentType.Name, documentType.IsRequiredForVerification);
 }

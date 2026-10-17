@@ -20,6 +20,4 @@ public partial class Region
     public virtual ICollection<Grid> Grids { get; set; } = new List<Grid>();
 
     public virtual ICollection<Land> Lands { get; set; } = new List<Land>();
-
-    public virtual ICollection<TariffBracket> TariffBrackets { get; set; } = new List<TariffBracket>();
 }

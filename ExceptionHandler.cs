@@ -11,18 +11,45 @@ public class GlobalExceptionHandler : IExceptionHandler
     public async ValueTask<bool> TryHandleAsync(
         HttpContext httpContext, Exception exception, CancellationToken ct)
     {
-        _logger.LogError(exception, "Unhandled exception");
+        if (exception is BadHttpRequestException badRequest)
+        {
+            _logger.LogWarning("Request rejected with status code {StatusCode}.", badRequest.StatusCode);
 
-        var env = httpContext.RequestServices.GetRequiredService<IWebHostEnvironment>();
+            var badRequestStatus = badRequest.StatusCode;
+            var isPayloadTooLarge = badRequestStatus == StatusCodes.Status413PayloadTooLarge;
+            var badRequestProblem = new ProblemDetails
+            {
+                Status = badRequestStatus,
+                Title = isPayloadTooLarge ? "Request body too large." : "Invalid request.",
+                Detail = isPayloadTooLarge
+                    ? "The request body exceeds the allowed size."
+                    : "The request could not be processed."
+            };
+            badRequestProblem.Extensions["errorCode"] = isPayloadTooLarge ? "PAYLOAD_TOO_LARGE" : "BAD_REQUEST";
+            badRequestProblem.Extensions["traceId"] = httpContext.TraceIdentifier;
+
+            httpContext.Response.StatusCode = badRequestStatus;
+            await httpContext.Response.WriteAsJsonAsync(badRequestProblem, ct);
+            return true;
+        }
 
         var (status, title, errorCode) = exception switch
         {
-            KeyNotFoundException => (StatusCodes.Status404NotFound, "Resource not found.", "RESOURCE_NOT_FOUND"),
-            UnauthorizedAccessException => (StatusCodes.Status403Forbidden, "Not authorized to perform this action.", "FORBIDDEN"),
-            InvalidOperationException => (StatusCodes.Status409Conflict, "Request violates a business rule.", "INVALID_STATE"),
-            ArgumentException => (StatusCodes.Status400BadRequest, "Invalid request.", "BAD_REQUEST"),
+            NotFoundException => (StatusCodes.Status404NotFound, "Resource not found.", "RESOURCE_NOT_FOUND"),
+            ForbiddenException => (StatusCodes.Status403Forbidden, "Not authorized to perform this action.", "FORBIDDEN"),
+            BusinessRuleException => (StatusCodes.Status409Conflict, "Request violates a business rule.", "INVALID_STATE"),
+            ValidationFailedException => (StatusCodes.Status400BadRequest, "Invalid request.", "BAD_REQUEST"),
             _ => (StatusCodes.Status500InternalServerError, "An unexpected error occurred.", "INTERNAL_ERROR")
         };
+
+        if (status == StatusCodes.Status500InternalServerError)
+        {
+            _logger.LogError(exception, "Unhandled exception");
+        }
+        else
+        {
+            _logger.LogWarning("Request rejected with status code {StatusCode}.", status);
+        }
 
         var problem = new ProblemDetails
         {
@@ -30,20 +57,14 @@ public class GlobalExceptionHandler : IExceptionHandler
             Title = title,
             Detail = exception switch
             {
-                KeyNotFoundException or UnauthorizedAccessException
-                    or InvalidOperationException or ArgumentException
+                NotFoundException or ForbiddenException
+                    or BusinessRuleException or ValidationFailedException
                     => exception.Message,
-                _ when env.IsDevelopment() => exception.Message,
-                _ => null
+                _ => "An unexpected error occurred."
             }
         };
         problem.Extensions["errorCode"] = errorCode;
-        if (env.IsDevelopment() && exception is not (
-            KeyNotFoundException or UnauthorizedAccessException
-            or InvalidOperationException or ArgumentException))
-        {
-            problem.Extensions["stackTrace"] = exception.StackTrace?.ToString();
-        }
+        problem.Extensions["traceId"] = httpContext.TraceIdentifier;
 
         httpContext.Response.StatusCode = status;
         await httpContext.Response.WriteAsJsonAsync(problem, ct);

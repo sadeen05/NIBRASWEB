@@ -1,5 +1,6 @@
 using Mapster;
 using Microsoft.EntityFrameworkCore;
+using NIBRAS;
 using NIBRAS.API.DTOs;
 using NIBRAS.Models;
 
@@ -48,7 +49,7 @@ public class GridService : IGridService
 
         var totalReserved = grid.GridCapacityReservations.Sum(r => r.ReservedMw);
         if (request.CapacityMw < totalReserved)
-            throw new InvalidOperationException(
+            throw new BusinessRuleException(
                 $"Cannot reduce capacity below {totalReserved} MW (already reserved).");
 
         grid.RegionId = request.RegionId;
@@ -64,7 +65,7 @@ public class GridService : IGridService
     {
         var hasReservations = await _context.GridCapacityReservations.AnyAsync(r => r.GridId == id);
         if (hasReservations)
-            throw new InvalidOperationException("Cannot delete a grid that has capacity reservations.");
+            throw new BusinessRuleException("Cannot delete a grid that has capacity reservations.");
 
         var grid = await _context.Grids.FindAsync(id);
         if (grid == null) return false;

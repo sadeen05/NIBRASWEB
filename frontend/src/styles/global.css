@@ -1,0 +1,365 @@
+/* NIBRAS design tokens (mirrors src/theme/tokens.ts for use in plain CSS). */
+:root {
+  --nb-bg-primary: #070d12;
+  --nb-bg-secondary: #0d1821;
+  --nb-primary: #22c55e;
+  --nb-blue: #3b82f6;
+  --nb-warning: #f59e0b;
+  --nb-danger: #ef4444;
+  --nb-text-primary: #f0f6ff;
+  --nb-text-secondary: #8a9bb5;
+  --nb-text-muted: #4a5568;
+  --nb-border: rgba(255, 255, 255, 0.08);
+  --nb-border-strong: rgba(255, 255, 255, 0.18);
+  --nb-surface: rgba(255, 255, 255, 0.04);
+  --nb-surface-hover: rgba(255, 255, 255, 0.07);
+  --nb-radius: 14px;
+  --nb-radius-sm: 8px;
+
+  color-scheme: dark;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+html {
+  background-color: var(--nb-bg-primary);
+}
+
+body {
+  margin: 0;
+  background-color: var(--nb-bg-primary);
+  color: var(--nb-text-primary);
+  font-family: 'Inter', 'Tajawal', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  font-size: 15px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+[dir='rtl'] body,
+[dir='rtl'] {
+  font-family: 'Tajawal', 'Inter', system-ui, sans-serif;
+}
+
+/* Accessible, visible keyboard focus everywhere. */
+:focus-visible {
+  outline: 2px solid var(--nb-primary);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* Subtle scrollbars that match the dark surface. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--nb-border-strong) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+*::-webkit-scrollbar-thumb {
+  background-color: var(--nb-border-strong);
+  border-radius: 4px;
+}
+
+*::-webkit-scrollbar-track {
+  background-color: transparent;
+}
+
+/* Public surface used by the login page and the shared error pages. */
+.public-root {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background:
+    radial-gradient(1200px 620px at 12% -8%, rgba(34, 197, 94, 0.12), transparent 60%),
+    radial-gradient(900px 520px at 92% 6%, rgba(59, 130, 246, 0.1), transparent 62%),
+    var(--nb-bg-primary);
+}
+
+.login-layout {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 1.05fr 1fr;
+  gap: 0;
+  width: 100%;
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 24px;
+  align-items: center;
+}
+
+.login-aside {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  padding: 44px 40px;
+}
+
+.login-panel {
+  display: flex;
+  justify-content: center;
+  padding: 16px;
+}
+
+.login-card {
+  width: 100%;
+  max-width: 420px;
+  padding: 32px;
+  border: 1px solid var(--nb-border);
+  border-radius: var(--nb-radius);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.02));
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.42);
+}
+
+.login-card__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.brand-lockup {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.brand-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  height: 42px;
+  border-radius: 12px;
+  border: 1px solid rgba(34, 197, 94, 0.35);
+  background: rgba(34, 197, 94, 0.12);
+  color: var(--nb-primary);
+  flex-shrink: 0;
+}
+
+.brand-wordmark {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.15;
+}
+
+.brand-wordmark__name {
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--nb-text-primary);
+}
+
+.brand-wordmark__tagline {
+  font-size: 12px;
+  color: var(--nb-text-secondary);
+}
+
+.aside-title {
+  font-size: 30px;
+  line-height: 1.25;
+  font-weight: 700;
+  margin: 0;
+}
+
+.aside-points {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.aside-point {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  color: var(--nb-text-secondary);
+  font-size: 14px;
+}
+
+.aside-point__icon {
+  color: var(--nb-primary);
+  margin-top: 2px;
+  flex-shrink: 0;
+}
+
+.shell-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  height: auto;
+  min-height: 64px;
+  padding: 10px 24px;
+  border-bottom: 1px solid var(--nb-border);
+  background: rgba(7, 13, 18, 0.86);
+  backdrop-filter: blur(8px);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.shell-header__actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.shell-nav {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+.shell-nav__link {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 14px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  color: var(--nb-text-secondary);
+  font-size: 14px;
+  font-weight: 500;
+  text-decoration: none;
+  transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+.shell-nav__link:hover {
+  color: var(--nb-text-primary);
+  background: var(--nb-surface-hover);
+}
+
+.shell-nav__link.is-active {
+  color: var(--nb-primary);
+  border-color: rgba(34, 197, 94, 0.35);
+  background: rgba(34, 197, 94, 0.12);
+}
+
+.page-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.back-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--nb-text-secondary);
+  font-size: 14px;
+  text-decoration: none;
+}
+
+.back-link:hover {
+  color: var(--nb-primary);
+}
+
+@media (max-width: 900px) {
+  .shell-nav {
+    justify-content: flex-start;
+    order: 3;
+    width: 100%;
+    flex-basis: 100%;
+  }
+}
+
+.shell-content {
+  flex: 1;
+  width: 100%;
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: 32px 24px 56px;
+}
+
+.user-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--nb-border);
+  background: var(--nb-surface);
+  font-size: 13px;
+  color: var(--nb-text-secondary);
+  white-space: nowrap;
+}
+
+.state-page {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 48px 24px;
+  width: 100%;
+}
+
+.state-card {
+  width: 100%;
+  max-width: 520px;
+  text-align: center;
+  padding: 40px 32px;
+  border: 1px solid var(--nb-border);
+  border-radius: var(--nb-radius);
+  background: var(--nb-surface);
+}
+
+.state-card__code {
+  font-size: 44px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--nb-primary);
+}
+
+@media (max-width: 900px) {
+  .login-layout {
+    grid-template-columns: 1fr;
+    padding: 16px;
+    align-content: start;
+  }
+
+  .login-aside {
+    padding: 28px 16px 8px;
+    gap: 16px;
+  }
+
+  .aside-title {
+    font-size: 24px;
+  }
+
+  .login-card {
+    padding: 24px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}

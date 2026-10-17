@@ -1,24 +1,33 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using NIBRAS.API.DTOs;
 using NIBRAS.API.Services;
+using NIBRAS.Models;
 
 namespace NIBRAS.API.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
+[Authorize(Roles = RoleNames.Admin + "," + RoleNames.SuperAdmin)]
 public class UsersController : ControllerBase
 {
     private readonly IUserService _userService;
+    private readonly ICurrentUser _currentUser;
 
-    public UsersController(IUserService userService)
+    public UsersController(IUserService userService, ICurrentUser currentUser)
     {
         _userService = userService;
+        _currentUser = currentUser;
     }
 
     [HttpGet]
-    public async Task<ActionResult<List<UserDto>>> GetAll()
+    public async Task<ActionResult<UserListResponse>> GetAll(
+        [FromQuery] int pageNumber = 1,
+        [FromQuery] int pageSize = 20,
+        [FromQuery] string? role = null,
+        [FromQuery] bool? isApproved = null)
     {
-        return await _userService.GetAllAsync();
+        return Ok(await _userService.GetAllAsync(pageNumber, pageSize, role, isApproved));
     }
 
     [HttpGet("{id}")]
@@ -32,8 +41,26 @@ public class UsersController : ControllerBase
     [HttpPost]
     public async Task<ActionResult<UserDto>> Create(CreateUserRequest request)
     {
+        if (request.RoleId is < 1 or > 3 ||
+            (_currentUser.Role == RoleNames.Admin && request.RoleId == 3))
+        {
+            throw new ForbiddenException("You are not authorized to create this user role.");
+        }
+
         var user = await _userService.CreateAsync(request);
         return CreatedAtAction(nameof(GetById), new { id = user.Id }, user);
+    }
+
+    [HttpPost("{id}/approve")]
+    public async Task<IActionResult> Approve(int id)
+    {
+        if (_currentUser.Id is not int approvedById)
+        {
+            return Unauthorized();
+        }
+
+        var result = await _userService.ApproveAsync(id, approvedById);
+        return result ? NoContent() : NotFound();
     }
 
     [HttpPut("{id}")]

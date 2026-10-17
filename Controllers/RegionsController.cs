@@ -1,4 +1,6 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using NIBRAS.Models;
 using NIBRAS.API.DTOs;
 using NIBRAS.API.Services;
 
@@ -36,6 +38,7 @@ public class RegionsController : ControllerBase
     }
 
     [HttpPost]
+    [Authorize(Roles = RoleNames.Admin + "," + RoleNames.SuperAdmin)]
     public async Task<ActionResult<RegionDto>> Create(CreateRegionRequest request)
     {
         var region = await _regionService.CreateAsync(request);
@@ -43,6 +46,7 @@ public class RegionsController : ControllerBase
     }
 
     [HttpPut("{id}")]
+    [Authorize(Roles = RoleNames.Admin + "," + RoleNames.SuperAdmin)]
     public async Task<IActionResult> Update(int id, UpdateRegionRequest request)
     {
         var result = await _regionService.UpdateAsync(id, request);
@@ -56,6 +60,7 @@ public class RegionsController : ControllerBase
     }
 
     [HttpDelete("{id}")]
+    [Authorize(Roles = RoleNames.Admin + "," + RoleNames.SuperAdmin)]
     public async Task<IActionResult> Delete(int id)
     {
         var result = await _regionService.DeleteAsync(id);

@@ -19,6 +19,16 @@ public partial class User
 
     public bool IsDeleted { get; set; }
 
+    public bool IsApproved { get; set; }
+
+    public int? ApprovedById { get; set; }
+
+    public DateTime? ApprovedAt { get; set; }
+
+    public string? CompanyName { get; set; }
+
+    public string? CompanyRegistrationNumber { get; set; }
+
     public virtual ICollection<Contract> ContractInvestors { get; set; } = new List<Contract>();
 
     public virtual ICollection<Contract> ContractLandlords { get; set; } = new List<Contract>();
@@ -36,6 +46,8 @@ public partial class User
     public virtual ICollection<OfferVersion> OfferVersions { get; set; } = new List<OfferVersion>();
 
     public virtual ICollection<Offer> Offers { get; set; } = new List<Offer>();
+
+    public virtual ICollection<OfferNegotiationHistory> OfferNegotiationHistories { get; set; } = new List<OfferNegotiationHistory>();
 
     public virtual Role Role { get; set; } = null!;
 

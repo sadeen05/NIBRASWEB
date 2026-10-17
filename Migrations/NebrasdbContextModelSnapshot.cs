@@ -61,6 +61,10 @@ namespace NIBRAS.API.Migrations
                         .HasColumnName("CREATED_AT")
                         .HasDefaultValueSql("(getdate())");
 
+                    b.Property<int?>("CriterionId")
+                        .HasColumnType("int")
+                        .HasColumnName("CRITERION_ID");
+
                     b.Property<bool>("DisputeFlagged")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("bit")
@@ -105,16 +109,16 @@ namespace NIBRAS.API.Migrations
                         .HasColumnType("int")
                         .HasColumnName("OFFER_VERSION_ID");
 
-                    b.Property<int>("StatusId")
-                        .ValueGeneratedOnAdd()
+                    b.Property<int>("Status")
                         .HasColumnType("int")
-                        .HasDefaultValue(1)
                         .HasColumnName("STATUS_ID");
 
                     b.HasKey("Id")
                         .HasName("PK__CONTRACT__3214EC2738767384");
 
                     b.HasIndex("CancellationRequestedById");
+
+                    b.HasIndex("CriterionId");
 
                     b.HasIndex("InvestorId");
 
@@ -123,8 +127,6 @@ namespace NIBRAS.API.Migrations
                     b.HasIndex("LandlordId");
 
                     b.HasIndex("OfferVersionId");
-
-                    b.HasIndex("StatusId");
 
                     b.HasIndex(new[] { "OfferId" }, "UQ__CONTRACT__96E0508AA6D26B86")
                         .IsUnique();
@@ -174,49 +176,6 @@ namespace NIBRAS.API.Migrations
                     b.HasIndex("ReviewerId");
 
                     b.ToTable("CONTRACT_REVIEWS", (string)null);
-                });
-
-            modelBuilder.Entity("NIBRAS.Models.ContractStatus", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("int")
-                        .HasColumnName("ID");
-
-                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
-
-                    b.Property<string>("Name")
-                        .IsRequired()
-                        .HasMaxLength(50)
-                        .HasColumnType("nvarchar(50)")
-                        .HasColumnName("NAME");
-
-                    b.HasKey("Id")
-                        .HasName("PK__CONTRACT__3214EC27CE14508F");
-
-                    b.ToTable("CONTRACT_STATUSES", (string)null);
-
-                    b.HasData(
-                        new
-                        {
-                            Id = 1,
-                            Name = "PendingSignatures"
-                        },
-                        new
-                        {
-                            Id = 2,
-                            Name = "Active"
-                        },
-                        new
-                        {
-                            Id = 3,
-                            Name = "Terminated"
-                        },
-                        new
-                        {
-                            Id = 4,
-                            Name = "Rejected"
-                        });
                 });
 
             modelBuilder.Entity("NIBRAS.Models.DeletionRequest", b =>
@@ -279,6 +238,12 @@ namespace NIBRAS.API.Migrations
 
                     SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
 
+                    b.Property<bool>("IsRequiredForVerification")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bit")
+                        .HasDefaultValue(false)
+                        .HasColumnName("IS_REQUIRED_FOR_VERIFICATION");
+
                     b.Property<string>("Name")
                         .IsRequired()
                         .HasMaxLength(100)
@@ -289,6 +254,20 @@ namespace NIBRAS.API.Migrations
                         .HasName("PK__DOCUMENT__3214EC27579B58DC");
 
                     b.ToTable("DOCUMENT_TYPES", (string)null);
+
+                    b.HasData(
+                        new
+                        {
+                            Id = 1,
+                            IsRequiredForVerification = true,
+                            Name = "TitleDeed"
+                        },
+                        new
+                        {
+                            Id = 2,
+                            IsRequiredForVerification = true,
+                            Name = "EncumbranceStatement"
+                        });
                 });
 
             modelBuilder.Entity("NIBRAS.Models.Grid", b =>
@@ -338,7 +317,7 @@ namespace NIBRAS.API.Migrations
 
                     SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
 
-                    b.Property<int>("ContractId")
+                    b.Property<int?>("ContractId")
                         .HasColumnType("int")
                         .HasColumnName("CONTRACT_ID");
 
@@ -348,9 +327,31 @@ namespace NIBRAS.API.Migrations
                         .HasColumnName("CREATED_AT")
                         .HasDefaultValueSql("(getdate())");
 
+                    b.Property<DateTime?>("ExpiresAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("EXPIRES_AT");
+
                     b.Property<int>("GridId")
                         .HasColumnType("int")
                         .HasColumnName("GRID_ID");
+
+                    b.Property<int>("OfferId")
+                        .HasColumnType("int")
+                        .HasColumnName("OFFER_ID");
+
+                    b.Property<string>("ReleaseReason")
+                        .HasMaxLength(300)
+                        .HasColumnType("nvarchar(300)")
+                        .HasColumnName("RELEASE_REASON");
+
+                    b.Property<DateTime?>("ReleasedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("RELEASED_AT");
+
+                    b.Property<string>("ReservationType")
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)")
+                        .HasColumnName("RESERVATION_TYPE");
 
                     b.Property<decimal>("ReservedMw")
                         .HasColumnType("decimal(10, 2)")
@@ -361,7 +362,11 @@ namespace NIBRAS.API.Migrations
 
                     b.HasIndex("GridId");
 
-                    b.HasIndex(new[] { "ContractId" }, "UQ__GRID_CAP__3F5DFF15DEC96C5D")
+                    b.HasIndex(new[] { "ContractId" }, "UQ_GRID_CAPACITY_RESERVATIONS_CONTRACT_ID")
+                        .IsUnique()
+                        .HasFilter("[CONTRACT_ID] IS NOT NULL");
+
+                    b.HasIndex(new[] { "OfferId" }, "UQ__GRID_CAP__OFFER_ID")
                         .IsUnique();
 
                     b.ToTable("GRID_CAPACITY_RESERVATIONS", (string)null);
@@ -380,6 +385,11 @@ namespace NIBRAS.API.Migrations
                         .HasColumnType("decimal(10, 2)")
                         .HasColumnName("AREA_DONUM");
 
+                    b.Property<string>("Basin")
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)")
+                        .HasColumnName("BASIN");
+
                     b.Property<bool>("DataVerifiedByAdmin")
                         .HasColumnType("bit")
                         .HasColumnName("DATA_VERIFIED_BY_ADMIN");
@@ -397,6 +407,10 @@ namespace NIBRAS.API.Migrations
                         .HasColumnType("decimal(10, 2)")
                         .HasColumnName("ELEVATION_M");
 
+                    b.Property<int>("GridId")
+                        .HasColumnType("int")
+                        .HasColumnName("GRID_ID");
+
                     b.Property<bool>("IsDeleted")
                         .HasColumnType("bit")
                         .HasColumnName("IS_DELETED");
@@ -407,13 +421,14 @@ namespace NIBRAS.API.Migrations
                         .HasColumnType("nvarchar(50)")
                         .HasColumnName("LAND_NUMBER");
 
-                    b.Property<int>("LandStatusId")
-                        .HasColumnType("int")
-                        .HasColumnName("LAND_STATUS_ID");
-
                     b.Property<int>("LandlordId")
                         .HasColumnType("int")
                         .HasColumnName("LANDLORD_ID");
+
+                    b.Property<string>("ParcelNumber")
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)")
+                        .HasColumnName("PARCEL_NUMBER");
 
                     b.Property<int>("RegionId")
                         .HasColumnType("int")
@@ -427,20 +442,31 @@ namespace NIBRAS.API.Migrations
                         .HasColumnType("decimal(10, 2)")
                         .HasColumnName("SOLAR_IRRADIANCE");
 
+                    b.Property<int>("Status")
+                        .HasColumnType("int")
+                        .HasColumnName("LAND_STATUS_ID");
+
                     b.Property<int?>("VerifiedAgainstCriterionId")
                         .HasColumnType("int")
                         .HasColumnName("VERIFIED_AGAINST_CRITERION_ID");
 
+                    b.Property<string>("Village")
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)")
+                        .HasColumnName("VILLAGE");
+
                     b.HasKey("Id")
                         .HasName("PK__LANDS__3214EC278FA5F43E");
 
-                    b.HasIndex("LandStatusId");
+                    b.HasIndex("GridId");
 
                     b.HasIndex("LandlordId");
 
-                    b.HasIndex("RegionId");
-
                     b.HasIndex("VerifiedAgainstCriterionId");
+
+                    b.HasIndex(new[] { "RegionId", "Village", "Basin", "ParcelNumber" }, "UQ_LAND_LOCATION")
+                        .IsUnique()
+                        .HasFilter("[IS_DELETED] = 0");
 
                     b.HasIndex(new[] { "LandNumber", "RegionId" }, "UQ_LAND_NUMBER_REGION")
                         .IsUnique();
@@ -457,25 +483,31 @@ namespace NIBRAS.API.Migrations
 
                     SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
 
-                    b.Property<decimal>("MaxGridDistanceKm")
+                    b.Property<decimal?>("MaxGridDistanceKm")
                         .HasColumnType("decimal(10, 2)")
                         .HasColumnName("MAX_GRID_DISTANCE_KM");
 
-                    b.Property<decimal>("MaxSlopePct")
+                    b.Property<decimal?>("MaxSlopePct")
                         .HasColumnType("decimal(5, 2)")
                         .HasColumnName("MAX_SLOPE_PCT");
 
-                    b.Property<decimal>("MinAreaDonum")
+                    b.Property<decimal?>("MinAreaDonum")
                         .HasColumnType("decimal(10, 2)")
                         .HasColumnName("MIN_AREA_DONUM");
 
-                    b.Property<decimal>("MinElevationM")
+                    b.Property<decimal?>("MinElevationM")
                         .HasColumnType("decimal(10, 2)")
                         .HasColumnName("MIN_ELEVATION_M");
 
-                    b.Property<decimal>("MinSolarIrradiance")
+                    b.Property<decimal?>("MinSolarIrradiance")
                         .HasColumnType("decimal(10, 2)")
                         .HasColumnName("MIN_SOLAR_IRRADIANCE");
+
+                    b.Property<string>("Reason")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)")
+                        .HasColumnName("REASON");
 
                     b.Property<DateTime?>("UpdatedAt")
                         .ValueGeneratedOnAdd()
@@ -493,6 +525,18 @@ namespace NIBRAS.API.Migrations
                     b.HasIndex("UpdatedById");
 
                     b.ToTable("LAND_CRITERIA", (string)null);
+
+                    b.HasData(
+                        new
+                        {
+                            Id = 1,
+                            MaxGridDistanceKm = 15m,
+                            MaxSlopePct = 10m,
+                            MinAreaDonum = 20m,
+                            MinSolarIrradiance = 5.0m,
+                            Reason = "ILLUSTRATIVE PLACEHOLDER values for development; replace after engineering validation",
+                            UpdatedById = -1
+                        });
                 });
 
             modelBuilder.Entity("NIBRAS.Models.LandDocument", b =>
@@ -517,6 +561,19 @@ namespace NIBRAS.API.Migrations
                     b.Property<int>("LandId")
                         .HasColumnType("int")
                         .HasColumnName("LAND_ID");
+
+                    b.Property<string>("ReviewNote")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)")
+                        .HasColumnName("REVIEW_NOTE");
+
+                    b.Property<DateTime?>("ReviewedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("REVIEWED_AT");
+
+                    b.Property<int?>("ReviewedById")
+                        .HasColumnType("int")
+                        .HasColumnName("REVIEWED_BY_ID");
 
                     b.Property<string>("Status")
                         .ValueGeneratedOnAdd()
@@ -544,50 +601,9 @@ namespace NIBRAS.API.Migrations
 
                     b.HasIndex("LandId");
 
+                    b.HasIndex("ReviewedById");
+
                     b.ToTable("LAND_DOCUMENTS", (string)null);
-                });
-
-            modelBuilder.Entity("NIBRAS.Models.LandStatus", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("int")
-                        .HasColumnName("ID");
-
-                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
-
-                    b.Property<string>("Name")
-                        .IsRequired()
-                        .HasMaxLength(50)
-                        .HasColumnType("nvarchar(50)")
-                        .HasColumnName("NAME");
-
-                    b.HasKey("Id")
-                        .HasName("PK__LAND_STA__3214EC27D4FB7967");
-
-                    b.ToTable("LAND_STATUSES", (string)null);
-
-                    b.HasData(
-                        new
-                        {
-                            Id = 1,
-                            Name = "Draft"
-                        },
-                        new
-                        {
-                            Id = 2,
-                            Name = "PendingVerification"
-                        },
-                        new
-                        {
-                            Id = 3,
-                            Name = "Verified"
-                        },
-                        new
-                        {
-                            Id = 4,
-                            Name = "Rejected"
-                        });
                 });
 
             modelBuilder.Entity("NIBRAS.Models.LandStatusHistory", b =>
@@ -618,7 +634,7 @@ namespace NIBRAS.API.Migrations
                         .HasColumnType("nvarchar(500)")
                         .HasColumnName("REASON");
 
-                    b.Property<int>("StatusId")
+                    b.Property<int>("Status")
                         .HasColumnType("int")
                         .HasColumnName("STATUS_ID");
 
@@ -645,33 +661,47 @@ namespace NIBRAS.API.Migrations
                         .HasColumnType("int")
                         .HasColumnName("ACCEPTED_VERSION_ID");
 
+                    b.Property<int>("ConnectionMechanism")
+                        .HasColumnType("int")
+                        .HasColumnName("CONNECTION_MECHANISM");
+
                     b.Property<DateTime?>("CreatedAt")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("datetime2")
                         .HasColumnName("CREATED_AT")
                         .HasDefaultValueSql("(getdate())");
 
+                    b.Property<decimal>("CurrentAmount")
+                        .HasColumnType("decimal(14, 3)")
+                        .HasColumnName("CURRENT_AMOUNT");
+
                     b.Property<int>("InvestorId")
                         .HasColumnType("int")
                         .HasColumnName("INVESTOR_ID");
-
-                    b.Property<bool>("IsDeleted")
-                        .HasColumnType("bit")
-                        .HasColumnName("IS_DELETED");
 
                     b.Property<int>("LandId")
                         .HasColumnType("int")
                         .HasColumnName("LAND_ID");
 
+                    b.Property<int>("LastProposedById")
+                        .HasColumnType("int")
+                        .HasColumnName("LAST_PROPOSED_BY_ID");
+
+                    b.Property<int?>("RelatedToRejectedOfferId")
+                        .HasColumnType("int")
+                        .HasColumnName("RELATED_TO_REJECTED_OFFER_ID");
+
                     b.Property<decimal>("RequiredCapacityMw")
                         .HasColumnType("decimal(10, 2)")
                         .HasColumnName("REQUIRED_CAPACITY_MW");
 
-                    b.Property<int>("StatusId")
-                        .ValueGeneratedOnAdd()
+                    b.Property<int>("Status")
                         .HasColumnType("int")
-                        .HasDefaultValue(1)
                         .HasColumnName("STATUS_ID");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("UPDATED_AT");
 
                     b.HasKey("Id")
                         .HasName("PK__OFFERS__3214EC277FE0E225");
@@ -680,14 +710,18 @@ namespace NIBRAS.API.Migrations
 
                     b.HasIndex("InvestorId");
 
-                    b.HasIndex("LandId");
+                    b.HasIndex("RelatedToRejectedOfferId");
 
-                    b.HasIndex("StatusId");
+                    b.HasIndex(new[] { "LandId" }, "IX_OFFERS_LAND_ID");
+
+                    b.HasIndex(new[] { "LandId", "InvestorId" }, "UX_OFFERS_ACTIVE_INVESTOR_LAND")
+                        .IsUnique()
+                        .HasFilter("[STATUS_ID] IN (1, 2, 3, 4)");
 
                     b.ToTable("OFFERS", (string)null);
                 });
 
-            modelBuilder.Entity("NIBRAS.Models.OfferStatus", b =>
+            modelBuilder.Entity("NIBRAS.Models.OfferNegotiationHistory", b =>
                 {
                     b.Property<int>("Id")
                         .ValueGeneratedOnAdd()
@@ -696,16 +730,41 @@ namespace NIBRAS.API.Migrations
 
                     SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
 
-                    b.Property<string>("NameStatus")
-                        .IsRequired()
-                        .HasMaxLength(50)
-                        .HasColumnType("nvarchar(50)")
-                        .HasColumnName("NAME");
+                    b.Property<int>("ActionType")
+                        .HasColumnType("int")
+                        .HasColumnName("ACTION_TYPE");
+
+                    b.Property<int>("ActorId")
+                        .HasColumnType("int")
+                        .HasColumnName("ACTOR_ID");
+
+                    b.Property<decimal?>("Amount")
+                        .HasColumnType("decimal(14, 3)")
+                        .HasColumnName("AMOUNT");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("datetime2")
+                        .HasColumnName("CREATED_AT")
+                        .HasDefaultValueSql("(getdate())");
+
+                    b.Property<string>("Message")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)")
+                        .HasColumnName("MESSAGE");
+
+                    b.Property<int>("OfferId")
+                        .HasColumnType("int")
+                        .HasColumnName("OFFER_ID");
 
                     b.HasKey("Id")
-                        .HasName("PK__OFFER_ST__3214EC27D14BDC1A");
+                        .HasName("PK__OFFER_NEG_HISTORY");
 
-                    b.ToTable("OFFER_STATUSES", (string)null);
+                    b.HasIndex("ActorId");
+
+                    b.HasIndex("OfferId");
+
+                    b.ToTable("OFFER_NEGOTIATION_HISTORY", (string)null);
                 });
 
             modelBuilder.Entity("NIBRAS.Models.OfferVersion", b =>
@@ -743,9 +802,18 @@ namespace NIBRAS.API.Migrations
                         .HasColumnType("decimal(12, 2)")
                         .HasColumnName("INSTALLATION_COST");
 
+                    b.Property<bool>("IsCurrent")
+                        .HasColumnType("bit")
+                        .HasColumnName("IS_CURRENT");
+
                     b.Property<decimal?>("LandlordSharePct")
                         .HasColumnType("decimal(5, 2)")
                         .HasColumnName("LANDLORD_SHARE_PCT");
+
+                    b.Property<string>("Message")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)")
+                        .HasColumnName("MESSAGE");
 
                     b.Property<int>("OfferId")
                         .HasColumnType("int")
@@ -777,7 +845,9 @@ namespace NIBRAS.API.Migrations
 
                     b.HasIndex("CreatedById");
 
-                    b.HasIndex("OfferId");
+                    b.HasIndex(new[] { "OfferId" }, "UX_OFFER_VERSIONS_CURRENT_OFFER")
+                        .IsUnique()
+                        .HasFilter("[IS_CURRENT] = 1");
 
                     b.ToTable("OFFER_VERSIONS", (string)null);
                 });
@@ -870,47 +940,6 @@ namespace NIBRAS.API.Migrations
                         });
                 });
 
-            modelBuilder.Entity("NIBRAS.Models.TariffBracket", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("int")
-                        .HasColumnName("ID");
-
-                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
-
-                    b.Property<DateTime>("EffectiveFrom")
-                        .HasColumnType("datetime2")
-                        .HasColumnName("EFFECTIVE_FROM");
-
-                    b.Property<DateTime?>("EffectiveTo")
-                        .HasColumnType("datetime2")
-                        .HasColumnName("EFFECTIVE_TO");
-
-                    b.Property<int>("FromKwh")
-                        .HasColumnType("int")
-                        .HasColumnName("FROM_KWH");
-
-                    b.Property<decimal>("RatePerKwh")
-                        .HasColumnType("decimal(10, 3)")
-                        .HasColumnName("RATE_PER_KWH");
-
-                    b.Property<int>("RegionId")
-                        .HasColumnType("int")
-                        .HasColumnName("REGION_ID");
-
-                    b.Property<int?>("ToKwh")
-                        .HasColumnType("int")
-                        .HasColumnName("TO_KWH");
-
-                    b.HasKey("Id")
-                        .HasName("PK__TARIFF_BRACKETS");
-
-                    b.HasIndex("RegionId");
-
-                    b.ToTable("TARIFF_BRACKETS", (string)null);
-                });
-
             modelBuilder.Entity("NIBRAS.Models.User", b =>
                 {
                     b.Property<int>("Id")
@@ -919,6 +948,24 @@ namespace NIBRAS.API.Migrations
                         .HasColumnName("ID");
 
                     SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<DateTime?>("ApprovedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("APPROVED_AT");
+
+                    b.Property<int?>("ApprovedById")
+                        .HasColumnType("int")
+                        .HasColumnName("APPROVED_BY_ID");
+
+                    b.Property<string>("CompanyName")
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)")
+                        .HasColumnName("COMPANY_NAME");
+
+                    b.Property<string>("CompanyRegistrationNumber")
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)")
+                        .HasColumnName("COMPANY_REGISTRATION_NUMBER");
 
                     b.Property<DateTime>("CreatedAt")
                         .ValueGeneratedOnAdd()
@@ -940,6 +987,12 @@ namespace NIBRAS.API.Migrations
                         .HasMaxLength(100)
                         .HasColumnType("nvarchar(100)")
                         .HasColumnName("FULL_NAME");
+
+                    b.Property<bool>("IsApproved")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bit")
+                        .HasDefaultValue(false)
+                        .HasColumnName("IS_APPROVED");
 
                     b.Property<bool>("IsDeleted")
                         .HasColumnType("bit")
@@ -981,6 +1034,7 @@ namespace NIBRAS.API.Migrations
                             CreatedAt = new DateTime(2025, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc),
                             Email = "system@nibras.internal",
                             FullName = "System",
+                            IsApproved = false,
                             IsDeleted = false,
                             PasswordHash = "N/A",
                             Phone = "0000000000",
@@ -994,6 +1048,11 @@ namespace NIBRAS.API.Migrations
                         .WithMany("CancellationRequestedContracts")
                         .HasForeignKey("CancellationRequestedById")
                         .HasConstraintName("FK_CONTRACTS_CANCELLATION_REQUESTER");
+
+                    b.HasOne("NIBRAS.Models.LandCriterion", "Criterion")
+                        .WithMany()
+                        .HasForeignKey("CriterionId")
+                        .HasConstraintName("FK_CONTRACTS_CRITERIA");
 
                     b.HasOne("NIBRAS.Models.User", "Investor")
                         .WithMany("ContractInvestors")
@@ -1024,13 +1083,9 @@ namespace NIBRAS.API.Migrations
                         .HasForeignKey("OfferVersionId")
                         .HasConstraintName("FK_CONTRACTS_OFFER_VERSION");
 
-                    b.HasOne("NIBRAS.Models.ContractStatus", "Status")
-                        .WithMany("Contracts")
-                        .HasForeignKey("StatusId")
-                        .IsRequired()
-                        .HasConstraintName("FK_CONTRACTS_STATUS");
-
                     b.Navigation("CancellationRequestedBy");
+
+                    b.Navigation("Criterion");
 
                     b.Navigation("Investor");
 
@@ -1041,8 +1096,6 @@ namespace NIBRAS.API.Migrations
                     b.Navigation("Offer");
 
                     b.Navigation("OfferVersion");
-
-                    b.Navigation("Status");
                 });
 
             modelBuilder.Entity("NIBRAS.Models.ContractReview", b =>
@@ -1099,7 +1152,6 @@ namespace NIBRAS.API.Migrations
                     b.HasOne("NIBRAS.Models.Contract", "Contract")
                         .WithOne("GridCapacityReservation")
                         .HasForeignKey("NIBRAS.Models.GridCapacityReservation", "ContractId")
-                        .IsRequired()
                         .HasConstraintName("FK_GCR_CONTRACTS");
 
                     b.HasOne("NIBRAS.Models.Grid", "Grid")
@@ -1108,18 +1160,26 @@ namespace NIBRAS.API.Migrations
                         .IsRequired()
                         .HasConstraintName("FK_GCR_GRIDS");
 
+                    b.HasOne("NIBRAS.Models.Offer", "Offer")
+                        .WithOne("GridCapacityReservation")
+                        .HasForeignKey("NIBRAS.Models.GridCapacityReservation", "OfferId")
+                        .IsRequired()
+                        .HasConstraintName("FK_GCR_OFFERS");
+
                     b.Navigation("Contract");
 
                     b.Navigation("Grid");
+
+                    b.Navigation("Offer");
                 });
 
             modelBuilder.Entity("NIBRAS.Models.Land", b =>
                 {
-                    b.HasOne("NIBRAS.Models.LandStatus", "LandStatus")
+                    b.HasOne("NIBRAS.Models.Grid", "Grid")
                         .WithMany("Lands")
-                        .HasForeignKey("LandStatusId")
+                        .HasForeignKey("GridId")
                         .IsRequired()
-                        .HasConstraintName("FK_LANDS_STATUS");
+                        .HasConstraintName("FK_LANDS_GRIDS");
 
                     b.HasOne("NIBRAS.Models.User", "Landlord")
                         .WithMany("Lands")
@@ -1138,7 +1198,7 @@ namespace NIBRAS.API.Migrations
                         .HasForeignKey("VerifiedAgainstCriterionId")
                         .HasConstraintName("FK_LANDS_VERIFIED_CRITERION");
 
-                    b.Navigation("LandStatus");
+                    b.Navigation("Grid");
 
                     b.Navigation("Landlord");
 
@@ -1172,9 +1232,16 @@ namespace NIBRAS.API.Migrations
                         .IsRequired()
                         .HasConstraintName("FK_LD_LANDS");
 
+                    b.HasOne("NIBRAS.Models.User", "ReviewedBy")
+                        .WithMany()
+                        .HasForeignKey("ReviewedById")
+                        .HasConstraintName("FK_LD_REVIEWED_BY");
+
                     b.Navigation("DocumentType");
 
                     b.Navigation("Land");
+
+                    b.Navigation("ReviewedBy");
                 });
 
             modelBuilder.Entity("NIBRAS.Models.LandStatusHistory", b =>
@@ -1215,11 +1282,10 @@ namespace NIBRAS.API.Migrations
                         .IsRequired()
                         .HasConstraintName("FK_OFFERS_LANDS");
 
-                    b.HasOne("NIBRAS.Models.OfferStatus", "Status")
-                        .WithMany("Offers")
-                        .HasForeignKey("StatusId")
-                        .IsRequired()
-                        .HasConstraintName("FK_OFFERS_STATUS");
+                    b.HasOne("NIBRAS.Models.Offer", "RelatedToRejectedOffer")
+                        .WithMany()
+                        .HasForeignKey("RelatedToRejectedOfferId")
+                        .HasConstraintName("FK_OFFERS_RELATED_REJECTED");
 
                     b.Navigation("AcceptedVersion");
 
@@ -1227,7 +1293,26 @@ namespace NIBRAS.API.Migrations
 
                     b.Navigation("Land");
 
-                    b.Navigation("Status");
+                    b.Navigation("RelatedToRejectedOffer");
+                });
+
+            modelBuilder.Entity("NIBRAS.Models.OfferNegotiationHistory", b =>
+                {
+                    b.HasOne("NIBRAS.Models.User", "Actor")
+                        .WithMany("OfferNegotiationHistories")
+                        .HasForeignKey("ActorId")
+                        .IsRequired()
+                        .HasConstraintName("FK_ONH_USERS");
+
+                    b.HasOne("NIBRAS.Models.Offer", "Offer")
+                        .WithMany("OfferNegotiationHistories")
+                        .HasForeignKey("OfferId")
+                        .IsRequired()
+                        .HasConstraintName("FK_ONH_OFFERS");
+
+                    b.Navigation("Actor");
+
+                    b.Navigation("Offer");
                 });
 
             modelBuilder.Entity("NIBRAS.Models.OfferVersion", b =>
@@ -1249,17 +1334,6 @@ namespace NIBRAS.API.Migrations
                     b.Navigation("Offer");
                 });
 
-            modelBuilder.Entity("NIBRAS.Models.TariffBracket", b =>
-                {
-                    b.HasOne("NIBRAS.Models.Region", "Region")
-                        .WithMany("TariffBrackets")
-                        .HasForeignKey("RegionId")
-                        .IsRequired()
-                        .HasConstraintName("FK_TB_REGIONS");
-
-                    b.Navigation("Region");
-                });
-
             modelBuilder.Entity("NIBRAS.Models.User", b =>
                 {
                     b.HasOne("NIBRAS.Models.Role", "Role")
@@ -1278,11 +1352,6 @@ namespace NIBRAS.API.Migrations
                     b.Navigation("GridCapacityReservation");
                 });
 
-            modelBuilder.Entity("NIBRAS.Models.ContractStatus", b =>
-                {
-                    b.Navigation("Contracts");
-                });
-
             modelBuilder.Entity("NIBRAS.Models.DocumentType", b =>
                 {
                     b.Navigation("LandDocuments");
@@ -1291,6 +1360,8 @@ namespace NIBRAS.API.Migrations
             modelBuilder.Entity("NIBRAS.Models.Grid", b =>
                 {
                     b.Navigation("GridCapacityReservations");
+
+                    b.Navigation("Lands");
                 });
 
             modelBuilder.Entity("NIBRAS.Models.Land", b =>
@@ -1306,21 +1377,15 @@ namespace NIBRAS.API.Migrations
                     b.Navigation("Offers");
                 });
 
-            modelBuilder.Entity("NIBRAS.Models.LandStatus", b =>
-                {
-                    b.Navigation("Lands");
-                });
-
             modelBuilder.Entity("NIBRAS.Models.Offer", b =>
                 {
                     b.Navigation("Contract");
 
-                    b.Navigation("OfferVersions");
-                });
+                    b.Navigation("GridCapacityReservation");
 
-            modelBuilder.Entity("NIBRAS.Models.OfferStatus", b =>
-                {
-                    b.Navigation("Offers");
+                    b.Navigation("OfferNegotiationHistories");
+
+                    b.Navigation("OfferVersions");
                 });
 
             modelBuilder.Entity("NIBRAS.Models.Region", b =>
@@ -1328,8 +1393,6 @@ namespace NIBRAS.API.Migrations
                     b.Navigation("Grids");
 
                     b.Navigation("Lands");
-
-                    b.Navigation("TariffBrackets");
                 });
 
             modelBuilder.Entity("NIBRAS.Models.Role", b =>
@@ -1354,6 +1417,8 @@ namespace NIBRAS.API.Migrations
                     b.Navigation("LandStatusHistories");
 
                     b.Navigation("Lands");
+
+                    b.Navigation("OfferNegotiationHistories");
 
                     b.Navigation("OfferVersions");
 
