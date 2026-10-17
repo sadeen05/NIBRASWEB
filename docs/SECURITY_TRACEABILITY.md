@@ -22,7 +22,7 @@ Backend: ASP.NET Core (.NET 10) + EF Core 10 + SQL Server. Frontend: React 19 + 
 | SEC-01 | Fallback policy = authenticated; anonymous only register + login | `Program.cs:102-107`; `AuthController.cs:22,37` | Live `swagger.json` sweep: 63 operations, 62 → 401, only `POST /api/auth/register` and `POST /api/auth/login` reachable (§2.1) | **VERIFIED NOW** |
 | SEC-02 | JWT validation (signature/issuer/audience/lifetime), alg pinned to HS256, ClockSkew ≤ 1 min, key ≥ 32 bytes from user-secrets, header only | `Program.cs:17-36,66-77`; `AuthService.cs:92-98` | Tampered signature / `alg:none` / query-string token / malformed header → 401 (§2.3). Expiry + issuer/audience negatives: `step3_suite.ps1` | **VERIFIED NOW** (4/6 dynamic; expiry & issuer/audience prior-step) |
 | SEC-03 | User must exist, not soft-deleted, DB role == role claim, else 401 | `Program.cs:78-100` (`OnTokenValidated`, `IgnoreQueryFilters`, `IsDeleted`, role equality) | `step3_suite.ps1` Phase D (deactivate user → old token 401; DB role change → old token 401) | VERIFIED (prior step) / STATIC |
-| SEC-04 | No cookies / no server session; fresh token every login; `Jwt:ExpiryMinutes = 120` | `Program.cs:60-101` (`SaveToken=false`); `appsettings.json` `Jwt.ExpiryMinutes=120`; `AuthService.cs:125-126` | No `AddSession`/cookie scheme anywhere; expiry read from config | STATIC |
+| SEC-04 | No cookies / no server session; fresh token every login; `Jwt:ExpiryMinutes = 120` | `Program.cs:60-101` (`SaveToken=false`); `appsettings.json` `Jwt.ExpiryMinutes=120`; `AuthService.cs:125-126` | No `AddSession`/cookie scheme anywhere; no `Set-Cookie` on any of the 63 responses (§2.1); expiry read from config | **VERIFIED NOW** (cookies/session) + STATIC (fresh-token-per-login needs a real login) |
 | SEC-05 | Login hardening: BCrypt ≥ 11, generic message + dummy-hash timing, password ≥ 10, rate limiter on login+register via `RateLimit:AuthPerMinute` → 429 | `AuthService.cs:13,74-83,52`; `PasswordPolicy.cs`; `Program.cs:39-52`; `appsettings.json:17` | `step3_ratelimit.ps1` (6th attempt → 429 with limit 5); BCrypt `workFactor: 12` | VERIFIED (prior step) — **deviation on the demo default, see §3.1** |
 | SEC-06 | Every non-public endpoint declares its roles **and** the service enforces ownership/participation via `ICurrentUser` | Controllers (`[Authorize]` class-level on Contracts/Criteria/DocumentTypes/Lands/Offers/Roles; role-scoped on Users/GridCapacityReservations; per-action on Grids/Regions); services: `LandService.cs:71,417,436`, `OfferService.cs:69,78`, `ContractService.cs:57,300`, `UserService.cs:234-261` | No endpoint is reachable anonymously (§2.1); ownership 403/404 asserted by the step suites | **VERIFIED NOW** (authz surface) + prior (ownership) |
 | SEC-07 | No actor/privilege field from the client; entities never bound | `RegisterRequest.RoleId [Range(1,2)]` is the only permitted exception; all other request DTOs carry no `userId`/`adminId`/`IsApproved`/`Status` | **Fixed in this session:** `DTOs/AdminReviewRequest.cs` (declared `AdminId`) removed — dead code, 0 references. Sweep is now clean; mass-assignment negatives in the step suites | **VERIFIED NOW** |
@@ -36,7 +36,7 @@ Backend: ASP.NET Core (.NET 10) + EF Core 10 + SQL Server. Frontend: React 19 + 
 | SEC-15 | API headers on every response; HTTPS redirect + HSTS outside Development; Swagger UI Development only; CORS not enabled | `Program.cs:170-189` (headers + CSP), `:192-196` (Swagger, dev only), `:198-201` (HSTS, non-dev), `:203` (HTTPS redirect); no `AddCors` | Live assertions on a 401: `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, `Content-Security-Policy: default-src 'none'; frame-ancestors 'none'`; Swagger UI 200 in Development; HSTS absent in Development (§2.4) | **VERIFIED NOW** (HSTS/redirect are Production-only paths: STATIC only, §3.2) |
 | SEC-16 | Frontend: no `dangerouslySetInnerHTML`/`innerHTML`/`eval`/`new Function`/`document.write`; user text rendered as text, never into `href`/`src`; strict production CSP | **Fixed in this session:** `frontend/vite.config.ts` (`nibras-production-csp`) injects the CSP meta on `vite build` only; regression check `docs/tests/verify-frontend-csp.ps1` | Sweep 0 hits. Built page carries the policy byte-for-byte with 0 inline `<script>`; the production bundle loads and renders the full login layout with 26 runtime style tags and **no** CSP violation reports (§2.5) | **VERIFIED NOW** |
 | SEC-17 | Reject control characters (U+0000–U+001F, except tab/newline in free text); never reflect raw input in errors | `ValidationAttributes.cs:7-39` (`NoControlCharacters`, `NoControlCharactersExceptTabAndNewline`) applied across request DTOs | `step3_suite.ps1` / `s4_tests.ps1` negative cases | STATIC + prior |
-| SEC-18 | Unhandled exception → generic 500 + correlation id; no stack trace/SQL/exception text to clients; logs carry no secrets | `ExceptionHandler.cs:36-71` (`traceId` always set; `500` detail is the fixed string); `Program.cs:190` | Static: the `500` branch never uses `exception.Message`; `_logger.LogError` only server-side | STATIC |
+| SEC-18 | Unhandled exception → generic 500 + correlation id; no stack trace/SQL/exception text to clients; logs carry no secrets | `ExceptionHandler.cs:36-71` (`traceId` always set; `500` detail is the fixed string); `Program.cs:190` | Every error body from the 63-operation sweep scanned for internal-detail markers → 0 leaks (§2.1). Static: the `500` branch never uses `exception.Message`; `_logger.LogError` is server-side only | **VERIFIED NOW** (no leakage) + STATIC (500 path) |
 | SEC-19 | No secrets in the repository; JWT key, seed passwords and credentialled connection strings live in user-secrets/environment | `Program.cs:17-21` fails fast when `Jwt:Key` is missing; `appsettings.json` holds no credentials (`Trusted_Connection`) | Two tracked-file secret sweeps → 0 hits (assignments, private keys, `ghp_`/`sk-`/`AKIA`/JWT prefixes); §2.6 | **VERIFIED NOW** |
 | SEC-20 | Step-7 dependency check: `dotnet list package --vulnerable --include-transitive` and `npm audit --omit=dev` | — | `dotnet`: *"no vulnerable packages given the current sources"*; `npm`: *"found 0 vulnerabilities"* (exit 0) (§2.7) | **VERIFIED NOW** |
 
@@ -49,7 +49,7 @@ provable no-op** (`Seed__SuperAdminEmail` whitespace → `SuperAdminSeeder` retu
 touching the context; `Seed__DemoData` unset → `DemoDataSeeder` skips). Every operation was
 unauthenticated, so the authorization layer rejects before model binding or any query runs.
 
-Result: **14 PASS / 0 FAIL**, `USERS` counted **154 before and 154 after** (no writes).
+Result: **20 PASS / 0 FAIL**, `USERS` counted **154 before and 154 after** (no writes).
 The app log confirmed `SuperAdmin seeding skipped because required configuration is missing`
 and contained no `INSERT INTO [USERS]`.
 
@@ -57,6 +57,10 @@ and contained no `INSERT INTO [USERS]`.
 - The only non-401 operations were `POST /api/auth/register` and `POST /api/auth/login`
   (sent an empty `{}` body → **400** validation, no write).
 - `GET /api/lands/{id}` with `{id}` substituted, `PUT`, `DELETE`, `PATCH` — all 401.
+- **SEC-04:** none of the 63 responses carried a `Set-Cookie` header.
+- **SEC-18:** every error body was scanned for `SqlException`, `System.Data`,
+  `Microsoft.Data`, `at NIBRAS`, `StackTrace` and `Exception:` — 0 leaks.
+- The four security headers were also asserted on a 400 validation response.
 
 ### 2.2 SEC-11 / SEC-12 sweeps
 
