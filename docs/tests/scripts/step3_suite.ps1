@@ -7,7 +7,7 @@ $base    = 'http://localhost:5181'
 $stamp   = (Get-Date).ToUniversalTime().ToString('yyyyMMddHHmmss')
 $pw = if ($env:NIBRAS_TEST_PASSWORD) { $env:NIBRAS_TEST_PASSWORD } else { 'T5t!N1' + [guid]::NewGuid().ToString('N').Substring(0,10) } # runtime-generated credential, never a literal
 $sqlcmd  = 'sqlcmd'   # resolved from PATH
-$server  = if ($env:NIBRAS_SQL_SERVER) { $env:NIBRAS_SQL_SERVER } else { '.\SQLEXPRESS' }
+$server  = if ($env:NIBRAS_SQL_SERVER) { $env:NIBRAS_SQL_SERVER } else { "$env:COMPUTERNAME\SQLEXPRESS" }
 $db      = 'NEBRASDB_Step1'   # approved target database (addendum)
 
 $client = New-Object System.Net.Http.HttpClient

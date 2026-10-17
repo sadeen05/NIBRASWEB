@@ -11,7 +11,7 @@
 $ErrorActionPreference = 'Stop'
 $base = 'http://localhost:5181'
 $db = 'NEBRASDB_Step1'
-$sqlServer = if ($env:NIBRAS_SQL_SERVER) { $env:NIBRAS_SQL_SERVER } else { '.\SQLEXPRESS' }
+$sqlServer = if ($env:NIBRAS_SQL_SERVER) { $env:NIBRAS_SQL_SERVER } else { "$env:COMPUTERNAME\SQLEXPRESS" }
 $rows = New-Object System.Collections.ArrayList
 
 function Call([string]$Method, [string]$Path, [string]$Token = $null) {

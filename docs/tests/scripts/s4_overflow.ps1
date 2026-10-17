@@ -1,5 +1,5 @@
 $ErrorActionPreference = 'Stop'
-$sqlServer = if ($env:NIBRAS_SQL_SERVER) { $env:NIBRAS_SQL_SERVER } else { '.\SQLEXPRESS' }
+$sqlServer = if ($env:NIBRAS_SQL_SERVER) { $env:NIBRAS_SQL_SERVER } else { "$env:COMPUTERNAME\SQLEXPRESS" }
 $dbName = 'NEBRASDB_Step1'
 . (Join-Path $PSScriptRoot 's4_app.ps1')
 $app = $null

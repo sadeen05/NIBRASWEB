@@ -794,52 +794,6 @@
             }
           }
         }
-      },
-      "post": {
-        "tags": [
-          "GridCapacityReservations"
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/CreateGridCapacityReservationRequest"
-              }
-            },
-            "text/json": {
-              "schema": {
-                "$ref": "#/components/schemas/CreateGridCapacityReservationRequest"
-              }
-            },
-            "application/*+json": {
-              "schema": {
-                "$ref": "#/components/schemas/CreateGridCapacityReservationRequest"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "text/plain": {
-                "schema": {
-                  "$ref": "#/components/schemas/GridCapacityReservationDto"
-                }
-              },
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/GridCapacityReservationDto"
-                }
-              },
-              "text/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/GridCapacityReservationDto"
-                }
-              }
-            }
-          }
-        }
       }
     },
     "/api/GridCapacityReservations/{id}": {
@@ -880,8 +834,10 @@
             }
           }
         }
-      },
-      "put": {
+      }
+    },
+    "/api/GridCapacityReservations/{id}/release": {
+      "post": {
         "tags": [
           "GridCapacityReservations"
         ],
@@ -900,45 +856,41 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/UpdateGridCapacityReservationRequest"
+                "$ref": "#/components/schemas/ReleaseGridCapacityReservationRequest"
               }
             },
             "text/json": {
               "schema": {
-                "$ref": "#/components/schemas/UpdateGridCapacityReservationRequest"
+                "$ref": "#/components/schemas/ReleaseGridCapacityReservationRequest"
               }
             },
             "application/*+json": {
               "schema": {
-                "$ref": "#/components/schemas/UpdateGridCapacityReservationRequest"
+                "$ref": "#/components/schemas/ReleaseGridCapacityReservationRequest"
               }
             }
           }
         },
         "responses": {
           "200": {
-            "description": "OK"
-          }
-        }
-      },
-      "delete": {
-        "tags": [
-          "GridCapacityReservations"
-        ],
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "format": "int32"
+            "description": "OK",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "$ref": "#/components/schemas/GridCapacityReservationDto"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GridCapacityReservationDto"
+                }
+              },
+              "text/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GridCapacityReservationDto"
+                }
+              }
             }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK"
           }
         }
       }
@@ -3001,33 +2953,6 @@
         },
         "additionalProperties": false
       },
-      "CreateGridCapacityReservationRequest": {
-        "type": "object",
-        "properties": {
-          "gridId": {
-            "type": "integer",
-            "format": "int32"
-          },
-          "offerId": {
-            "type": "integer",
-            "format": "int32"
-          },
-          "contractId": {
-            "type": "integer",
-            "format": "int32",
-            "nullable": true
-          },
-          "reservationType": {
-            "type": "string",
-            "nullable": true
-          },
-          "reservedMw": {
-            "type": "number",
-            "format": "double"
-          }
-        },
-        "additionalProperties": false
-      },
       "CreateGridRequest": {
         "type": "object",
         "properties": {
@@ -3998,6 +3923,17 @@
         },
         "additionalProperties": false
       },
+      "ReleaseGridCapacityReservationRequest": {
+        "type": "object",
+        "properties": {
+          "reason": {
+            "maxLength": 300,
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
       "ReviewContractRequest": {
         "type": "object",
         "properties": {
@@ -4050,33 +3986,6 @@
             "maxLength": 500,
             "minLength": 1,
             "type": "string"
-          }
-        },
-        "additionalProperties": false
-      },
-      "UpdateGridCapacityReservationRequest": {
-        "type": "object",
-        "properties": {
-          "gridId": {
-            "type": "integer",
-            "format": "int32"
-          },
-          "offerId": {
-            "type": "integer",
-            "format": "int32"
-          },
-          "contractId": {
-            "type": "integer",
-            "format": "int32",
-            "nullable": true
-          },
-          "reservationType": {
-            "type": "string",
-            "nullable": true
-          },
-          "reservedMw": {
-            "type": "number",
-            "format": "double"
           }
         },
         "additionalProperties": false

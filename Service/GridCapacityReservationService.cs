@@ -3,18 +3,31 @@ using Microsoft.EntityFrameworkCore;
 using NIBRAS;
 using NIBRAS.API.DTOs;
 using NIBRAS.Models;
+using NibrasWeb.Enums;
 
 namespace NIBRAS.API.Services;
 
+/// <summary>
+/// Read-only reservation access plus the Admin release operation (BR-G2/BR-G3).
+/// Reservations are created only by workflow code (offer approval / contract creation);
+/// the public create/update/delete surface was removed on purpose.
+/// </summary>
 public class GridCapacityReservationService : IGridCapacityReservationService
 {
-    private readonly NebrasdbContext _context;
-    private readonly ILogger<GridCapacityReservationService> _logger;
+    // GridCapacityReservation.ReleaseReason column length (nvarchar(300)).
+    private const int ReleaseReasonMaxLength = 300;
+    private const string DefaultReleaseReason = "Released by admin.";
 
-    public GridCapacityReservationService(NebrasdbContext context, ILogger<GridCapacityReservationService> logger)
+    // Decision C: a reservation owned by a live contract is released by the contract
+    // workflow (reject / terminate), never manually.
+    private const string LiveContractReleaseMessage =
+        "This reservation belongs to a live contract. Reject or terminate the contract through the normal workflow to release it.";
+
+    private readonly NebrasdbContext _context;
+
+    public GridCapacityReservationService(NebrasdbContext context)
     {
         _context = context;
-        _logger = logger;
     }
 
     public async Task<List<GridCapacityReservationDto>> GetAllAsync()
@@ -32,58 +45,42 @@ public class GridCapacityReservationService : IGridCapacityReservationService
         return item.Adapt<GridCapacityReservationDto>();
     }
 
-    public async Task<GridCapacityReservationDto> CreateAsync(CreateGridCapacityReservationRequest request)
+    /// <summary>
+    /// Releases a reservation by stamping <c>ReleasedAt</c> — the row is never deleted
+    /// (BR-G2/BR-G3), so capacity accounting stays intact.
+    /// Returns <c>null</c> when the reservation does not exist (caller maps this to 404).
+    /// A reservation that is already released is returned unchanged (idempotent):
+    /// <c>ReleasedAt</c> and <c>ReleaseReason</c> are never overwritten, so a repeated
+    /// release cannot release it twice or alter the original audit trail.
+    /// A reservation owned by a LIVE contract (<c>PendingSignatures</c> or <c>Active</c>)
+    /// cannot be released here — the contract workflow releases it on reject/terminate.
+    /// </summary>
+    public async Task<GridCapacityReservationDto?> ReleaseAsync(int id, string? reason)
     {
-        var grid = await _context.Grids.FindAsync(request.GridId);
-        if (grid == null) throw new NotFoundException("Grid not found.");
+        var reservation = await _context.GridCapacityReservations.FirstOrDefaultAsync(r => r.Id == id);
+        if (reservation == null) return null;
 
-        var totalReserved = await _context.GridCapacityReservations
-            .Where(r => r.GridId == request.GridId)
-            .SumAsync(r => (decimal?)r.ReservedMw) ?? 0;
+        if (reservation.ReleasedAt != null) return reservation.Adapt<GridCapacityReservationDto>();
 
-        if ((totalReserved + request.ReservedMw) > grid.CapacityMw)
+        // Decision C: a live contract owns its reservation, so releasing it manually would free
+        // grid capacity while the project is still live. This reuses the same "live contract"
+        // definition as ContractService.CreateAsync. A null ContractId (accepted offer with no
+        // contract yet) and a contract that has already ended (Rejected/Terminated) stay releasable.
+        if (reservation.ContractId is { } contractId)
         {
-            throw new BusinessRuleException($"Reservation exceeds available capacity. Max grid capacity is {grid.CapacityMw} MW, and currently {totalReserved} MW is reserved.");
+            var isLiveContract = await _context.Contracts.AnyAsync(c =>
+                c.Id == contractId &&
+                (c.Status == ContractStatus.PendingSignatures || c.Status == ContractStatus.Active));
+
+            if (isLiveContract) throw new BusinessRuleException(LiveContractReleaseMessage);
         }
 
-        var item = request.Adapt<GridCapacityReservation>();
-        _context.GridCapacityReservations.Add(item);
-        await _context.SaveChangesAsync();
-        return item.Adapt<GridCapacityReservationDto>();
-    }
-
-    public async Task<bool> UpdateAsync(int id, UpdateGridCapacityReservationRequest request)
-    {
-        var item = await _context.GridCapacityReservations.FindAsync(id);
-        if (item == null) return false;
-
-        var grid = await _context.Grids.FindAsync(request.GridId);
-        if (grid == null) throw new NotFoundException("Grid not found.");
-
-        var totalReserved = await _context.GridCapacityReservations
-            .Where(r => r.GridId == request.GridId && r.Id != id)
-            .SumAsync(r => (decimal?)r.ReservedMw) ?? 0;
-
-        if ((totalReserved + request.ReservedMw) > grid.CapacityMw)
-        {
-            throw new BusinessRuleException($"Update exceeds available grid capacity ({grid.CapacityMw} MW).");
-        }
-
-        item.GridId = request.GridId;
-        item.ContractId = request.ContractId;
-        item.ReservedMw = request.ReservedMw;
+        reservation.ReleasedAt = DateTime.UtcNow;
+        reservation.ReleaseReason = string.IsNullOrWhiteSpace(reason)
+            ? DefaultReleaseReason
+            : (reason.Length <= ReleaseReasonMaxLength ? reason : reason[..ReleaseReasonMaxLength]);
 
         await _context.SaveChangesAsync();
-        return true;
-    }
-
-    public async Task<bool> DeleteAsync(int id)
-    {
-        var item = await _context.GridCapacityReservations.FindAsync(id);
-        if (item == null) return false;
-
-        _context.GridCapacityReservations.Remove(item);
-        await _context.SaveChangesAsync();
-        return true;
+        return reservation.Adapt<GridCapacityReservationDto>();
     }
 }

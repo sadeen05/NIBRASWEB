@@ -8,7 +8,7 @@ walking up from the script to `NibrasWeb.csproj`; logs and scratch output go to
 
 ## Prerequisites
 
-- A local SQL Server instance (the `$env:NIBRAS_SQL_SERVER` value, falling back to `.\SQLEXPRESS`) reachable with Windows auth
+- A local SQL Server instance (the `$env:NIBRAS_SQL_SERVER` value, falling back to `$env:COMPUTERNAME\SQLEXPRESS`) reachable with Windows auth
   (`Trusted_Connection=True`), database `NEBRASDB_Step1` already migrated/seeded.
 - `sqlcmd` on `PATH` (used for DB assertions).
 - .NET SDK (`dotnet` on `PATH`); app published/built so
@@ -20,7 +20,7 @@ walking up from the script to `NibrasWeb.csproj`; logs and scratch output go to
 
 | Variable | Required | Meaning |
 | --- | --- | --- |
-| `ConnectionStrings__DefaultConnection` | optional | Overrides the DB connection string used by the app started via `s4_app.ps1`. Defaults to `Server=$env:NIBRAS_SQL_SERVER;Database=NEBRASDB_Step1;...`, where the server comes from `$env:NIBRAS_SQL_SERVER` (falling back to `.\SQLEXPRESS`) and the database remains `NEBRASDB_Step1`. |
+| `ConnectionStrings__DefaultConnection` | optional | Overrides the DB connection string used by the app started via `s4_app.ps1`. Defaults to `Server=$env:NIBRAS_SQL_SERVER;Database=NEBRASDB_Step1;...`, where the server comes from `$env:NIBRAS_SQL_SERVER` (falling back to `$env:COMPUTERNAME\SQLEXPRESS`) and the database remains `NEBRASDB_Step1`. |
 | `RateLimit__AuthPerMinute` | set by `s4_app.ps1` | Auth rate limit for the app process. `Start-S4App -AuthPerMinute N` sets it. |
 | `NIBRAS_TEST_PASSWORD` | optional | Shared password for script-created test users. If unset, each script generates a random one at run time. |
 | `ASPNETCORE_URLS` / `ASPNETCORE_ENVIRONMENT` | set by `s4_app.ps1` | `http://localhost:5181`, `Development`. |
@@ -97,6 +97,9 @@ Stop-S4App
 
 # 9) Step-7 status-filter regression (starts and stops its own app)
 & .\docs\tests\scripts\s7_status_filter.ps1
+
+# 10) Step-7 reservation surface (starts and stops its own app)
+& .\docs\tests\scripts\s7_reservations.ps1
 ```
 
 `s4_tests.ps1` must run **before** `s4_admin.ps1`: it creates a criteria v2
@@ -122,6 +125,7 @@ Every suite script exits non-zero when any case fails, so a wrapper can check
 | `parallel-approval.ps1` | Step-5 parallel-approval race: two concurrent verify requests, exactly one wins. | 0/1 |
 | `s6_contracts.ps1` | Step-6 contracts suite: create from an Accepted offer, signatures, review (approve/reject), termination, reservation release, and Step-7 competing-offer closure when a contract becomes Active. Starts/stops its own app. | 0/1 |
 | `s7_status_filter.ps1` | Step-7 status-filter regression: undefined numeric (`?status=99`), unknown and injection status values return 400 (previously 200 / 500) for both lands and offers. Starts/stops its own app. | 0/1 |
+| `s7_reservations.ps1` | Step-7 reservation surface: the Admin `POST /api/GridCapacityReservations/{id}/release` route (authz, not-found, idempotent repeated release, capacity returned to the grid) and the removal of the direct reservation POST/PUT/DELETE routes (405). Also covers Decision C: manual release is refused with 409 while the linked contract is `PendingSignatures` or `Active`, and allowed when there is no contract or the contract has ended. Reservations are created only by workflow code. Does not exercise expiry. Starts/stops its own app. | 0/1 |
 | `test_fixtures.ps1` | Shared idempotent fixtures: ensures the two `TEST Region …` regions and the `TEST Grid - Primary 100MW` grid exist (insert-only, matched by name) and resolves their IDs. Dot-sourced by the suites; never assumes numeric IDs. | n/a |
 | `s4_checkpoint_a.ps1` | Step-4 checkpoint evidence script (supplementary). | 0/1 |
 | `s4_probe.ps1`, `s4_page.ps1`, `s4_overflow.ps1` | Supplementary Step-4 probes (each starts/stops its own app via `s4_app.ps1`). | 0/1 |
