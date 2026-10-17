@@ -37,7 +37,7 @@ Backend: ASP.NET Core (.NET 10) + EF Core 10 + SQL Server. Frontend: React 19 + 
 | SEC-16 | Frontend: no `dangerouslySetInnerHTML`/`innerHTML`/`eval`/`new Function`/`document.write`; user text rendered as text, never into `href`/`src`; strict production CSP | **Fixed in this session:** `frontend/vite.config.ts` (`nibras-production-csp`) injects the CSP meta on `vite build` only; regression check `docs/tests/verify-frontend-csp.ps1` | Sweep 0 hits. Built page carries the policy byte-for-byte with 0 inline `<script>`; the production bundle loads and renders the full login layout with 26 runtime style tags and **no** CSP violation reports (§2.5) | **VERIFIED NOW** |
 | SEC-17 | Reject control characters (U+0000–U+001F, except tab/newline in free text); never reflect raw input in errors | `ValidationAttributes.cs:7-39` (`NoControlCharacters`, `NoControlCharactersExceptTabAndNewline`) applied across request DTOs | `step3_suite.ps1` / `s4_tests.ps1` negative cases | STATIC + prior |
 | SEC-18 | Unhandled exception → generic 500 + correlation id; no stack trace/SQL/exception text to clients; logs carry no secrets | `ExceptionHandler.cs:36-71` (`traceId` always set; `500` detail is the fixed string); `Program.cs:190` | Every error body from the 63-operation sweep scanned for internal-detail markers → 0 leaks (§2.1). Static: the `500` branch never uses `exception.Message`; `_logger.LogError` is server-side only | **VERIFIED NOW** (no leakage) + STATIC (500 path) |
-| SEC-19 | No secrets in the repository; JWT key, seed passwords and credentialled connection strings live in user-secrets/environment | `Program.cs:17-21` fails fast when `Jwt:Key` is missing; `appsettings.json` holds no credentials (`Trusted_Connection`) | Two tracked-file secret sweeps → 0 hits (assignments, private keys, `ghp_`/`sk-`/`AKIA`/JWT prefixes); §2.6 | **VERIFIED NOW** |
+| SEC-19 | No secrets in the repository; JWT key, seed passwords and credentialled connection strings live in user-secrets/environment | `Program.cs:17-21` fails fast when `Jwt:Key` is missing; `appsettings.json` ships no usable connection string (empty `DefaultConnection` placeholder; no credential) | Two tracked-file secret sweeps → 0 hits (assignments, private keys, `ghp_`/`sk-`/`AKIA`/JWT prefixes); §2.6 | **VERIFIED NOW** |
 | SEC-20 | Step-7 dependency check: `dotnet list package --vulnerable --include-transitive` and `npm audit --omit=dev` | — | `dotnet`: *"no vulnerable packages given the current sources"*; `npm`: *"found 0 vulnerabilities"* (exit 0) (§2.7) | **VERIFIED NOW** |
 
 ## 2. Evidence collected in this session
@@ -116,9 +116,11 @@ parity with the specification; the API responses additionally send it as a real 
 Two sweeps over tracked files: secret-shaped assignments
 (`password|secret|api[_-]?key|bearer|connectionstring|jwt[_:]?key` = `"…"`) → **0 hits**;
 private-key blocks and known token prefixes (`ghp_`, `sk-`, `AKIA`, `eyJ…`) → **0 hits**.
-`appsettings.json` contains only `Server=…;Database=NEBRASDB;Trusted_Connection=True;TrustServerCertificate=True;`
-(no credential), and `DatabaseTargetGuard` refuses that database name at runtime unless it is
-explicitly approved through deployment configuration.
+`appsettings.json` now ships an empty `ConnectionStrings:DefaultConnection` placeholder: the
+repository holds no usable connection string and no server name. The real target is supplied by the
+environment or the deployment configuration (`ConnectionStrings__DefaultConnection`), and
+`DatabaseTargetGuard` refuses the production-like database name at runtime unless it is explicitly
+approved through deployment configuration.
 
 ### 2.7 SEC-20 — dependencies
 
@@ -171,6 +173,13 @@ lands/offers/contracts) or a privilege change, which is a new database write sco
 - `GET /api/criteria/current`, `GetAllAsync` aggregations and similar endpoints are unbounded
   by design (pre-existing); `pageSize` is capped at 50 where paging exists.
 - No automated CI: the `.http` suites are executed manually (accepted risk G7 in the spec).
+- `DatabaseTargetGuard` runs after `builder.Build()` (`Program.cs:156`), so EF's design-time host
+  creation, which aborts the entry point inside `Build()` via `HostAbortedException`, never reaches
+  it. `dotnet ef migrations has-pending-model-changes` diffs the compiled model snapshot against the
+  design-time model and opens no connection (EF Core 10.0.10 `Migrator.HasPendingModelChanges`), so
+  it is unaffected; a connecting design-time command (`dotnet ef database update`) must instead be
+  given an explicit, verified `ConnectionStrings__DefaultConnection` target, because an empty or
+  absent value is passed through unvalidated to `new SqlConnection(...)`.
 
 ## 4. Standalone verification scripts
 

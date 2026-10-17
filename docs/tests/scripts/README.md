@@ -10,6 +10,10 @@ walking up from the script to `NibrasWeb.csproj`; logs and scratch output go to
 
 - A local SQL Server instance (the `$env:NIBRAS_SQL_SERVER` value, falling back to `$env:COMPUTERNAME\SQLEXPRESS`) reachable with Windows auth
   (`Trusted_Connection=True`), database `NEBRASDB_Step1` already migrated/seeded.
+- `appsettings.json` ships an empty `ConnectionStrings:DefaultConnection` placeholder and no server
+  name, so no usable connection string is stored in the repository. The test harness (or the
+  environment you run the app in) must supply the real target; `s4_app.ps1` sets
+  `ConnectionStrings__DefaultConnection` unless the caller has already set it.
 - `sqlcmd` on `PATH` (used for DB assertions).
 - .NET SDK (`dotnet` on `PATH`); app published/built so
   `bin\Debug\net10.0\NibrasWeb.dll` exists at the repo root.
@@ -20,7 +24,7 @@ walking up from the script to `NibrasWeb.csproj`; logs and scratch output go to
 
 | Variable | Required | Meaning |
 | --- | --- | --- |
-| `ConnectionStrings__DefaultConnection` | optional | Overrides the DB connection string used by the app started via `s4_app.ps1`. Defaults to `Server=$env:NIBRAS_SQL_SERVER;Database=NEBRASDB_Step1;...`, where the server comes from `$env:NIBRAS_SQL_SERVER` (falling back to `$env:COMPUTERNAME\SQLEXPRESS`) and the database remains `NEBRASDB_Step1`. |
+| `ConnectionStrings__DefaultConnection` | yes (supplied by the harness) | The DB connection string for the app started via `s4_app.ps1`. `appsettings.json` ships an empty `DefaultConnection` placeholder, so no usable value is stored in the repository and the harness supplies it (a caller-set value wins). Defaults to `Server=$env:NIBRAS_SQL_SERVER;Database=NEBRASDB_Step1;...`, where the server comes from `$env:NIBRAS_SQL_SERVER` (falling back to `$env:COMPUTERNAME\SQLEXPRESS`) and the database remains `NEBRASDB_Step1`. |
 | `RateLimit__AuthPerMinute` | set by `s4_app.ps1` | Auth rate limit for the app process. `Start-S4App -AuthPerMinute N` sets it. |
 | `NIBRAS_TEST_PASSWORD` | optional | Shared password for script-created test users. If unset, each script generates a random one at run time. |
 | `ASPNETCORE_URLS` / `ASPNETCORE_ENVIRONMENT` | set by `s4_app.ps1` | `http://localhost:5181`, `Development`. |
