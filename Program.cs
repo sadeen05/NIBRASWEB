@@ -64,6 +64,34 @@ builder.Services.AddRateLimiter(options =>
                 QueueLimit = 0,
                 AutoReplenishment = true
             }));
+
+    // The confirmation of an address has its own budget as well: a flood of confirmation
+    // attempts must never exhaust the sign-in budget, and the confirmation of one address must
+    // not be blocked by the attempts on another one.
+    options.AddPolicy("verification", httpContext =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = builder.Configuration.GetValue<int?>("RateLimit:VerificationPerMinute") ?? 5,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0,
+                AutoReplenishment = true
+            }));
+
+    // The request for a new verification mail is the only anonymous endpoint that can cause
+    // mail to be sent, so it gets its own, smaller budget on top of the per-account cooldown
+    // and the per-account daily cap of the token service.
+    options.AddPolicy("verification-resend", httpContext =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = builder.Configuration.GetValue<int?>("RateLimit:VerificationResendPerMinute") ?? 5,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0,
+                AutoReplenishment = true
+            }));
 });
 
 builder.Services.AddDbContext<NebrasdbContext>(options =>

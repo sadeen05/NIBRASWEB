@@ -14,15 +14,18 @@ public class UsersController : ControllerBase
     private readonly IUserService _userService;
     private readonly ICurrentUser _currentUser;
     private readonly IAdminInvitationService _adminInvitation;
+    private readonly IRegistrationVerificationService _registrationVerification;
 
     public UsersController(
         IUserService userService,
         ICurrentUser currentUser,
-        IAdminInvitationService adminInvitation)
+        IAdminInvitationService adminInvitation,
+        IRegistrationVerificationService registrationVerification)
     {
         _userService = userService;
         _currentUser = currentUser;
         _adminInvitation = adminInvitation;
+        _registrationVerification = registrationVerification;
     }
 
     [HttpGet]
@@ -135,6 +138,41 @@ public class UsersController : ControllerBase
             _ => Conflict(new
             {
                 message = "The account cannot receive an activation invitation.",
+            }),
+        };
+    }
+
+    /// <summary>
+    /// (Re)sends the verification mail of an unverified Landlord or Investor account. Only a
+    /// SuperAdmin may trigger it. The token is delivered to the account by mail and is never
+    /// returned in the response; a new verification retires the previous one, so only the
+    /// newest link works. The endpoint never verifies an account by itself, and it can never
+    /// activate an administrator account - that flow has its own invitation.
+    /// </summary>
+    [HttpPost("{id}/verification")]
+    [Authorize(Roles = RoleNames.SuperAdmin)]
+    public async Task<IActionResult> SendVerification(int id)
+    {
+        var result = await _registrationVerification.SendAsync(
+            id,
+            _currentUser.Id,
+            HttpContext.Connection.RemoteIpAddress?.ToString());
+
+        return result.Outcome switch
+        {
+            RegistrationVerificationOutcome.Sent => Accepted(new
+            {
+                message = "The verification mail was handed over for delivery.",
+            }),
+            RegistrationVerificationOutcome.DeliveryFailed => StatusCode(
+                StatusCodes.Status503ServiceUnavailable,
+                new
+                {
+                    message = "The verification mail could not be delivered. The account stays unverified; the verification can be sent again.",
+                }),
+            _ => Conflict(new
+            {
+                message = "The account cannot receive a verification mail.",
             }),
         };
     }

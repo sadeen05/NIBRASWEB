@@ -97,7 +97,7 @@ foreach ($file in Get-ChildItem -Path $controllersDir -Filter '*.cs' | Sort-Obje
 # credential (it is rate-limited with its own budget and answers a generic failure). Any other
 # anonymous endpoint still fails this check.
 $allowedAnonymous = @{
-    'AuthController.cs' = @('Register', 'Login', 'ActivateAdmin')
+    'AuthController.cs' = @('Register', 'Login', 'ActivateAdmin', 'VerifyEmail', 'ResendVerification')
 }
 
 foreach ($file in Get-ChildItem -Path $controllersDir -Filter '*.cs') {

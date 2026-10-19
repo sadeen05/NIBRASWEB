@@ -36,3 +36,19 @@ public record ActivateAdminRequest(
 
     [param: Required, MinLength(10), MaxLength(128), NoControlCharacters, MaxUtf8Bytes(72)]
     string Password);
+
+/// <summary>
+/// Confirmation of the address of a new Landlord or Investor account: the single-use
+/// verification token from the verification mail. Only a registration token is accepted.
+/// </summary>
+public record VerifyEmailRequest(
+    [param: Required, MaxLength(200), NoControlCharacters]
+    string Token);
+
+/// <summary>
+/// A request for a new verification mail. The address only serves to find the account; the
+/// answer of the endpoint never depends on whether the address belongs to one.
+/// </summary>
+public record ResendVerificationRequest(
+    [param: Required, EmailAddress, MaxLength(255), NoControlCharacters]
+    string Email);

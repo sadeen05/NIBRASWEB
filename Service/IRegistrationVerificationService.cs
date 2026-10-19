@@ -60,4 +60,37 @@ public interface IRegistrationVerificationService
         int? actorId = null,
         string? ip = null,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Requests a new verification mail for an address, outside the request. The result is
+    /// deliberately indistinguishable for every case - a missing account, an account that is
+    /// already verified, an ineligible account, an active cooldown and a reached daily cap -
+    /// so an anonymous caller cannot learn whether the address belongs to an account, and
+    /// cannot learn whether a mail was handed over. The audit trail still records what
+    /// happened.
+    /// <para>
+    /// The work runs after the answer, so neither the answer nor its duration depends on the
+    /// account state or on the mail hand-off.
+    /// </para>
+    /// </summary>
+    /// <param name="email">The address the account was created with.</param>
+    /// <param name="ip">The remote address of the request, for the audit trail.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    Task RequestToAddressAsync(
+        string email,
+        string? ip = null,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Performs the work of a verification request for an address. This is the synchronous
+    /// variant; an anonymous caller must use <see cref="RequestToAddressAsync"/>, so the
+    /// answer cannot depend on how long the mail hand-off takes.
+    /// </summary>
+    /// <param name="email">The address the account was created with.</param>
+    /// <param name="ip">The remote address of the request, for the audit trail.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    Task SendToAddressAsync(
+        string email,
+        string? ip = null,
+        CancellationToken cancellationToken = default);
 }

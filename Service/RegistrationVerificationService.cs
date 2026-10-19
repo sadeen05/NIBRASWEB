@@ -33,6 +33,7 @@ public sealed class RegistrationVerificationService : IRegistrationVerificationS
     private readonly IEmailSender _emailSender;
     private readonly IUserSecurityEventService _audit;
     private readonly EmailOptions _options;
+    private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<RegistrationVerificationService> _logger;
 
     public RegistrationVerificationService(
@@ -41,6 +42,7 @@ public sealed class RegistrationVerificationService : IRegistrationVerificationS
         IEmailSender emailSender,
         IUserSecurityEventService audit,
         IOptions<EmailOptions> options,
+        IServiceScopeFactory scopeFactory,
         ILogger<RegistrationVerificationService> logger)
     {
         _context = context;
@@ -48,6 +50,7 @@ public sealed class RegistrationVerificationService : IRegistrationVerificationS
         _emailSender = emailSender;
         _audit = audit;
         _options = options.Value;
+        _scopeFactory = scopeFactory;
         _logger = logger;
     }
 
@@ -55,7 +58,111 @@ public sealed class RegistrationVerificationService : IRegistrationVerificationS
         int userId,
         int? actorId = null,
         string? ip = null,
+        CancellationToken cancellationToken = default) =>
+        await DeliverAsync(
+            userId,
+            UserSecurityEventTypes.VerificationEmailSent,
+            actorId,
+            ip,
+            cancellationToken);
+
+    /// <summary>
+    /// Requests a new verification mail for an address, **outside the request**.
+    /// <para>
+    /// The answer of an anonymous request must never depend on the account state, and it must
+    /// never depend on how long the mail hand-off takes: a response that took longer because a
+    /// mail was really sent would be an account-existence oracle. The work therefore runs
+    /// after the answer, in its own scope and with its own database context, and the caller
+    /// learns nothing beyond the fact that the request was accepted.
+    /// </para>
+    /// <para>
+    /// The per-account cooldown and the daily cap are evaluated in the background under the
+    /// account lock, so parallel requests still result in one mail. A delivery that fails - or
+    /// that is lost when the host shuts down - is recorded in the audit trail, and the
+    /// recipient can request another mail once the cooldown has elapsed.
+    /// </para>
+    /// </summary>
+    public Task RequestToAddressAsync(
+        string email,
+        string? ip = null,
         CancellationToken cancellationToken = default)
+    {
+        var address = email?.Trim();
+        if (string.IsNullOrWhiteSpace(address))
+        {
+            return Task.CompletedTask;
+        }
+
+        var scopeFactory = _scopeFactory;
+        var logger = _logger;
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                using var scope = scopeFactory.CreateScope();
+                var service = scope.ServiceProvider.GetRequiredService<IRegistrationVerificationService>();
+                await service.SendToAddressAsync(address, ip, CancellationToken.None);
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "The background verification request could not be processed.");
+            }
+        });
+
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Requests a new verification mail for an address. Nothing about the account is reported
+    /// back: a missing account, an account that is already verified, an ineligible account, an
+    /// active cooldown and a reached daily cap all end in the same silence, so an anonymous
+    /// caller can neither confirm nor deny that the address belongs to an account. The audit
+    /// trail still records what happened.
+    /// <para>
+    /// This is the work itself. An anonymous caller must use
+    /// <see cref="RequestToAddressAsync"/>, so the answer cannot depend on its duration.
+    /// </para>
+    /// </summary>
+    public async Task SendToAddressAsync(
+        string email,
+        string? ip = null,
+        CancellationToken cancellationToken = default)
+    {
+        var address = email?.Trim();
+        if (string.IsNullOrWhiteSpace(address))
+        {
+            return;
+        }
+
+        // The comparison uses the database collation, which is case-insensitive, exactly like
+        // the unique index on USERS.EMAIL: an address that differs only in case is the same
+        // address.
+        var account = await _context.Users
+            .AsNoTracking()
+            .SingleOrDefaultAsync(u => u.Email == address && !u.IsDeleted, cancellationToken);
+        if (account is null)
+        {
+            return;
+        }
+
+        // The delivery applies the role and the verification-state guard, the resend cooldown
+        // and the daily cap. Its outcome is deliberately not reported to the caller, and the
+        // audit records it as a resend.
+        await DeliverAsync(
+            account.Id,
+            UserSecurityEventTypes.VerificationEmailResent,
+            null,
+            ip,
+            cancellationToken);
+    }
+
+    private async Task<RegistrationVerificationResult> DeliverAsync(
+        int userId,
+        string sentEventType,
+        int? actorId,
+        string? ip,
+        CancellationToken cancellationToken)
     {
         var account = await _context.Users
             .AsNoTracking()
@@ -115,7 +222,7 @@ public sealed class RegistrationVerificationService : IRegistrationVerificationS
 
         await RecordAuditAsync(
             userId,
-            UserSecurityEventTypes.VerificationEmailSent,
+            sentEventType,
             actorId,
             ip,
             cancellationToken);
