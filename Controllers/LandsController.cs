@@ -1,7 +1,9 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.ModelBinding;
 using NIBRAS.API.DTOs;
 using NIBRAS.API.Services;
+using NIBRAS.Models;
 
 namespace NIBRAS.API.Controllers;
 
@@ -60,10 +62,18 @@ public class LandsController : ControllerBase
         return Ok(new { message = "Land returned to Draft." });
     }
 
+    /// <summary>
+    /// Admin/SuperAdmin verification decision. The request body is optional and may carry
+    /// an approval note; when it is omitted (or empty) the previous behaviour is unchanged.
+    /// The note is stored in the append-only land-status history reason, next to the
+    /// criterion version the decision was taken against.
+    /// </summary>
     [HttpPost("{id}/verify")]
-    public async Task<IActionResult> Verify(int id)
+    public async Task<IActionResult> Verify(
+        int id,
+        [FromBody(EmptyBodyBehavior = EmptyBodyBehavior.Allow)] VerifyLandRequest? request = null)
     {
-        await _landService.VerifyAsync(id);
+        await _landService.VerifyAsync(id, request?.Note);
         return Ok(new { message = "Land verified successfully." });
     }
 
@@ -103,5 +113,27 @@ public class LandsController : ControllerBase
     public async Task<ActionResult<LandDocumentDto>> ReviewDocument(int id, int documentId, ReviewLandDocumentRequest request)
     {
         return Ok(await _landService.ReviewDocumentAsync(id, documentId, request));
+    }
+
+    /// <summary>
+    /// SuperAdmin-only technical assessment (region, grid and the four measurements).
+    /// Region, grid and the technical measurements are land data: a regular Admin may
+    /// review, verify or reject a land but must never modify them, so this endpoint is
+    /// restricted to SuperAdmin. Authorization is enforced both here and in the service.
+    /// </summary>
+    [HttpPut("{id}/assessment")]
+    [Authorize(Roles = RoleNames.SuperAdmin)]
+    public async Task<ActionResult<LandDto>> Assess(int id, AssessLandRequest request)
+    {
+        return Ok(await _landService.AssessAsync(id, request));
+    }
+
+    /// <summary>
+    /// Assessment history: readable by the land owner and by Admin/SuperAdmin only.
+    /// </summary>
+    [HttpGet("{id}/assessments")]
+    public async Task<ActionResult<List<LandAssessmentDto>>> GetAssessments(int id)
+    {
+        return Ok(await _landService.GetAssessmentsAsync(id));
     }
 }

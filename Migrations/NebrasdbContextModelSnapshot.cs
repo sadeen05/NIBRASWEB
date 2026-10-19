@@ -270,6 +270,128 @@ namespace NIBRAS.API.Migrations
                         });
                 });
 
+            modelBuilder.Entity("NIBRAS.Models.Governorate", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int")
+                        .HasColumnName("ID");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<string>("Code")
+                        .IsRequired()
+                        .HasMaxLength(10)
+                        .HasColumnType("nvarchar(10)")
+                        .HasColumnName("CODE");
+
+                    b.Property<string>("NameAr")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)")
+                        .HasColumnName("NAME_AR");
+
+                    b.Property<string>("NameEn")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)")
+                        .HasColumnName("NAME_EN");
+
+                    b.HasKey("Id")
+                        .HasName("PK_GOVERNORATES");
+
+                    b.HasIndex(new[] { "Code" }, "UQ_GOVERNORATES_CODE")
+                        .IsUnique();
+
+                    b.ToTable("GOVERNORATES", (string)null);
+
+                    b.HasData(
+                        new
+                        {
+                            Id = 1,
+                            Code = "AM",
+                            NameAr = "عمّان",
+                            NameEn = "Amman"
+                        },
+                        new
+                        {
+                            Id = 2,
+                            Code = "IR",
+                            NameAr = "إربد",
+                            NameEn = "Irbid"
+                        },
+                        new
+                        {
+                            Id = 3,
+                            Code = "AZ",
+                            NameAr = "الزرقاء",
+                            NameEn = "Zarqa"
+                        },
+                        new
+                        {
+                            Id = 4,
+                            Code = "BA",
+                            NameAr = "البلقاء",
+                            NameEn = "Balqa"
+                        },
+                        new
+                        {
+                            Id = 5,
+                            Code = "MA",
+                            NameAr = "المفرق",
+                            NameEn = "Mafraq"
+                        },
+                        new
+                        {
+                            Id = 6,
+                            Code = "KA",
+                            NameAr = "الكرك",
+                            NameEn = "Karak"
+                        },
+                        new
+                        {
+                            Id = 7,
+                            Code = "JA",
+                            NameAr = "جرش",
+                            NameEn = "Jerash"
+                        },
+                        new
+                        {
+                            Id = 8,
+                            Code = "MD",
+                            NameAr = "مادبا",
+                            NameEn = "Madaba"
+                        },
+                        new
+                        {
+                            Id = 9,
+                            Code = "AJ",
+                            NameAr = "عجلون",
+                            NameEn = "Ajloun"
+                        },
+                        new
+                        {
+                            Id = 10,
+                            Code = "AQ",
+                            NameAr = "العقبة",
+                            NameEn = "Aqaba"
+                        },
+                        new
+                        {
+                            Id = 11,
+                            Code = "MN",
+                            NameAr = "معان",
+                            NameEn = "Ma'an"
+                        },
+                        new
+                        {
+                            Id = 12,
+                            Code = "AT",
+                            NameAr = "الطفيلة",
+                            NameEn = "Tafilah"
+                        });
+                });
+
             modelBuilder.Entity("NIBRAS.Models.Grid", b =>
                 {
                     b.Property<int>("Id")
@@ -394,7 +516,12 @@ namespace NIBRAS.API.Migrations
                         .HasColumnType("bit")
                         .HasColumnName("DATA_VERIFIED_BY_ADMIN");
 
-                    b.Property<decimal>("DistanceToGridKm")
+                    b.Property<string>("Description")
+                        .HasMaxLength(1000)
+                        .HasColumnType("nvarchar(1000)")
+                        .HasColumnName("DESCRIPTION");
+
+                    b.Property<decimal?>("DistanceToGridKm")
                         .HasColumnType("decimal(10, 2)")
                         .HasColumnName("DISTANCE_TO_GRID_KM");
 
@@ -403,17 +530,27 @@ namespace NIBRAS.API.Migrations
                         .HasColumnType("nvarchar(500)")
                         .HasColumnName("DOCUMENT_STORAGE_LOCATION");
 
-                    b.Property<decimal>("ElevationM")
+                    b.Property<decimal?>("ElevationM")
                         .HasColumnType("decimal(10, 2)")
                         .HasColumnName("ELEVATION_M");
 
-                    b.Property<int>("GridId")
+                    b.Property<int?>("GovernorateId")
+                        .HasColumnType("int")
+                        .HasColumnName("GOVERNORATE_ID");
+
+                    b.Property<int?>("GridId")
                         .HasColumnType("int")
                         .HasColumnName("GRID_ID");
 
                     b.Property<bool>("IsDeleted")
                         .HasColumnType("bit")
                         .HasColumnName("IS_DELETED");
+
+                    b.Property<bool>("IsHiddenFromInvestors")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bit")
+                        .HasDefaultValue(false)
+                        .HasColumnName("IS_HIDDEN_FROM_INVESTORS");
 
                     b.Property<string>("LandNumber")
                         .IsRequired()
@@ -430,15 +567,15 @@ namespace NIBRAS.API.Migrations
                         .HasColumnType("nvarchar(100)")
                         .HasColumnName("PARCEL_NUMBER");
 
-                    b.Property<int>("RegionId")
+                    b.Property<int?>("RegionId")
                         .HasColumnType("int")
                         .HasColumnName("REGION_ID");
 
-                    b.Property<decimal>("SlopePercentage")
+                    b.Property<decimal?>("SlopePercentage")
                         .HasColumnType("decimal(5, 2)")
                         .HasColumnName("SLOPE_PERCENTAGE");
 
-                    b.Property<decimal>("SolarIrradiance")
+                    b.Property<decimal?>("SolarIrradiance")
                         .HasColumnType("decimal(10, 2)")
                         .HasColumnName("SOLAR_IRRADIANCE");
 
@@ -466,12 +603,170 @@ namespace NIBRAS.API.Migrations
 
                     b.HasIndex(new[] { "RegionId", "Village", "Basin", "ParcelNumber" }, "UQ_LAND_LOCATION")
                         .IsUnique()
-                        .HasFilter("[IS_DELETED] = 0");
+                        .HasFilter("[IS_DELETED] = 0 AND [REGION_ID] IS NOT NULL");
+
+                    b.HasIndex(new[] { "GovernorateId", "Village", "Basin", "ParcelNumber" }, "UQ_LAND_LOCATION_GOV")
+                        .IsUnique()
+                        .HasFilter("[IS_DELETED] = 0 AND [GOVERNORATE_ID] IS NOT NULL");
+
+                    b.HasIndex(new[] { "LandNumber", "GovernorateId" }, "UQ_LAND_NUMBER_GOV")
+                        .IsUnique()
+                        .HasFilter("[GOVERNORATE_ID] IS NOT NULL");
 
                     b.HasIndex(new[] { "LandNumber", "RegionId" }, "UQ_LAND_NUMBER_REGION")
-                        .IsUnique();
+                        .IsUnique()
+                        .HasFilter("[REGION_ID] IS NOT NULL");
 
                     b.ToTable("LANDS", (string)null);
+                });
+
+            modelBuilder.Entity("NIBRAS.Models.LandAssessment", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int")
+                        .HasColumnName("ID");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<DateTime>("AssessedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("ASSESSED_AT");
+
+                    b.Property<int>("AssessedById")
+                        .HasColumnType("int")
+                        .HasColumnName("ASSESSED_BY_ID");
+
+                    b.Property<decimal?>("DistanceToGridKm")
+                        .HasColumnType("decimal(10, 2)")
+                        .HasColumnName("DISTANCE_TO_GRID_KM");
+
+                    b.Property<decimal?>("ElevationM")
+                        .HasColumnType("decimal(10, 2)")
+                        .HasColumnName("ELEVATION_M");
+
+                    b.Property<int?>("GridId")
+                        .HasColumnType("int")
+                        .HasColumnName("GRID_ID");
+
+                    b.Property<int>("LandId")
+                        .HasColumnType("int")
+                        .HasColumnName("LAND_ID");
+
+                    b.Property<string>("Note")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)")
+                        .HasColumnName("NOTE");
+
+                    b.Property<int?>("RegionId")
+                        .HasColumnType("int")
+                        .HasColumnName("REGION_ID");
+
+                    b.Property<decimal?>("SlopePercentage")
+                        .HasColumnType("decimal(5, 2)")
+                        .HasColumnName("SLOPE_PERCENTAGE");
+
+                    b.Property<decimal?>("SolarIrradiance")
+                        .HasColumnType("decimal(10, 2)")
+                        .HasColumnName("SOLAR_IRRADIANCE");
+
+                    b.HasKey("Id")
+                        .HasName("PK_LAND_ASSESSMENTS");
+
+                    b.HasIndex("AssessedById");
+
+                    b.HasIndex(new[] { "LandId" }, "IX_LAND_ASSESSMENTS_LAND_ID");
+
+                    b.ToTable("LAND_ASSESSMENTS", (string)null);
+                });
+
+            modelBuilder.Entity("NIBRAS.Models.LandChangeRequest", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int")
+                        .HasColumnName("ID");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<string>("DecisionReason")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)")
+                        .HasColumnName("DECISION_REASON");
+
+                    b.Property<int>("LandId")
+                        .HasColumnType("int")
+                        .HasColumnName("LAND_ID");
+
+                    b.Property<string>("NewSnapshot")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)")
+                        .HasColumnName("NEW_SNAPSHOT");
+
+                    b.Property<string>("OldSnapshot")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)")
+                        .HasColumnName("OLD_SNAPSHOT");
+
+                    b.Property<string>("Reason")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)")
+                        .HasColumnName("REASON");
+
+                    b.Property<DateTime>("RequestedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("datetime2")
+                        .HasColumnName("REQUESTED_AT")
+                        .HasDefaultValueSql("(getdate())");
+
+                    b.Property<int>("RequestedById")
+                        .HasColumnType("int")
+                        .HasColumnName("REQUESTED_BY_ID");
+
+                    b.Property<DateTime?>("ReviewedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("REVIEWED_AT");
+
+                    b.Property<int?>("ReviewedById")
+                        .HasColumnType("int")
+                        .HasColumnName("REVIEWED_BY_ID");
+
+                    b.Property<byte[]>("RowVersion")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("rowversion")
+                        .HasColumnName("ROW_VERSION");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)")
+                        .HasDefaultValue("Pending")
+                        .HasColumnName("STATUS");
+
+                    b.Property<string>("SupportingDocuments")
+                        .HasColumnType("nvarchar(max)")
+                        .HasColumnName("SUPPORTING_DOCUMENTS");
+
+                    b.HasKey("Id")
+                        .HasName("PK_LAND_CHANGE_REQUESTS");
+
+                    b.HasIndex("RequestedById");
+
+                    b.HasIndex("ReviewedById");
+
+                    b.HasIndex(new[] { "LandId" }, "IX_LAND_CHANGE_REQUESTS_LAND_ID");
+
+                    b.HasIndex(new[] { "Status" }, "IX_LAND_CHANGE_REQUESTS_STATUS");
+
+                    b.HasIndex(new[] { "LandId" }, "UX_LAND_CHANGE_REQUESTS_PENDING_LAND")
+                        .IsUnique()
+                        .HasFilter("[STATUS] = N'Pending'");
+
+                    b.ToTable("LAND_CHANGE_REQUESTS", (string)null);
                 });
 
             modelBuilder.Entity("NIBRAS.Models.LandCriterion", b =>
@@ -1175,10 +1470,14 @@ namespace NIBRAS.API.Migrations
 
             modelBuilder.Entity("NIBRAS.Models.Land", b =>
                 {
+                    b.HasOne("NIBRAS.Models.Governorate", "Governorate")
+                        .WithMany("Lands")
+                        .HasForeignKey("GovernorateId")
+                        .HasConstraintName("FK_LANDS_GOVERNORATES");
+
                     b.HasOne("NIBRAS.Models.Grid", "Grid")
                         .WithMany("Lands")
                         .HasForeignKey("GridId")
-                        .IsRequired()
                         .HasConstraintName("FK_LANDS_GRIDS");
 
                     b.HasOne("NIBRAS.Models.User", "Landlord")
@@ -1190,13 +1489,14 @@ namespace NIBRAS.API.Migrations
                     b.HasOne("NIBRAS.Models.Region", "Region")
                         .WithMany("Lands")
                         .HasForeignKey("RegionId")
-                        .IsRequired()
                         .HasConstraintName("FK_LANDS_REGIONS");
 
                     b.HasOne("NIBRAS.Models.LandCriterion", "VerifiedAgainstCriterion")
                         .WithMany()
                         .HasForeignKey("VerifiedAgainstCriterionId")
                         .HasConstraintName("FK_LANDS_VERIFIED_CRITERION");
+
+                    b.Navigation("Governorate");
 
                     b.Navigation("Grid");
 
@@ -1205,6 +1505,51 @@ namespace NIBRAS.API.Migrations
                     b.Navigation("Region");
 
                     b.Navigation("VerifiedAgainstCriterion");
+                });
+
+            modelBuilder.Entity("NIBRAS.Models.LandAssessment", b =>
+                {
+                    b.HasOne("NIBRAS.Models.User", "AssessedBy")
+                        .WithMany()
+                        .HasForeignKey("AssessedById")
+                        .IsRequired()
+                        .HasConstraintName("FK_LA_USERS");
+
+                    b.HasOne("NIBRAS.Models.Land", "Land")
+                        .WithMany("LandAssessments")
+                        .HasForeignKey("LandId")
+                        .IsRequired()
+                        .HasConstraintName("FK_LA_LANDS");
+
+                    b.Navigation("AssessedBy");
+
+                    b.Navigation("Land");
+                });
+
+            modelBuilder.Entity("NIBRAS.Models.LandChangeRequest", b =>
+                {
+                    b.HasOne("NIBRAS.Models.Land", "Land")
+                        .WithMany("LandChangeRequests")
+                        .HasForeignKey("LandId")
+                        .IsRequired()
+                        .HasConstraintName("FK_LCR_LANDS");
+
+                    b.HasOne("NIBRAS.Models.User", "RequestedBy")
+                        .WithMany()
+                        .HasForeignKey("RequestedById")
+                        .IsRequired()
+                        .HasConstraintName("FK_LCR_REQUESTER");
+
+                    b.HasOne("NIBRAS.Models.User", "ReviewedBy")
+                        .WithMany()
+                        .HasForeignKey("ReviewedById")
+                        .HasConstraintName("FK_LCR_REVIEWER");
+
+                    b.Navigation("Land");
+
+                    b.Navigation("RequestedBy");
+
+                    b.Navigation("ReviewedBy");
                 });
 
             modelBuilder.Entity("NIBRAS.Models.LandCriterion", b =>
@@ -1357,6 +1702,11 @@ namespace NIBRAS.API.Migrations
                     b.Navigation("LandDocuments");
                 });
 
+            modelBuilder.Entity("NIBRAS.Models.Governorate", b =>
+                {
+                    b.Navigation("Lands");
+                });
+
             modelBuilder.Entity("NIBRAS.Models.Grid", b =>
                 {
                     b.Navigation("GridCapacityReservations");
@@ -1369,6 +1719,10 @@ namespace NIBRAS.API.Migrations
                     b.Navigation("Contracts");
 
                     b.Navigation("DeletionRequests");
+
+                    b.Navigation("LandAssessments");
+
+                    b.Navigation("LandChangeRequests");
 
                     b.Navigation("LandDocuments");
 

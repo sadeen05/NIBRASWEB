@@ -112,6 +112,26 @@ public class ContractService : IContractService
         if (land.Status != LandStatus.UnderContract)
             throw new BusinessRuleException("The land is not under contract.");
 
+        // The offer approval that moved the land under contract checked the evidence, but the
+        // evidence can stop being valid before this creation: an admin can make a new document
+        // type required (which is the only way an UnderContract land becomes outstanding, since
+        // no review, upload or change-request decision can run on it), and a SuperAdmin can then
+        // reject a document in the re-review that outstanding evidence opens. Creating the
+        // contract anyway would commit a land under contract on evidence a reviewer has rejected,
+        // so the same derived rule that gates OfferService.CreateAsync and
+        // OfferService.AdminApproveAsync is re-checked here. Nothing is mutated: the accepted
+        // offer, the reservation and the offer history are left untouched, and the admin can
+        // create the contract once the corrected document is approved.
+        //
+        // Residual (see SECURITY_TRACEABILITY.md §3.3): the requirement change itself takes no lock
+        // on LANDS or on the offer, so it can commit between this read and the contract insert. No
+        // lock in this method can close that: a LANDS UPDLOCK would only serialize against a
+        // re-review, which cannot start until such a change has already committed. The check is
+        // therefore left with the other creation preconditions rather than inside the transaction.
+        if (await _context.HasOutstandingRequiredDocumentAsync(land.Id))
+            throw new BusinessRuleException(
+                "This contract cannot be created while the land's required documents are being corrected.");
+
         await using var transaction = await _context.Database.BeginTransactionAsync();
 
         // Step 7 F1 (concurrency): pin this offer's active reservation row for the rest of the

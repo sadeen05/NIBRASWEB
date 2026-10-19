@@ -2,13 +2,16 @@ using System.ComponentModel.DataAnnotations;
 
 namespace NIBRAS.API.DTOs;
 
+/// <summary>
+/// Landlord land registration. The region, the grid and the four technical
+/// measurements are deliberately absent: they are recorded later by an admin
+/// technical assessment (<c>PUT /api/lands/{id}/assessment</c>) and can never be
+/// supplied by a landlord.
+/// </summary>
 public class CreateLandRequest
 {
-    [Required]
-    public int RegionId { get; set; }
-
-    [Required]
-    public int GridId { get; set; }
+    [Range(1, int.MaxValue)]
+    public int GovernorateId { get; set; }
 
     [Required, NoControlCharacters, MaxLength(50)]
     public string LandNumber { get; set; } = "";
@@ -28,15 +31,7 @@ public class CreateLandRequest
     [Range(typeof(decimal), "0.0001", "99999999.99")]
     public decimal AreaDonum { get; set; }
 
-    [Range(typeof(decimal), "0", "100")]
-    public decimal SlopePercentage { get; set; }
-
-    [Range(typeof(decimal), "0", "1000000")]
-    public decimal DistanceToGridKm { get; set; }
-
-    [Range(typeof(decimal), "0", "12")]
-    public decimal SolarIrradiance { get; set; }
-
-    [Range(typeof(decimal), "-1000", "10000")]
-    public decimal ElevationM { get; set; }
+    // Optional free text; MaxLength matches the LANDS.DESCRIPTION column (SEC-14).
+    [NoControlCharactersExceptTabAndNewline, MaxLength(1000)]
+    public string? Description { get; set; }
 }

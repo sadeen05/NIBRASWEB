@@ -111,6 +111,7 @@ builder.Services.AddScoped(typeof(IRepository<>), typeof(Repository<>));
 builder.Services.AddScoped<IUserService, UserService>();
 builder.Services.AddScoped<IRoleService, RoleService>();
 builder.Services.AddScoped<IRegionService, RegionService>();
+builder.Services.AddScoped<IGovernorateService, GovernorateService>();
 builder.Services.AddScoped<IOfferService, OfferService>();
 builder.Services.AddScoped<IGridService, GridService>();
 builder.Services.AddScoped<ILandService, LandService>();

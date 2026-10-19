@@ -2,13 +2,20 @@ using System.ComponentModel.DataAnnotations;
 
 namespace NIBRAS.API.DTOs;
 
+/// <summary>
+/// Landlord land edit. As with <see cref="CreateLandRequest"/>, the region, the
+/// grid and the technical measurements are absent: they belong to the admin
+/// technical assessment and an owner edit can never overwrite or erase them.
+/// </summary>
 public class UpdateLandRequest
 {
-    [Required]
-    public int RegionId { get; set; }
-
-    [Required]
-    public int GridId { get; set; }
+    /// <summary>
+    /// Optional so that a land registered before governorates existed can still be
+    /// edited without retroactively assigning one. When supplied it is validated and
+    /// the duplicate keys move with it; when omitted the stored value is preserved.
+    /// </summary>
+    [Range(1, int.MaxValue)]
+    public int? GovernorateId { get; set; }
 
     [Required, NoControlCharacters, MaxLength(50)]
     public string LandNumber { get; set; } = "";
@@ -26,15 +33,7 @@ public class UpdateLandRequest
     [Range(typeof(decimal), "0.0001", "99999999.99")]
     public decimal AreaDonum { get; set; }
 
-    [Range(typeof(decimal), "0", "100")]
-    public decimal SlopePercentage { get; set; }
-
-    [Range(typeof(decimal), "0", "1000000")]
-    public decimal DistanceToGridKm { get; set; }
-
-    [Range(typeof(decimal), "0", "12")]
-    public decimal SolarIrradiance { get; set; }
-
-    [Range(typeof(decimal), "-1000", "10000")]
-    public decimal ElevationM { get; set; }
+    // Optional free text; MaxLength matches the LANDS.DESCRIPTION column (SEC-14).
+    [NoControlCharactersExceptTabAndNewline, MaxLength(1000)]
+    public string? Description { get; set; }
 }

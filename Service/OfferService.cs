@@ -145,8 +145,29 @@ namespace NibrasWeb.Service
             // fresh status check + the insert inside one transaction, so a create cannot pass this
             // check, wait behind an approval, and then insert onto a land that became UnderContract.
             await using var transaction = await _context.Database.BeginTransactionAsync();
-            if (await LockLandStatusAsync(land.Id) != LandStatus.Verified)
+
+            // The status and the hidden flag are read from the row locked by this transaction,
+            // never from the entity loaded before it: submitting a change request leaves the
+            // status at Verified and only flips the hidden flag, so a pre-lock read would still
+            // see the land as offerable.
+            var lockedLand = await LockLandAsync(land.Id);
+            if (lockedLand.Status != LandStatus.Verified)
                 throw new BusinessRuleException("Only verified lands can receive offers.");
+
+            // A land with an open change request stays Verified but is hidden from
+            // investors; no new offer may be created against it while the review is open.
+            if (lockedLand.IsHiddenFromInvestors)
+                throw new BusinessRuleException(
+                    "This land is not available for offers while a change request is under review.");
+
+            // An approved land whose required evidence is currently outstanding (a required
+            // document rejected during the SuperAdmin re-review, or an approval invalidated by
+            // an approved change request) is not fully valid, so it accepts no new offers until
+            // a corrected document is approved. The check is derived from the documents and
+            // never mutates an existing offer.
+            if (await _context.HasOutstandingRequiredDocumentAsync(lockedLand.Id))
+                throw new BusinessRuleException(
+                    "This land is not available for offers while its required documents are being corrected.");
 
             // BR-O2 / D-14: one active (non-terminal) offer per investor per land.
             // Terminal = RejectedBy*, WithdrawnByInvestor, Closed. There is no DB index for
@@ -473,6 +494,29 @@ namespace NibrasWeb.Service
                 if (land.Status != LandStatus.Verified)
                     throw new BusinessRuleException("Only offers on Verified land can be approved.");
 
+                // A pending change request keeps the land Verified but hides it from investors.
+                // Approving the offer here would move a hidden land under contract while its
+                // change request is still open, so it is refused. The offer and its negotiation
+                // history are left untouched and stay decidable once the request is resolved.
+                if (land.IsHiddenFromInvestors)
+                    throw new BusinessRuleException(
+                        "This offer cannot be approved while the land is hidden for a change-request review.");
+
+                // The same holds for a land whose required evidence is currently outstanding:
+                // committing it under contract while a required document is rejected or being
+                // re-reviewed would not rest on valid evidence. The offer is refused and left
+                // decidable; nothing is cancelled or rewritten.
+                if (await _context.HasOutstandingRequiredDocumentAsync(land.Id))
+                    throw new BusinessRuleException(
+                        "This offer cannot be approved while the land's required documents are being corrected.");
+
+                // A land created through the governorate flow carries no grid until an admin
+                // technical assessment assigns one. Grid capacity cannot be reserved without a
+                // grid, so this is a business-rule conflict rather than a missing-row 404.
+                if (land.GridId is null)
+                    throw new BusinessRuleException(
+                        "The land has no assigned electrical grid; technical assessment is required before approval.");
+
                 var grid = await _context.Grids
                     .FromSqlInterpolated($"SELECT * FROM GRIDS WITH (UPDLOCK, HOLDLOCK) WHERE ID = {land.GridId}")
                     .FirstOrDefaultAsync()
@@ -673,20 +717,23 @@ namespace NibrasWeb.Service
                 "Another offer on this land is under active negotiation; competing offers cannot be changed until that negotiation concludes.");
         }
 
-        // Step 5 F-3: take an update lock on the land row and return its current status. Callers
-        // invoke this inside a transaction before a competing-offer mutation so the freeze check
-        // and the mutation are serialized against AdminApproveAsync's land transition to
-        // UnderContract (which takes the same UPDLOCK on the land row). The lock is held until the
-        // caller commits or rolls back.
-        private async Task<LandStatus> LockLandStatusAsync(int landId)
+        // Step 5 F-3: take an update lock on the land row and return it. Callers invoke this
+        // inside a transaction before a competing-offer mutation so the freeze check and the
+        // mutation are serialized against AdminApproveAsync's land transition to UnderContract
+        // (which takes the same UPDLOCK on the land row). The lock is held until the caller
+        // commits or rolls back. The returned entity carries the row's authoritative values
+        // (status and the hidden-from-investors flag) as they are inside the transaction.
+        private async Task<Land> LockLandAsync(int landId)
         {
-            var land = await _context.Lands
+            return await _context.Lands
                 .FromSqlInterpolated($"SELECT * FROM LANDS WITH (UPDLOCK, HOLDLOCK) WHERE ID = {landId}")
                 .AsNoTracking()
                 .FirstOrDefaultAsync()
                 ?? throw new NotFoundException("Land not found.");
-            return land.Status;
         }
+
+        private async Task<LandStatus> LockLandStatusAsync(int landId) =>
+            (await LockLandAsync(landId)).Status;
 
         private async Task<User> GetUserAsync(int userId)
         {

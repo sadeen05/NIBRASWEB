@@ -33,7 +33,10 @@ public partial class NebrasdbContext : DbContext
     public virtual DbSet<DocumentType> DocumentTypes { get; set; }
     public virtual DbSet<Grid> Grids { get; set; }
     public virtual DbSet<GridCapacityReservation> GridCapacityReservations { get; set; }
+    public virtual DbSet<Governorate> Governorates { get; set; }
     public virtual DbSet<Land> Lands { get; set; }
+    public virtual DbSet<LandAssessment> LandAssessments { get; set; }
+    public virtual DbSet<LandChangeRequest> LandChangeRequests { get; set; }
     public virtual DbSet<LandCriterion> LandCriteria { get; set; }
     public virtual DbSet<LandDocument> LandDocuments { get; set; }
     public virtual DbSet<LandStatusHistory> LandStatusHistories { get; set; }
@@ -234,20 +237,47 @@ public partial class NebrasdbContext : DbContext
                 .HasConstraintName("FK_GCR_OFFERS");
         });
 
+        modelBuilder.Entity<Governorate>(entity =>
+        {
+            entity.HasKey(e => e.Id).HasName("PK_GOVERNORATES");
+            entity.ToTable("GOVERNORATES");
+            entity.HasIndex(e => e.Code, "UQ_GOVERNORATES_CODE").IsUnique();
+            entity.Property(e => e.Id).HasColumnName("ID");
+            entity.Property(e => e.Code).HasMaxLength(10).HasColumnName("CODE");
+            entity.Property(e => e.NameEn).HasMaxLength(100).HasColumnName("NAME_EN");
+            entity.Property(e => e.NameAr).HasMaxLength(100).HasColumnName("NAME_AR");
+        });
+
         modelBuilder.Entity<Land>(entity =>
         {
             entity.HasKey(e => e.Id).HasName("PK__LANDS__3214EC278FA5F43E");
             entity.ToTable("LANDS");
-            entity.HasIndex(e => new { e.LandNumber, e.RegionId }, "UQ_LAND_NUMBER_REGION").IsUnique();
+            // Legacy region-based uniqueness applies only to records that still carry a
+            // region; records created through the governorate flow are keyed on the
+            // governorate instead. SQL Server treats NULL as a value in a unique index,
+            // so without the IS NOT NULL filters the legacy (NULL-governorate) rows and
+            // the new (NULL-region) rows would each be mutually constrained.
+            entity.HasIndex(e => new { e.LandNumber, e.RegionId }, "UQ_LAND_NUMBER_REGION")
+                .IsUnique()
+                .HasFilter("[REGION_ID] IS NOT NULL");
             entity.HasIndex(e => new { e.RegionId, e.Village, e.Basin, e.ParcelNumber }, "UQ_LAND_LOCATION")
                 .IsUnique()
-                .HasFilter("[IS_DELETED] = 0");
+                .HasFilter("[IS_DELETED] = 0 AND [REGION_ID] IS NOT NULL");
+            entity.HasIndex(e => new { e.GovernorateId, e.Village, e.Basin, e.ParcelNumber }, "UQ_LAND_LOCATION_GOV")
+                .IsUnique()
+                .HasFilter("[IS_DELETED] = 0 AND [GOVERNORATE_ID] IS NOT NULL");
+            entity.HasIndex(e => new { e.LandNumber, e.GovernorateId }, "UQ_LAND_NUMBER_GOV")
+                .IsUnique()
+                .HasFilter("[GOVERNORATE_ID] IS NOT NULL");
             entity.Property(e => e.Id).HasColumnName("ID");
             entity.Property(e => e.AreaDonum).HasColumnType("decimal(10, 2)").HasColumnName("AREA_DONUM");
             entity.Property(e => e.DataVerifiedByAdmin).HasColumnName("DATA_VERIFIED_BY_ADMIN");
             entity.Property(e => e.DistanceToGridKm).HasColumnType("decimal(10, 2)").HasColumnName("DISTANCE_TO_GRID_KM");
             entity.Property(e => e.ElevationM).HasColumnType("decimal(10, 2)").HasColumnName("ELEVATION_M");
             entity.Property(e => e.IsDeleted).HasColumnName("IS_DELETED");
+            entity.Property(e => e.IsHiddenFromInvestors)
+                .HasDefaultValue(false)
+                .HasColumnName("IS_HIDDEN_FROM_INVESTORS");
             entity.Property(e => e.LandNumber).HasMaxLength(50).HasColumnName("LAND_NUMBER");
             entity.Property(e => e.Village).HasMaxLength(100).HasColumnName("VILLAGE");
             entity.Property(e => e.Basin).HasMaxLength(100).HasColumnName("BASIN");
@@ -256,6 +286,8 @@ public partial class NebrasdbContext : DbContext
             entity.Property(e => e.LandlordId).HasColumnName("LANDLORD_ID");
             entity.Property(e => e.RegionId).HasColumnName("REGION_ID");
             entity.Property(e => e.GridId).HasColumnName("GRID_ID");
+            entity.Property(e => e.GovernorateId).HasColumnName("GOVERNORATE_ID");
+            entity.Property(e => e.Description).HasMaxLength(1000).HasColumnName("DESCRIPTION");
             entity.Property(e => e.SlopePercentage).HasColumnType("decimal(5, 2)").HasColumnName("SLOPE_PERCENTAGE");
             entity.Property(e => e.SolarIrradiance).HasColumnType("decimal(10, 2)").HasColumnName("SOLAR_IRRADIANCE");
             entity.Property(e => e.DocumentStorageLocation).HasMaxLength(500).HasColumnName("DOCUMENT_STORAGE_LOCATION");
@@ -276,11 +308,87 @@ public partial class NebrasdbContext : DbContext
                 .OnDelete(DeleteBehavior.ClientSetNull)
                 .HasConstraintName("FK_LANDS_GRIDS");
 
+            entity.HasOne(d => d.Governorate).WithMany(p => p.Lands)
+                .HasForeignKey(d => d.GovernorateId)
+                .OnDelete(DeleteBehavior.ClientSetNull)
+                .HasConstraintName("FK_LANDS_GOVERNORATES");
+
             entity.HasOne(d => d.VerifiedAgainstCriterion)
                 .WithMany()
                 .HasForeignKey(d => d.VerifiedAgainstCriterionId)
                 .OnDelete(DeleteBehavior.ClientSetNull)
                 .HasConstraintName("FK_LANDS_VERIFIED_CRITERION");
+        });
+
+        modelBuilder.Entity<LandAssessment>(entity =>
+        {
+            entity.HasKey(e => e.Id).HasName("PK_LAND_ASSESSMENTS");
+            entity.ToTable("LAND_ASSESSMENTS");
+            entity.HasIndex(e => e.LandId, "IX_LAND_ASSESSMENTS_LAND_ID");
+            entity.Property(e => e.Id).HasColumnName("ID");
+            entity.Property(e => e.LandId).HasColumnName("LAND_ID");
+            entity.Property(e => e.AssessedById).HasColumnName("ASSESSED_BY_ID");
+            entity.Property(e => e.AssessedAt).HasColumnName("ASSESSED_AT");
+            entity.Property(e => e.Note).HasMaxLength(500).HasColumnName("NOTE");
+            entity.Property(e => e.RegionId).HasColumnName("REGION_ID");
+            entity.Property(e => e.GridId).HasColumnName("GRID_ID");
+            entity.Property(e => e.SlopePercentage).HasColumnType("decimal(5, 2)").HasColumnName("SLOPE_PERCENTAGE");
+            entity.Property(e => e.DistanceToGridKm).HasColumnType("decimal(10, 2)").HasColumnName("DISTANCE_TO_GRID_KM");
+            entity.Property(e => e.SolarIrradiance).HasColumnType("decimal(10, 2)").HasColumnName("SOLAR_IRRADIANCE");
+            entity.Property(e => e.ElevationM).HasColumnType("decimal(10, 2)").HasColumnName("ELEVATION_M");
+
+            entity.HasOne(d => d.Land).WithMany(p => p.LandAssessments)
+                .HasForeignKey(d => d.LandId)
+                .OnDelete(DeleteBehavior.ClientSetNull)
+                .HasConstraintName("FK_LA_LANDS");
+
+            entity.HasOne(d => d.AssessedBy).WithMany()
+                .HasForeignKey(d => d.AssessedById)
+                .OnDelete(DeleteBehavior.ClientSetNull)
+                .HasConstraintName("FK_LA_USERS");
+        });
+
+        modelBuilder.Entity<LandChangeRequest>(entity =>
+        {
+            entity.HasKey(e => e.Id).HasName("PK_LAND_CHANGE_REQUESTS");
+            entity.ToTable("LAND_CHANGE_REQUESTS");
+            entity.HasIndex(e => e.LandId, "IX_LAND_CHANGE_REQUESTS_LAND_ID");
+            entity.HasIndex(e => e.Status, "IX_LAND_CHANGE_REQUESTS_STATUS");
+            // At most one change request may await a decision per land. The filter uses the
+            // stored string status verbatim ("Pending"), so the index is the database-level
+            // guarantee, not just the application pre-check; a losing concurrent insert is
+            // translated to a 409 by SubmitChangeRequestAsync.
+            entity.HasIndex(e => e.LandId, "UX_LAND_CHANGE_REQUESTS_PENDING_LAND")
+                .IsUnique()
+                .HasFilter("[STATUS] = N'Pending'");
+            entity.Property(e => e.Id).HasColumnName("ID");
+            entity.Property(e => e.LandId).HasColumnName("LAND_ID");
+            entity.Property(e => e.RequestedById).HasColumnName("REQUESTED_BY_ID");
+            entity.Property(e => e.Reason).HasMaxLength(500).HasColumnName("REASON");
+            entity.Property(e => e.Status).HasMaxLength(20).HasDefaultValue("Pending").HasColumnName("STATUS");
+            entity.Property(e => e.RequestedAt).HasDefaultValueSql("(getdate())").HasColumnName("REQUESTED_AT");
+            entity.Property(e => e.ReviewedById).HasColumnName("REVIEWED_BY_ID");
+            entity.Property(e => e.ReviewedAt).HasColumnName("REVIEWED_AT");
+            entity.Property(e => e.DecisionReason).HasMaxLength(500).HasColumnName("DECISION_REASON");
+            entity.Property(e => e.OldSnapshot).HasColumnName("OLD_SNAPSHOT");
+            entity.Property(e => e.NewSnapshot).HasColumnName("NEW_SNAPSHOT");
+            entity.Property(e => e.SupportingDocuments).HasColumnName("SUPPORTING_DOCUMENTS");
+            entity.Property(e => e.RowVersion).IsRowVersion().HasColumnName("ROW_VERSION");
+
+            entity.HasOne(d => d.Land).WithMany(p => p.LandChangeRequests)
+                .HasForeignKey(d => d.LandId)
+                .OnDelete(DeleteBehavior.ClientSetNull)
+                .HasConstraintName("FK_LCR_LANDS");
+
+            entity.HasOne(d => d.RequestedBy).WithMany()
+                .HasForeignKey(d => d.RequestedById)
+                .OnDelete(DeleteBehavior.ClientSetNull)
+                .HasConstraintName("FK_LCR_REQUESTER");
+
+            entity.HasOne(d => d.ReviewedBy).WithMany()
+                .HasForeignKey(d => d.ReviewedById)
+                .OnDelete(DeleteBehavior.ClientSetNull)
+                .HasConstraintName("FK_LCR_REVIEWER");
         });
 
         modelBuilder.Entity<LandCriterion>(entity =>
@@ -526,6 +634,24 @@ public partial class NebrasdbContext : DbContext
         modelBuilder.Entity<DocumentType>().HasData(
             new DocumentType { Id = 1, Name = "TitleDeed", IsRequiredForVerification = true },
             new DocumentType { Id = 2, Name = "EncumbranceStatement", IsRequiredForVerification = true }
+        );
+
+        // The twelve official Jordanian governorates (ISO 3166-2:JO codes without the
+        // "JO-" prefix). Fixed reference data: no region backfill and no dependency on
+        // the pre-existing REGIONS rows.
+        modelBuilder.Entity<Governorate>().HasData(
+            new Governorate { Id = 1, Code = "AM", NameEn = "Amman", NameAr = "عمّان" },
+            new Governorate { Id = 2, Code = "IR", NameEn = "Irbid", NameAr = "إربد" },
+            new Governorate { Id = 3, Code = "AZ", NameEn = "Zarqa", NameAr = "الزرقاء" },
+            new Governorate { Id = 4, Code = "BA", NameEn = "Balqa", NameAr = "البلقاء" },
+            new Governorate { Id = 5, Code = "MA", NameEn = "Mafraq", NameAr = "المفرق" },
+            new Governorate { Id = 6, Code = "KA", NameEn = "Karak", NameAr = "الكرك" },
+            new Governorate { Id = 7, Code = "JA", NameEn = "Jerash", NameAr = "جرش" },
+            new Governorate { Id = 8, Code = "MD", NameEn = "Madaba", NameAr = "مادبا" },
+            new Governorate { Id = 9, Code = "AJ", NameEn = "Ajloun", NameAr = "عجلون" },
+            new Governorate { Id = 10, Code = "AQ", NameEn = "Aqaba", NameAr = "العقبة" },
+            new Governorate { Id = 11, Code = "MN", NameEn = "Ma'an", NameAr = "معان" },
+            new Governorate { Id = 12, Code = "AT", NameEn = "Tafilah", NameAr = "الطفيلة" }
         );
 
         modelBuilder.Entity<LandCriterion>().HasData(new LandCriterion
