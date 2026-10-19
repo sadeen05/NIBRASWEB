@@ -51,6 +51,13 @@ public static class UserSecurityEventTypes
     /// </summary>
     public const string VerificationTokenIssued = "VerificationTokenIssued";
 
+    /// <summary>
+    /// The live tokens of an account were retired, for example because the address of an
+    /// unverified account was corrected, so a link sent to the previous address can no longer
+    /// confirm anything. The reason is recorded in the event details.
+    /// </summary>
+    public const string VerificationTokenInvalidated = "VerificationTokenInvalidated";
+
     private static readonly HashSet<string> Known = new(StringComparer.Ordinal)
     {
         RegistrationCreated,
@@ -67,6 +74,7 @@ public static class UserSecurityEventTypes
         AdminPasswordSet,
         AccountApproved,
         VerificationTokenIssued,
+        VerificationTokenInvalidated,
     };
 
     /// <summary>

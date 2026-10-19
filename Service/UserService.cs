@@ -1,7 +1,9 @@
+using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using NIBRAS;
 using NIBRAS.API.DTOs;
 using NIBRAS.Models;
+using NibrasWeb.Enums;
 
 namespace NIBRAS.API.Services;
 
@@ -10,15 +12,18 @@ public class UserService : IUserService
     private readonly NebrasdbContext _context;
     private readonly ILogger<UserService> _logger;
     private readonly ICurrentUser _currentUser;
+    private readonly IEmailVerificationService _emailVerification;
 
     public UserService(
         NebrasdbContext context,
         ILogger<UserService> logger,
-        ICurrentUser currentUser)
+        ICurrentUser currentUser,
+        IEmailVerificationService emailVerification)
     {
         _context = context;
         _logger = logger;
         _currentUser = currentUser;
+        _emailVerification = emailVerification;
     }
 
     public async Task<UserListResponse> GetAllAsync(
@@ -153,19 +158,69 @@ public class UserService : IUserService
 
         EnsureCallerCanManage(user);
 
-        if (user.Email != request.Email)
+        var emailChanged = !string.Equals(user.Email, request.Email, StringComparison.OrdinalIgnoreCase);
+        if (emailChanged)
         {
-            var emailExists = await _context.Users.AnyAsync(u =>
-                u.Email == request.Email && u.Id != id && !u.IsDeleted);
-            if (emailExists)
+            // The address of a verified account is proven, so it may only be replaced by a
+            // successful verification of the new address and never by a direct write. A legacy
+            // account (EMAIL_VERIFIED IS NULL) counts as verified.
+            if (user.EmailVerified is not false)
+            {
+                throw new BusinessRuleException(
+                    "The address of a verified account cannot be changed directly. It can only be changed after the owner verifies the new address.");
+            }
+
+            // The address must be free - as the active address and as the pending address of
+            // another account - and also for a soft-deleted account, which still owns its
+            // address because the unique indexes cover every row.
+            var addressInUse = await _context.Users
+                .IgnoreQueryFilters()
+                .AnyAsync(u => u.Id != id && (u.Email == request.Email || u.PendingEmail == request.Email));
+            if (addressInUse)
+            {
                 throw new BusinessRuleException("Email already in use by another user.");
+            }
         }
 
-        user.FullName = request.FullName;
-        user.Email = request.Email;
-        user.Phone = request.Phone;
+        await using var transaction = await _context.Database.BeginTransactionAsync();
+        try
+        {
+            // The account row is locked before the verification tokens are touched, the same
+            // order the token service uses, so the two paths cannot deadlock against each other.
+            await _emailVerification.LockAccountAsync(id);
 
-        await _context.SaveChangesAsync();
+            user.FullName = request.FullName;
+            user.Phone = request.Phone;
+
+            if (emailChanged)
+            {
+                // A correction of an unverified account only changes which address has to be
+                // proven: the account stays unverified, an outstanding address change of the
+                // owner is dropped, and every live link of the account is retired. A link that
+                // was sent to the previous address - or for a pending address - must not be able
+                // to confirm anything after the correction.
+                user.Email = request.Email;
+                user.EmailVerified = false;
+                user.EmailVerifiedAt = null;
+                user.PendingEmail = null;
+
+                await _emailVerification.InvalidateLiveTokensAsync(
+                    user.Id,
+                    null,
+                    "admin_correction");
+            }
+
+            await _context.SaveChangesAsync();
+            await transaction.CommitAsync();
+        }
+        catch (DbUpdateException ex) when (IsUniqueViolation(ex))
+        {
+            // The unique index refused the address; the caller gets the same controlled conflict
+            // as the check above instead of a server error.
+            await transaction.RollbackAsync();
+            throw new BusinessRuleException("Email already in use by another user.");
+        }
+
         return true;
     }
 
@@ -230,6 +285,14 @@ public class UserService : IUserService
             _ => throw new ValidationFailedException("Role filter is invalid.")
         };
     }
+
+    /// <summary>
+    /// Whether the failure is a unique-index violation. The unique index on the address covers
+    /// every row, including the soft-deleted ones, so a conflict is answered as a conflict
+    /// instead of surfacing as a server error.
+    /// </summary>
+    private static bool IsUniqueViolation(DbUpdateException ex) =>
+        ex.InnerException is SqlException sql && (sql.Number == 2601 || sql.Number == 2627);
 
     private void EnsureCallerCanCreateRole(int roleId)
     {

@@ -35,6 +35,12 @@ public enum VerificationOutcome
     /// <summary>The address is not a usable one.</summary>
     InvalidAddress,
 
+    /// <summary>
+    /// The current password was not confirmed. A new address may only be claimed with the
+    /// current password of the account, so a hijacked session alone cannot move it.
+    /// </summary>
+    InvalidCurrentPassword,
+
     /// <summary>The resend cooldown has not elapsed yet.</summary>
     CooldownActive,
 

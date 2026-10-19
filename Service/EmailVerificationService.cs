@@ -56,6 +56,7 @@ public sealed class EmailVerificationService : IEmailVerificationService
     public async Task<EmailVerificationResult> IssueEmailChangeTokenAsync(
         int userId,
         string newEmail,
+        string currentPassword,
         CancellationToken cancellationToken = default)
     {
         var address = newEmail?.Trim();
@@ -67,7 +68,7 @@ public sealed class EmailVerificationService : IEmailVerificationService
         }
 
         await using var transaction = await _context.Database.BeginTransactionAsync(cancellationToken);
-        var result = await IssueEmailChangeCoreAsync(userId, address, cancellationToken);
+        var result = await IssueEmailChangeCoreAsync(userId, address, currentPassword, cancellationToken);
         if (result.Succeeded)
         {
             await transaction.CommitAsync(cancellationToken);
@@ -316,6 +317,43 @@ public sealed class EmailVerificationService : IEmailVerificationService
         return result;
     }
 
+    public async Task InvalidateLiveTokensAsync(
+        int userId,
+        string? purpose = null,
+        string? reason = null,
+        CancellationToken cancellationToken = default)
+    {
+        if (userId <= 0)
+        {
+            return;
+        }
+
+        var now = DateTime.UtcNow;
+
+        if (purpose is null)
+        {
+            await _context.Database.ExecuteSqlInterpolatedAsync(
+                $"UPDATE [EMAIL_VERIFICATION_TOKENS] SET [CONSUMED_AT] = {now} WHERE [USER_ID] = {userId} AND [CONSUMED_AT] IS NULL",
+                cancellationToken);
+        }
+        else
+        {
+            await _context.Database.ExecuteSqlInterpolatedAsync(
+                $"UPDATE [EMAIL_VERIFICATION_TOKENS] SET [CONSUMED_AT] = {now} WHERE [USER_ID] = {userId} AND [PURPOSE] = {purpose} AND [CONSUMED_AT] IS NULL",
+                cancellationToken);
+        }
+
+        _context.UserSecurityEvents.Add(new UserSecurityEvent
+        {
+            UserId = userId,
+            EventType = UserSecurityEventTypes.VerificationTokenInvalidated,
+            Details = reason,
+            CreatedAt = now,
+        });
+
+        await _context.SaveChangesAsync(cancellationToken);
+    }
+
     private async Task<EmailVerificationResult> IssueInTransactionAsync(
         int userId,
         string purpose,
@@ -338,6 +376,7 @@ public sealed class EmailVerificationService : IEmailVerificationService
     private async Task<EmailVerificationResult> IssueEmailChangeCoreAsync(
         int userId,
         string address,
+        string currentPassword,
         CancellationToken cancellationToken)
     {
         // The account row is locked first, so two concurrent address requests for one account
@@ -358,6 +397,17 @@ public sealed class EmailVerificationService : IEmailVerificationService
         if (string.Equals(user.Email, address, StringComparison.OrdinalIgnoreCase))
         {
             return EmailVerificationResult.Failed(VerificationOutcome.AddressUnchanged, "already_the_active_address");
+        }
+
+        // The current password must be confirmed before a new address may be claimed: a
+        // hijacked session alone must not be able to move the address of an account. An account
+        // whose stored hash is unusable can never confirm a password, so it cannot change its
+        // address either.
+        if (!PasswordVerifier.TryVerify(currentPassword, user.PasswordHash))
+        {
+            _logger.LogWarning("Refused an address change for account {UserId}: the current password was not confirmed.", userId);
+            return EmailVerificationResult.Failed(
+                VerificationOutcome.InvalidCurrentPassword, "current_password_required");
         }
 
         // The new address must be free: as the active address (also of a soft-deleted account,
@@ -467,7 +517,7 @@ public sealed class EmailVerificationService : IEmailVerificationService
     /// Locks the account row for the current transaction. The lock is taken on the primary key
     /// (an index seek, not a scan) and is held until the transaction ends.
     /// </summary>
-    private async Task<bool> LockAccountAsync(int userId, CancellationToken cancellationToken)
+    public async Task<bool> LockAccountAsync(int userId, CancellationToken cancellationToken = default)
     {
         var lockedId = await _context.Users
             .FromSqlInterpolated($"SELECT * FROM [USERS] WITH (UPDLOCK, HOLDLOCK) WHERE [ID] = {userId}")

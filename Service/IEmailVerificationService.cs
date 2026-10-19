@@ -18,11 +18,14 @@ public interface IEmailVerificationService
     /// <summary>
     /// Issues a token that replaces the active address of the account once the new address is
     /// verified. The address must be free everywhere: as an active address (also of a
-    /// soft-deleted account) and as the pending address of another account.
+    /// soft-deleted account) and as the pending address of another account. The current
+    /// password of the account must be confirmed, so a hijacked session alone cannot move the
+    /// address.
     /// </summary>
     Task<EmailVerificationResult> IssueEmailChangeTokenAsync(
         int userId,
         string newEmail,
+        string currentPassword,
         CancellationToken cancellationToken = default);
 
     /// <summary>
@@ -51,4 +54,24 @@ public interface IEmailVerificationService
         int userId,
         string purpose,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Retires the live tokens of an account, optionally only those of one purpose. It is used
+    /// when something invalidates a link - for example when the address of an unverified
+    /// account is corrected, so that a link sent to the previous address can no longer confirm
+    /// anything.
+    /// </summary>
+    Task InvalidateLiveTokensAsync(
+        int userId,
+        string? purpose = null,
+        string? reason = null,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Locks the account row for the current transaction and reports whether the account
+    /// exists. A caller that changes the account takes this lock <b>before</b> it touches the
+    /// verification tokens, so every path locks the account before the token table and the two
+    /// cannot deadlock against each other.
+    /// </summary>
+    Task<bool> LockAccountAsync(int userId, CancellationToken cancellationToken = default);
 }

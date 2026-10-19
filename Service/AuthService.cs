@@ -73,11 +73,16 @@ public sealed class AuthService : IAuthService
 
         if (user is null || user.IsDeleted)
         {
-            BCrypt.Net.BCrypt.Verify(request.Password, DummyPasswordHash);
+            // The dummy hash keeps the timing of an unknown address comparable to a wrong
+            // password. It can never throw, so a failed login stays a failed login.
+            PasswordVerifier.TryVerify(request.Password, DummyPasswordHash);
             return null;
         }
 
-        if (!BCrypt.Net.BCrypt.Verify(request.Password, user.PasswordHash))
+        // An unusable stored hash (for example the placeholder of the seeded system account)
+        // can never match, so it answers the same generic 401 as a wrong password instead of
+        // surfacing as a server error.
+        if (!PasswordVerifier.TryVerify(request.Password, user.PasswordHash))
         {
             return null;
         }
