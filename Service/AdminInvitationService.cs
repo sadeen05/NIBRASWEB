@@ -165,13 +165,6 @@ The link can be used once. If you did not expect this invitation, ignore this me
         return new EmailMessage(recipient, subject, body);
     }
 
-    private string BuildActivationLink(string token)
-    {
-        var baseUrl = _options.FrontendBaseUrl.TrimEnd('/');
-        var path = _options.ActivationPath.StartsWith('/') ? _options.ActivationPath : "/" + _options.ActivationPath;
-
-        // The fragment is never transmitted to a server, so the token cannot end up in an
-        // access log, a proxy log or a referrer header.
-        return $"{baseUrl}{path}#token={Uri.EscapeDataString(token)}";
-    }
+    private string BuildActivationLink(string token) =>
+        VerificationLinkBuilder.Build(_options.FrontendBaseUrl, _options.ActivationPath, token);
 }

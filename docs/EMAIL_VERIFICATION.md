@@ -29,8 +29,9 @@ A production host must provide, through configuration or user-secrets (never in 
 | `Email:SmtpEnableSsl` | keep `true`; TLS is negotiated with the server. |
 | `Email:FromAddress` | the sender address. Required in `Smtp` mode, and it must look like an address — a misconfigured sender is refused at startup rather than producing mail that is rejected later. |
 | `Email:SmtpUser` / `Email:SmtpPassword` | optional basic authentication. When a user is configured, a password is required as well. **The password belongs in user-secrets or an environment variable** (`Email__SmtpPassword`), never in `appsettings.json` and never in a commit. |
-| `Email:FrontendBaseUrl` | absolute address of the frontend, used to build the activation link. Required whenever a delivery mode is configured, and **https is required outside Development** — the link carries a token, so it must never travel over an unencrypted connection. |
-| `Email:ActivationPath` | the frontend activation page. It must be a **fixed local path**: it starts with a single `/` and carries no query, no fragment, no scheme and no whitespace, so the link can never be pointed somewhere else. |
+| `Email:FrontendBaseUrl` | absolute address of the frontend, used to build the activation and the verification link. Required whenever a delivery mode is configured, and **https is required outside Development** — the link carries a token, so it must never travel over an unencrypted connection. |
+| `Email:ActivationPath` | the frontend activation page (default `/activate-admin`). It must be a **fixed local path**: it starts with a single `/` and carries no query, no fragment, no scheme and no whitespace, so the link can never be pointed somewhere else. Required whenever a delivery mode is configured. |
+| `Email:VerificationPath` | the frontend registration verification page (default `/verify-email`). The same **fixed local path** rules apply, and it is required whenever a delivery mode is configured. |
 | `Email:RegistrationTokenTtlHours` | lifetime of a registration token (default 24). |
 | `Email:EmailChangeTokenTtlHours` | lifetime of an address-change token (default 1). |
 | `Email:AdminActivationTokenTtlHours` | lifetime of an admin activation token (default **24**, and the invitation states the expiry). |
@@ -115,14 +116,14 @@ the same purpose invalidates the earlier ones, so only the newest link works.
   `IgnoreQueryFilters`, so it agrees with the index. A claim also has to be free as the
   **pending** address of another account, not only as an active one. The uniqueness of the
   pending address and of the live token is additionally enforced by the two filtered unique
-  indexes listed in §8.
+  indexes listed in §9.
 
 ## 6. Every path that writes an address
 
 | Path | What it writes | Status |
 |---|---|---|
-| `AuthService.RegisterAsync` | the address of a new, **unverified** account | By design. Note the side effect: an unverified registration **reserves** the address (the unique index covers it) until the account is deleted, so a third party can squat an address — the smallest safe follow-up is a release policy for unverified accounts (delete on expiry, or an administrative "release the address" action). |
-| `UserService.CreateAsync` | the address of an admin-created account | For a **new Admin** the account starts unverified, with a password hash nobody can match, and the activation invitation is delivered in process (see §7). For an **admin-created Landlord or Investor** the account keeps the legacy value (`EMAIL_VERIFIED = NULL`, treated as verified) — see the release-blocking item in §10. |
+| `AuthService.RegisterAsync` | the address of a new account | **Not yet verified.** The account is created today **without** a verification flag, so it keeps the legacy value (`NULL`, treated as verified); the flag flip and the verification mail belong to the later increments (§8, §11.1). The intended side effect of the flip: an unverified registration **reserves** the address (the unique index covers it) until the account is removed, so a third party can squat an address — the recovery policy is in §8. |
+| `UserService.CreateAsync` | the address of an admin-created account | For a **new Admin** the account starts unverified, with a password hash nobody can match, and the activation invitation is delivered in process (see §7). For an **admin-created Landlord or Investor** the account keeps the legacy value (`EMAIL_VERIFIED = NULL`, treated as verified) — see the release-blocking item in §11.1. |
 | `UserService.UpdateAsync` | the address of an **existing** account | **Changed (security).** A direct address change of a **verified** account (including a legacy account, whose `EMAIL_VERIFIED` is NULL and therefore counts as verified) is refused with a controlled **409**: the address may only be replaced by a successful verification of the new one. For an **unverified** account the correction is allowed, because no address was ever proven — and it is complete in one transaction: the account stays unverified (`EMAIL_VERIFIED = false`, `EMAIL_VERIFIED_AT` cleared), an outstanding address change of the owner is **dropped** (`PENDING_EMAIL` cleared), and **every** live link of the account is retired, so a link sent to the previous address or for the pending address can no longer confirm anything. The conflict check covers the active **and** the pending address of every account, soft-deleted ones included, and a unique-index violation is answered with the same 409. |
 | `EmailVerificationService` (verified swap) | the active address, only after a successful verification | Correct: the pending address must be the one the token is bound to, and the current password must have been confirmed when the change was requested. |
 
@@ -217,7 +218,100 @@ Body:           { "token": "<from the invitation link>", "password": "<the new A
 No endpoint returns the token, the password or the hash, and none issues a session: the new Admin
 signs in with their own password afterwards, so the JWT behaviour is unchanged.
 
-## 8. The database-level guarantees (applied)
+## 8. Registration verification of new Landlord and Investor accounts
+
+The **delivery layer** of the registration verification exists (a bilingual mail, the token
+lifecycle, the audit trail). The **endpoints do not** yet, and no new account is required to
+verify anything — see §11.1 for the remaining work and the order it has to follow.
+
+**Who may receive a verification.** A registration token is only issued for an account that is
+**explicitly unverified** (`EMAIL_VERIFIED = false`) and that holds the **Landlord** or the
+**Investor** role. The rules sit inside the token service, under the account lock, so every
+issuance path is covered — the first verification and every resend:
+
+- a **legacy account** (`EMAIL_VERIFIED IS NULL`) counts as verified: it can never receive a
+  registration token, its state is never changed, and it can never be pushed into the
+  unverified state by a mail;
+- an account that is already verified can never receive one either;
+- an **administrator account** can never receive one: it has its own activation flow, which
+  also sets the password. A registration token would mark it verified without that password
+  setup, and would then block its activation (an activation token is only issued for an
+  account that is not verified yet). The role is re-checked when the token is redeemed, so a
+  token that was issued before a role change is not honoured afterwards.
+
+⇒ **The account has to be created unverified before its first verification is issued.** The
+order is enforced by the server: an issuance for an account that is not explicitly unverified
+is refused, so the mistake cannot pass silently.
+
+**What the redemption re-checks.** A registration token may only perform the transition it was
+issued for, so the consumption re-reads the account under its lock and refuses the token when
+
+- the account does not exist any more or is **deleted**;
+- the account does not hold the **Landlord** or **Investor** role any more;
+- the account is **not explicitly unverified** any more (it was verified in the meantime, or it
+  is a legacy account, whose null flag counts as verified and which is therefore never
+  changed);
+- the **address of the account differs** from the address the token was **bound to** when it
+  was issued — a token proves exactly one address, so it can never confirm a corrected one.
+
+The token is bound to its address in the token row itself (`PREVIOUS_EMAIL`, the column the
+address-change binding already uses), so no schema change was needed.
+
+**The mail.** Bilingual (an English and an Arabic block), it states that the link expires after
+24 hours and carries the token in the **URL fragment** (`{FrontendBaseUrl}{VerificationPath}#token=…`).
+A fragment is never transmitted to a server, so the token cannot appear in an access log, a
+proxy log or a referrer. The token is handed to the mailer **in process**: it is never returned
+to the caller, never logged, never stored (only its SHA-256 hash is) and never part of an audit
+event.
+
+**Delivery failure.** A failed delivery leaves the account **unverified** and unusable, records
+`VerificationEmailDeliveryFailed` in the audit trail, and is recoverable: the next request
+issues a new token and retires the failed one, so a retry never leaves two usable links and
+never creates a second account. Nothing is ever verified automatically — a delivery failure
+never flips the verification flag, and the account stays exactly as it was.
+
+**Retry and throttling.** The resend cooldown (60 s) and the daily cap (10 mails per account
+and day) apply to a registration verification as well, and they are read under the account
+lock, so two parallel requests cannot both pass them. An **anonymous** resend must answer
+**the same way in every case** — a missing account, an account that is already verified, an
+active cooldown and a reached cap must not be distinguishable, or the endpoint would reveal
+whether the address exists and whether the account is still unverified. The account-specific
+throttle is therefore never visible in the answer.
+
+**Address squatting — the recovery policy.** An unverified registration **reserves** its
+address: the unique index on `USERS.EMAIL` has no filter, so the row owns the address for as
+long as it exists, and a third party can register an address that somebody else wants. The
+recovery is deliberately **not automatic** and **not destructive**:
+
+- the application **never deletes** an unverified account on its own, and **never verifies**
+  one automatically;
+- the **soft delete of the application does not release the address** — the unique index has no
+  filter, so a deleted row still owns it. A hard delete would release it, but it would also
+  destroy the account row, its security events and the evidence of the squatting, so it is
+  **not** the recovery mechanism and is not recommended;
+- **the address belongs to whoever can prove control of the mailbox** — the verification link
+  is that proof. The recovery is therefore an **ownership-based release**: the party that
+  proves the mailbox takes the address, while the account that squatted it keeps its row, its
+  security events and its whole history. Only the address is released (the row is re-addressed
+  to a non-routable placeholder), the verification state is untouched, and the account can
+  neither sign in nor claim the address again. The release is a **one-way, operator-driven,
+  audited action** (recorded as a security event) — never automatic, never on a timer, and
+  never performed by the account itself;
+- the action that performs the release **does not exist yet**. It needs a deliberate decision
+  (the placeholder form, the audit event, the authorization), so it belongs to a later
+  increment. Until it exists a squatted address stays reserved and the case is an operational
+  matter of the hosting organisation; the application itself offers no release, no deletion and
+  no automatic verification. That is the safe interim state: an address that cannot be
+  released is a nuisance, while an automatic release is a hole.
+
+**A stale token can never confirm a corrected address.** An administrative correction retires
+**every** live token of the account (all purposes) in the same transaction as the address
+change, and a registration token is additionally **bound to the address it was issued for**: the
+consumption compares the bound address with the account's current address and refuses the token
+when they differ, so even a token that survived the retirement could not confirm the corrected
+address.
+
+## 9. The database-level guarantees (applied)
 
 ```sql
 -- One account may hold at most one pending address, and one address may be pending for at
@@ -245,27 +339,32 @@ merely removes the database-level backstop; the application-level checks keep wo
 sets in `Enums\EmailVerificationPurposes` and `Enums\UserSecurityEventTypes`, exactly like
 `LAND_CHANGE_REQUESTS.STATUS` and `LAND_DOCUMENTS.STATUS`.
 
-## 9. Audit trail
+## 10. Audit trail
 
 `USER_SECURITY_EVENTS` is append-only: the service offers no way to change or remove a recorded
 event, the event type must come from the closed set in `Enums\UserSecurityEventTypes`, and the
 free-text context is stripped of control characters and truncated.
 
-## 10. Open items
+## 11. Open items
 
-1. **RELEASE-BLOCKING — every new admin-created Landlord or Investor must be
-   `EMAIL_VERIFIED = false`.** Today `UserService.CreateAsync` gives them the legacy value
-   (`NULL`, treated as verified), so an admin-created account can be used without proving its
-   address. The required follow-up, in this order:
-   (a) implement the registration-verification endpoints for Landlords and Investors (the
-   verification token, the resend and the confirmation surface),
-   (b) then set `EMAIL_VERIFIED = false` for admin-created Landlord and Investor accounts in
-   `UserService.CreateAsync`,
-   (c) then re-point the account list so an administrator can see that an account is still
+1. **RELEASE-BLOCKING — every new Landlord and Investor account must be
+   `EMAIL_VERIFIED = false` and must prove its address.** Today `AuthService.RegisterAsync`
+   and `UserService.CreateAsync` give them the legacy value (`NULL`, treated as verified), so
+   a new account can be used without proving its address. The delivery layer of the
+   registration verification now exists (§8) and the issuance guard refuses any account that
+   is not explicitly unverified, so the server enforces the order. The remaining work, in
+   this order:
+   (a) the registration-verification endpoints for Landlords and Investors (the confirmation
+   endpoint, the anonymous resend with its generic answer, and the confirmation surface),
+   (b) the login gate that refuses an unverified account (it blocks **only** `EMAIL_VERIFIED =
+   false`, so it can be merged before the flag flip without touching the legacy accounts),
+   (c) then set `EMAIL_VERIFIED = false` for new self-registered and admin-created Landlord
+   and Investor accounts, and deliver the verification mail,
+   (d) then re-point the account list so an administrator can see that an account is still
    awaiting verification.
-   The order matters: flipping the flag before (a) exists would lock those accounts out with
-   no way to verify them. The existing 230 accounts keep `NULL` (= verified) and are not
-   touched.
+   The order matters: flipping the flag before (a) and (b) exist would lock those accounts
+   out with no way to verify them and no way to sign in. The existing 230 accounts keep
+   `NULL` (= verified) and are not touched.
 2. **RELEASE-BLOCKING (until an end-to-end verification) — the frontend activation route is
    implemented but untested.** The page `/activate-admin`
    (`frontend/src/pages/auth/ActivateAdminPage.tsx`) reads the token from the URL fragment, removes
@@ -287,15 +386,16 @@ free-text context is stripped of control characters and truncated.
    fetch `GET /swagger/v1/swagger.json` and write it to `docs/api/swagger.json` — then re-run
    `docs/tests/scripts/static_contract_checks.ps1`. The live API surface is already correct; only
    the published contract lags.
-4. An unverified registration still **reserves** its address (squattoing) until the account is
-   deleted; an admin-created Landlord/Investor still counts as verified (item 1).
+4. An unverified registration still **reserves** its address (squattoing) until an
+   ownership-based release exists; the recovery policy is in §8. An admin-created
+   Landlord/Investor still counts as verified (item 1).
 5. The seeded `"N/A"` account still exists — it can never sign in (now a clean 401); removing
    it is an operator decision.
 6. No dynamic test has been executed for any of this (no data-creating tests are permitted
    yet), so the flows rest on compilation, guard analysis and code review. The activation
    page (item 2) has the same status.
 
-## 11. What exists today
+## 12. What exists today
 
 - **Schema (applied):** `USERS.EMAIL_VERIFIED` / `EMAIL_VERIFIED_AT` / `PENDING_EMAIL`,
   `EMAIL_VERIFICATION_TOKENS`, `USER_SECURITY_EVENTS` (migration
@@ -315,6 +415,11 @@ free-text context is stripped of control characters and truncated.
 - **Account safety:** a direct address change of a verified account is refused with a 409, a
   correction of an unverified account keeps it unverified and retires every stale link and the
   pending change, and an unusable password hash answers a generic 401 instead of a server error.
+- **Registration verification (delivery layer only):** the bilingual EN/AR verification mail
+  with a fragment link, the issuance guard that reserves the purpose for an explicitly
+  unverified Landlord or Investor account, the resend limits and the in-process handover of
+  the token. The confirmation endpoint, the anonymous resend and the sign-in gate are **not**
+  part of it yet (§11.1).
 - **Activation UI (implemented, untested):** the public page `/activate-admin` reads the token
   from the URL fragment, drops the fragment from the address bar and the history before the first
   paint, mirrors the server's password policy, redeems the token and shows the 204 / 400 / 409 /

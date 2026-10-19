@@ -32,4 +32,13 @@ public static class EmailVerificationPurposes
     /// never issued for a Landlord, an Investor or a SuperAdmin account.
     /// </summary>
     public const string AdminActivationRequiredRole = RoleNames.Admin;
+
+    /// <summary>
+    /// Whether the role may hold a <see cref="Registration"/> token. The registration
+    /// verification is reserved for a new Landlord or Investor account: an administrator
+    /// account has its own activation flow, which also sets the password, and a registration
+    /// token would mark it verified without that password setup.
+    /// </summary>
+    public static bool IsRegistrationRole(string? roleName) =>
+        roleName is RoleNames.Landlord or RoleNames.Investor;
 }

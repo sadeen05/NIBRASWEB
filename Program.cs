@@ -167,6 +167,7 @@ builder.Services.AddSingleton<IEmailSender>(sp =>
 builder.Services.AddScoped<IUserSecurityEventService, UserSecurityEventService>();
 builder.Services.AddScoped<IEmailVerificationService, EmailVerificationService>();
 builder.Services.AddScoped<IAdminInvitationService, AdminInvitationService>();
+builder.Services.AddScoped<IRegistrationVerificationService, RegistrationVerificationService>();
 
 builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
 builder.Services.AddProblemDetails();

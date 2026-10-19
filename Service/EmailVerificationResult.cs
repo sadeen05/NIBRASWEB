@@ -58,6 +58,12 @@ public enum VerificationOutcome
     /// with the password setup. A plain address verification must never consume it.
     /// </summary>
     OnboardingRequired,
+
+    /// <summary>
+    /// The account is not explicitly unverified, so it cannot receive a verification token.
+    /// A legacy account (a null verification flag) counts as verified and is never changed.
+    /// </summary>
+    NotVerificationEligible,
 }
 
 /// <summary>

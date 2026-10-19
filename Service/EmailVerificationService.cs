@@ -366,6 +366,49 @@ public sealed class EmailVerificationService : IEmailVerificationService
                 VerificationOutcome.OnboardingRequired, "admin_activation_requires_the_password_setup");
         }
 
+        // The role is re-checked here as well, the same way the admin activation flow does it:
+        // a registration token that was issued while the account was a Landlord or an Investor
+        // is not honoured after the role changed.
+        if (row.Purpose == EmailVerificationPurposes.Registration &&
+            !EmailVerificationPurposes.IsRegistrationRole(user.Role.Name))
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            _logger.LogWarning(
+                "Refused a registration verification for account {UserId}: the account does not hold a Landlord or Investor role.",
+                user.Id);
+            return EmailVerificationResult.Failed(VerificationOutcome.RoleNotAllowed, "role_not_allowed");
+        }
+
+        // A registration token proves exactly the address it was issued for. When the address
+        // of the account has changed since - an administrative correction, or an address change
+        // that was completed in the meantime - the token is stale and confirms nothing: it can
+        // never mark a corrected address as verified.
+        if (row.Purpose == EmailVerificationPurposes.Registration &&
+            (string.IsNullOrWhiteSpace(row.PreviousEmail) ||
+             !string.Equals(user.Email, row.PreviousEmail, StringComparison.OrdinalIgnoreCase)))
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            _logger.LogWarning(
+                "Refused a registration verification for account {UserId}: the address of the account has changed since the token was issued.",
+                user.Id);
+            return EmailVerificationResult.Failed(VerificationOutcome.InvalidToken, "stale_target_address");
+        }
+
+        // The token was issued for an account that still had to prove its address, so it may
+        // only perform that transition. An account that is verified in the meantime - and a
+        // legacy account, whose null flag counts as verified - is left exactly as it is, and a
+        // legacy account is never changed by a verification token.
+        if (row.Purpose == EmailVerificationPurposes.Registration && user.EmailVerified is not false)
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            _logger.LogWarning(
+                "Refused a registration verification for account {UserId}: the account is not an unverified account.",
+                user.Id);
+            return EmailVerificationResult.Failed(
+                VerificationOutcome.NotVerificationEligible,
+                "not_verification_eligible");
+        }
+
         // A second live token for the same account and purpose would mean that a newer
         // request superseded this one. Such a token is stale and is refused.
         var otherLiveTokens = await _context.EmailVerificationTokens
@@ -687,6 +730,35 @@ public sealed class EmailVerificationService : IEmailVerificationService
             return EmailVerificationResult.Failed(VerificationOutcome.AlreadyActivated, "not_activatable");
         }
 
+        // The registration verification is reserved for a new Landlord or Investor account. An
+        // administrator account has its own activation flow, which also sets the password; a
+        // registration token would mark it verified without that password setup, and would
+        // then block its activation, because an activation token is only issued for an account
+        // that is not verified yet.
+        if (purpose == EmailVerificationPurposes.Registration &&
+            !EmailVerificationPurposes.IsRegistrationRole(user.Role.Name))
+        {
+            _logger.LogWarning(
+                "Refused a registration verification token for account {UserId}: the account does not hold a Landlord or Investor role.",
+                userId);
+            return EmailVerificationResult.Failed(VerificationOutcome.RoleNotAllowed, "role_not_allowed");
+        }
+
+        // Only an account that is explicitly unverified may receive a registration
+        // verification. A legacy account (EMAIL_VERIFIED IS NULL) counts as verified, and so
+        // does a verified account: a legacy account therefore keeps its state and can never
+        // be pushed into the unverified state by a verification mail. The account has to be
+        // created unverified before its first verification token is issued.
+        if (purpose == EmailVerificationPurposes.Registration && user.EmailVerified is not false)
+        {
+            _logger.LogWarning(
+                "Refused a registration verification token for account {UserId}: the account is not an unverified account.",
+                userId);
+            return EmailVerificationResult.Failed(
+                VerificationOutcome.NotVerificationEligible,
+                "not_verification_eligible");
+        }
+
         var now = DateTime.UtcNow;
 
         // A new token invalidates the earlier ones of the same purpose, so only the newest
@@ -714,9 +786,17 @@ public sealed class EmailVerificationService : IEmailVerificationService
             UserId = userId,
             Purpose = purpose,
             TokenHash = VerificationTokenCodec.HashToken(plaintext),
-            // For an address change the token is bound to the requested address, so the
-            // consumption can prove that the recipient proved exactly that address.
-            PreviousEmail = purpose == EmailVerificationPurposes.EmailChange ? user.PendingEmail : null,
+            // The address the token is bound to. For an address change it is the requested
+            // address the recipient has to prove, so the consumption can prove that the
+            // recipient proved exactly that address. For a registration it is the address the
+            // token was issued for, so a token that outlives an address change can never
+            // confirm a different address. For the other purposes it is null.
+            PreviousEmail = purpose switch
+            {
+                EmailVerificationPurposes.EmailChange => user.PendingEmail,
+                EmailVerificationPurposes.Registration => user.Email,
+                _ => null,
+            },
             ExpiresAt = expiresAt,
             CreatedAt = now,
         });

@@ -95,21 +95,13 @@ public sealed class EmailOptionsValidator : IValidateOptions<EmailOptions>
             }
         }
 
-        // The activation path is a fixed local path: it may not carry a query, a fragment or a
-        // scheme, so the link can never be pointed somewhere else.
-        if (!string.IsNullOrWhiteSpace(options.ActivationPath))
-        {
-            var activationPath = options.ActivationPath;
-            if (!activationPath.StartsWith('/') ||
-                activationPath.StartsWith("//") ||
-                activationPath.Contains('?') ||
-                activationPath.Contains('#') ||
-                activationPath.Contains("://", StringComparison.Ordinal) ||
-                activationPath.Any(char.IsWhiteSpace))
-            {
-                failures.Add("Email:ActivationPath must be a local path that starts with a single '/' and carries no query, fragment or scheme.");
-            }
-        }
+        // Both verification paths are fixed local paths: they may not carry a query, a fragment
+        // or a scheme, so a link can never be pointed somewhere else. A path is required
+        // whenever a delivery mode is configured, because a host that cannot build a link
+        // cannot deliver a verification. A malformed path is always refused, even when the
+        // delivery is switched off, so a host cannot be started with a broken path.
+        ValidateLocalPath(options.ActivationPath, "Email:ActivationPath", !options.IsDisabled, failures);
+        ValidateLocalPath(options.VerificationPath, "Email:VerificationPath", !options.IsDisabled, failures);
 
         if (options.RegistrationTokenTtlHours is < 1 or > 168)
         {
@@ -139,5 +131,40 @@ public sealed class EmailOptionsValidator : IValidateOptions<EmailOptions>
         return failures.Count == 0
             ? ValidateOptionsResult.Success
             : ValidateOptionsResult.Fail(failures);
+    }
+
+    /// <summary>
+    /// A verification path must be a local path: a single leading slash, no query, no
+    /// fragment, no scheme and no whitespace, so a link can never be pointed somewhere else.
+    /// </summary>
+    /// <param name="path">The configured path.</param>
+    /// <param name="key">The configuration key, used in the failure message.</param>
+    /// <param name="required">Whether a missing path is a failure.</param>
+    /// <param name="failures">The collected failures.</param>
+    private static void ValidateLocalPath(
+        string? path,
+        string key,
+        bool required,
+        List<string> failures)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            if (required)
+            {
+                failures.Add($"{key} is required when a delivery mode is configured.");
+            }
+
+            return;
+        }
+
+        if (!path.StartsWith('/') ||
+            path.StartsWith("//") ||
+            path.Contains('?') ||
+            path.Contains('#') ||
+            path.Contains("://", StringComparison.Ordinal) ||
+            path.Any(char.IsWhiteSpace))
+        {
+            failures.Add($"{key} must be a local path that starts with a single '/' and carries no query, fragment or scheme.");
+        }
     }
 }

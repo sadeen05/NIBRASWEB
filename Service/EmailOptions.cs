@@ -64,6 +64,12 @@ public sealed class EmailOptions
     /// <summary>Path of the frontend activation page (the frontend increment adds the route).</summary>
     public string ActivationPath { get; set; } = "/activate-admin";
 
+    /// <summary>
+    /// Path of the frontend registration verification page. The verification link carries the
+    /// token in the URL fragment, which no browser sends to a server.
+    /// </summary>
+    public string VerificationPath { get; set; } = "/verify-email";
+
     /// <summary>Lifetime of a registration verification token (hours).</summary>
     public int RegistrationTokenTtlHours { get; set; } = 24;
 
