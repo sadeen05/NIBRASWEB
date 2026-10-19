@@ -49,6 +49,17 @@ export interface RegisterRequest {
   companyRegistrationNumber?: string | null;
 }
 
+/**
+ * `POST /api/auth/activate-admin` request body. Mirrors the backend
+ * `ActivateAdminRequest` record: the single-use invitation token together with
+ * the password the new administrator chooses for themselves. The endpoint
+ * answers 204 No Content on success.
+ */
+export interface ActivateAdminRequest {
+  token: string;
+  password: string;
+}
+
 /** Client-side session, derived from {@link AuthResponse}. */
 export interface Session {
   token: string;

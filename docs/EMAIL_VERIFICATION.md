@@ -162,8 +162,9 @@ delivers it by mail:
   after 24 hours;
 - the activation link carries the token in the **URL fragment**
   (`{FrontendBaseUrl}{ActivationPath}#token=…`): a fragment is never transmitted to a server, so
-  the token cannot appear in an access log, a proxy log or a referrer. The frontend reads it,
-  redeems it and strips it from the address bar (the frontend increment);
+  the token cannot appear in an access log, a proxy log or a referrer. The activation page reads
+  it, redeems it and strips it from the address bar and from the history before the first paint
+  (see §10.2);
 - issuing an invitation **retires the previous one** in the same transaction, so only the
   newest link works;
 - the **resend cooldown (60 s) and the daily cap (10 per account and day) apply** to an
@@ -265,10 +266,18 @@ free-text context is stripped of control characters and truncated.
    The order matters: flipping the flag before (a) exists would lock those accounts out with
    no way to verify them. The existing 230 accounts keep `NULL` (= verified) and are not
    touched.
-2. **RELEASE-BLOCKING — the frontend activation route does not exist.** An invitation link
-   points at `{FrontendBaseUrl}/activate-admin#token=…`, and that page is only added by the
-   frontend increment, which must also read the fragment, redeem it and strip it from the
-   address bar. Until then a delivered invitation cannot be completed.
+2. **RELEASE-BLOCKING (until an end-to-end verification) — the frontend activation route is
+   implemented but untested.** The page `/activate-admin`
+   (`frontend/src/pages/auth/ActivateAdminPage.tsx`) reads the token from the URL fragment, removes
+   the fragment from the address bar and from the history **before the first paint** (keeping the
+   router's own history state), validates the password and its confirmation against the server's
+   policy, and redeems the token through `POST /api/auth/activate-admin`. The copy is bilingual
+   (EN/AR) and distinguishes the answers 204 / 400 / 409 / 429; the token is never written to a
+   URL, to storage or to a log. **No dynamic or end-to-end test has run against it** (no
+   data-creating tests are permitted at this stage) — the type check, the lint and the production
+   build are the only evidence — so the item stays release-blocking until an end-to-end
+   verification of the whole invitation flow has passed. The route path must also match the
+   configured `Email:ActivationPath` (the default is `/activate-admin`).
 3. **RELEASE-BLOCKING — the committed Swagger export is two operations behind**:
    `POST /api/auth/activate-admin` and `POST /api/Users/{id}/admin-invitation` are declared by
    the controllers but not in `docs/api/swagger.json`. The export can only be produced by a
@@ -283,7 +292,8 @@ free-text context is stripped of control characters and truncated.
 5. The seeded `"N/A"` account still exists — it can never sign in (now a clean 401); removing
    it is an operator decision.
 6. No dynamic test has been executed for any of this (no data-creating tests are permitted
-   yet), so the flows rest on compilation, guard analysis and code review.
+   yet), so the flows rest on compilation, guard analysis and code review. The activation
+   page (item 2) has the same status.
 
 ## 11. What exists today
 
@@ -305,3 +315,8 @@ free-text context is stripped of control characters and truncated.
 - **Account safety:** a direct address change of a verified account is refused with a 409, a
   correction of an unverified account keeps it unverified and retires every stale link and the
   pending change, and an unusable password hash answers a generic 401 instead of a server error.
+- **Activation UI (implemented, untested):** the public page `/activate-admin` reads the token
+  from the URL fragment, drops the fragment from the address bar and the history before the first
+  paint, mirrors the server's password policy, redeems the token and shows the 204 / 400 / 409 /
+  429 answers in English and Arabic. It creates no session: the new administrator signs in with
+  the password they just chose.

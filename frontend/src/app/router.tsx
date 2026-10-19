@@ -9,6 +9,7 @@ import { AdminLandReviewPage } from '@/pages/admin/AdminLandReviewPage';
 import { AdminOffersPage } from '@/pages/admin/AdminOffersPage';
 import { AdminUsersPage } from '@/pages/admin/AdminUsersPage';
 import { DashboardPlaceholder } from '@/pages/app/DashboardPlaceholder';
+import { ActivateAdminPage } from '@/pages/auth/ActivateAdminPage';
 import { LoginPage } from '@/pages/auth/LoginPage';
 import { RegisterPage } from '@/pages/auth/RegisterPage';
 import { ContractDetailPage } from '@/pages/contracts/ContractDetailPage';
@@ -37,6 +38,9 @@ export const router = createBrowserRouter([
     children: [
       { path: '/login', element: <LoginPage /> },
       { path: '/register', element: <RegisterPage /> },
+      // The activation link of a new administrator account carries its token in
+      // the URL fragment, so this page is public and reads the fragment itself.
+      { path: '/activate-admin', element: <ActivateAdminPage /> },
       { path: '/403', element: <ForbiddenPage /> },
       { path: '*', element: <NotFoundPage /> },
     ],

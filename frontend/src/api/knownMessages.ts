@@ -94,6 +94,13 @@ export const KNOWN_MESSAGES: Record<string, string> = {
   'Only Landlord and Investor registration is allowed.': 'register.roleNotAllowed',
   'Password exceeds the supported length.': 'register.passwordTooLong',
 
+  // --- Admin activation -----------------------------------------------------
+  // The endpoint answers every failed activation with the same generic message
+  // so it does not reveal whether a token ever existed; the copy keeps that
+  // generic wording and never guesses at a reason.
+  'The activation link is not valid.': 'activateAdmin.invalidLink',
+  'The address of the account is already in use.': 'activateAdmin.addressInUse',
+
   // --- Land technical assessment (Phase 1) ----------------------------------
   'Governorate does not exist.': 'lands.errors.governorateMissing',
   'Region and grid must be provided together.': 'admin.assessmentRegionGridPair',
