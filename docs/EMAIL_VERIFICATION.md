@@ -124,8 +124,8 @@ the same purpose invalidates the earlier ones, so only the newest link works.
 
 | Path | What it writes | Status |
 |---|---|---|
-| `AuthService.RegisterAsync` | the address of a new account | **Not yet verified.** The account is created today **without** a verification flag, so it keeps the legacy value (`NULL`, treated as verified); the flag flip and the verification mail belong to the later increments (§8, §11.1). The intended side effect of the flip: an unverified registration **reserves** the address (the unique index covers it) until the account is removed, so a third party can squat an address — the recovery policy is in §8. |
-| `UserService.CreateAsync` | the address of an admin-created account | For a **new Admin** the account starts unverified, with a password hash nobody can match, and the activation invitation is delivered in process (see §7). For an **admin-created Landlord or Investor** the account keeps the legacy value (`EMAIL_VERIFIED = NULL`, treated as verified) — see the release-blocking item in §11.1. |
+| `AuthService.RegisterAsync` | the address of a new account | **The account is created unverified** (`EMAIL_VERIFIED = false`, `EMAIL_VERIFIED_AT = null`) and a verification mail is delivered in process; the answer carries the status of the verification (§8.1). The side effect: an unverified registration **reserves** the address (the unique index covers it) until the account is removed, so a third party can squat an address — the recovery policy is in §8. |
+| `UserService.CreateAsync` | the address of an admin-created account | For a **new Admin** the account starts unverified, with a password hash nobody can match, and the activation invitation is delivered in process (see §7). For an **admin-created Landlord or Investor** the account also starts **unverified** and a verification mail is delivered in process — the same flow as a self-registration, with the SuperAdmin recorded as the actor. The answer keeps the flat user shape and adds the invitation and the verification status (§8.1). |
 | `UserService.UpdateAsync` | the address of an **existing** account | **Changed (security).** A direct address change of a **verified** account (including a legacy account, whose `EMAIL_VERIFIED` is NULL and therefore counts as verified) is refused with a controlled **409**: the address may only be replaced by a successful verification of the new one. For an **unverified** account the correction is allowed, because no address was ever proven — and it is complete in one transaction: the account stays unverified (`EMAIL_VERIFIED = false`, `EMAIL_VERIFIED_AT` cleared), an outstanding address change of the owner is **dropped** (`PENDING_EMAIL` cleared), and **every** live link of the account is retired, so a link sent to the previous address or for the pending address can no longer confirm anything. The conflict check covers the active **and** the pending address of every account, soft-deleted ones included, and a unique-index violation is answered with the same 409. |
 | `EmailVerificationService` (verified swap) | the active address, only after a successful verification | Correct: the pending address must be the one the token is bound to, and the current password must have been confirmed when the change was requested. |
 
@@ -410,6 +410,50 @@ of starting a task per request:
   the plaintext token would have to be protected there — that is a separate decision, not
   part of this increment.
 
+### The onboarding contract
+
+Every new Landlord or Investor account — self-registered or created by a SuperAdmin — starts
+**unverified** (`EMAIL_VERIFIED = false`, `EMAIL_VERIFIED_AT = null`) and receives a
+verification mail. The accounts that already exist keep their `NULL` (they count as verified)
+and are never touched.
+
+The answers keep their existing fields and add the status of the verification:
+
+```
+POST /api/auth/register
+201  ->  { "id": …, "fullName": …, "role": …, "isApproved": …,
+           "verification": "handed_over" | "failed",
+           "verificationMessage": "... (only when it needs attention)" }
+        "handed_over" means the mail was handed to the mailer - it never means that the
+        message was received. "failed" means it could not be handed over: the account stays
+        unverified and unusable, it is never verified by the failure, and the address can
+        request a new mail (the cooldown and the daily cap apply).
+
+POST /api/users                       (SuperAdmin only for roleId = 3)
+201  ->  { "id": …, "fullName": …, … ,           # the flat user shape, unchanged
+           "invitation": "not_applicable" | "handed_over" | "failed",
+           "invitationMessage": "…",
+           "verification": "not_applicable" | "handed_over" | "failed",
+           "verificationMessage": "…" }
+        The invitation belongs to a new administrator account, the verification to a new
+        landlord or investor account. Exactly one of them applies.
+```
+
+The client shows its confirmation step for **both** `handed_over` and `failed`: in the first
+case the account waits for the mail, in the second case it waits for a mail that has to be
+requested again.
+
+**The onboarding delivery is bounded** (10 s): an anonymous request is not held for the whole
+timeout of the mail server. A delivery that does not finish in time is reported as `failed` —
+the account stays unverified and the address can request a new mail. The bound is a limit, not a
+security control: the verification itself is carried by the token.
+
+**A duplicate registration is a conflict, not a server error.** The address and the phone
+number are checked before the insert, and a registration that races another one is caught at
+the unique index and answered with the same **409** — the transaction leaves no account
+behind, and the answer repeats neither the address nor the phone number. A **soft-deleted**
+account still owns its address, so it keeps blocking it.
+
 ### The sign-in gate
 
 An account whose address has not been confirmed may not sign in. The gate is deliberately
@@ -480,25 +524,21 @@ free-text context is stripped of control characters and truncated.
 
 ## 11. Open items
 
-1. **RELEASE-BLOCKING — every new Landlord and Investor account must be
-   `EMAIL_VERIFIED = false` and must prove its address.** Today `AuthService.RegisterAsync`
-   and `UserService.CreateAsync` give them the legacy value (`NULL`, treated as verified), so
-   a new account can be used without proving its address. The delivery layer, the endpoints and
-   the sign-in gate of the registration verification now exist (§8) and the issuance guard
-   refuses any account that is not explicitly unverified, so the server enforces the order.
-   The remaining work, in this order:
-   (a) set `EMAIL_VERIFIED = false` for new self-registered and admin-created Landlord and
-   Investor accounts, and deliver the verification mail,
-   (b) then re-point the account list so an administrator can see that an account is still
-   awaiting verification,
-   (c) then the frontend confirmation page and the "check your email" step of the registration
-   (the verification link points at `/verify-email`, which does not exist yet).
-   The order matters: flipping the flag before the confirmation page exists would lock those
-   accounts out with no way to verify them. The existing 230 accounts keep `NULL` (= verified)
-   and are not touched.
-   The order matters: flipping the flag before (a) and (b) exist would lock those accounts
-   out with no way to verify them and no way to sign in. The existing 230 accounts keep
-   `NULL` (= verified) and are not touched.
+1. **RELEASE-BLOCKING — the onboarding is in place, the end-to-end verification is not.** Every
+   new Landlord and Investor account — self-registered or created by a SuperAdmin — is created
+   unverified, receives a verification mail, and cannot sign in until the address is confirmed
+   (§8.1). What is still missing:
+   (a) an **end-to-end verification** of the whole flow (register → the mail → the confirmation
+   → the sign-in) on a disposable target: no dynamic test has run for any of it, so the flows
+   rest on compilation, guard analysis and code review;
+   (b) the **account list** must show that an account is still awaiting verification, so an
+   administrator can see it (the `UserDto` does not carry the flag yet);
+   (c) the **test suites** that register an account and sign in with it need a genuine
+   verification through the development outbox — the sign-in of an unverified account is
+   refused with a 403, so every such suite has to read the token out of the outbox and confirm
+   the address before it continues;
+   (d) the **Swagger export** is still behind (item 3).
+   The existing 230 accounts keep `NULL` (= verified) and are not touched.
 2. **RELEASE-BLOCKING (until an end-to-end verification) — the frontend activation route is
    implemented but untested.** The page `/activate-admin`
    (`frontend/src/pages/auth/ActivateAdminPage.tsx`) reads the token from the URL fragment, removes
@@ -557,8 +597,11 @@ free-text context is stripped of control characters and truncated.
   and the in-process handover of the token, the anonymous confirmation endpoint with its own
   rate-limit budget, the anonymous resend that answers the same in every case and whose work
   runs in a managed worker with a bounded queue, the SuperAdmin-only resend, and the sign-in
-  gate that refuses an unverified account without touching the legacy accounts. The flag flip
-  is **not** part of it yet (§11.1).
+  gate that refuses an unverified account without touching the legacy accounts.
+- **Onboarding (in place):** every new Landlord and Investor account is created unverified,
+  receives a verification mail in process, and is reported with the status of the verification;
+  the investor approval stays a separate gate, and the accounts that already exist are not
+  touched.
 - **Activation UI (implemented, untested):** the public page `/activate-admin` reads the token
   from the URL fragment, drops the fragment from the address bar and the history before the first
   paint, mirrors the server's password policy, redeems the token and shows the 204 / 400 / 409 /

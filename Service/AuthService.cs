@@ -16,6 +16,7 @@ public sealed class AuthService : IAuthService
     private readonly IConfiguration _configuration;
     private readonly IUserSecurityEventService _audit;
     private readonly ICurrentUser _currentUser;
+    private readonly IRegistrationVerificationService _registrationVerification;
     private readonly ILogger<AuthService> _logger;
 
     public AuthService(
@@ -23,16 +24,18 @@ public sealed class AuthService : IAuthService
         IConfiguration configuration,
         IUserSecurityEventService audit,
         ICurrentUser currentUser,
+        IRegistrationVerificationService registrationVerification,
         ILogger<AuthService> logger)
     {
         _context = context;
         _configuration = configuration;
         _audit = audit;
         _currentUser = currentUser;
+        _registrationVerification = registrationVerification;
         _logger = logger;
     }
 
-    public async Task<AuthUserSummary> RegisterAsync(RegisterRequest request)
+    public async Task<AuthUserSummary> RegisterAsync(RegisterRequest request, CancellationToken cancellationToken = default)
     {
         PasswordPolicy.Validate(request.Password);
 
@@ -66,12 +69,87 @@ public sealed class AuthService : IAuthService
             IsApproved = request.RoleId == 1,
             CompanyName = request.CompanyName,
             CompanyRegistrationNumber = request.CompanyRegistrationNumber,
+            // Every new account has to prove its address before it may be used, so the sign-in
+            // is refused until the address is confirmed. The investor approval stays a separate
+            // gate: a confirmed account is still not approved.
+            EmailVerified = false,
+            EmailVerifiedAt = null,
             IsDeleted = false
         };
 
+        // The account and the audit event are written in one transaction: the trail can never
+        // disagree with the accounts. The event is linked through the navigation, so the
+        // foreign key is filled in when the account is inserted.
         _context.Users.Add(user);
-        await _context.SaveChangesAsync();
-        return ToSummary(user, role.Name);
+        _context.UserSecurityEvents.Add(new UserSecurityEvent
+        {
+            User = user,
+            EventType = UserSecurityEventTypes.RegistrationCreated,
+            CreatedAt = DateTime.UtcNow,
+        });
+
+        try
+        {
+            await _context.SaveChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateException ex) when (DatabaseErrors.IsUniqueViolation(ex))
+        {
+            // Two registrations of the same address or phone number at the same moment: the
+            // unique index refused the second one. The answer is the same conflict the check
+            // above gives, and the transaction left no account behind. The message repeats
+            // neither the address nor the phone number.
+            _context.ChangeTracker.Clear();
+            throw new DuplicateRegistrationException();
+        }
+
+        // The verification mail is delivered in process: the plaintext token never returns to the
+        // caller and never reaches a log. A delivery failure leaves the account unverified and
+        // unusable - it is never verified by the failure and never duplicated - and the address
+        // can request a new mail, which retires the failed one.
+        using var deliveryCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        deliveryCts.CancelAfter(
+            TimeSpan.FromSeconds(RegistrationVerificationService.OnboardingDeliveryTimeoutSeconds));
+
+        try
+        {
+            var verification = await _registrationVerification.SendAsync(
+                user.Id,
+                null,
+                null,
+                deliveryCts.Token);
+
+            if (!verification.Sent)
+            {
+                _logger.LogWarning(
+                    "The verification mail for account {UserId} could not be handed over; it can be requested again.",
+                    user.Id);
+
+                return ToSummary(
+                    user,
+                    role.Name,
+                    VerificationStatuses.Failed,
+                    "The verification mail could not be handed over for delivery. The account stays inactive until the address is confirmed.");
+            }
+        }
+        catch (Exception ex)
+        {
+            // The account exists and stays unverified. A failure between the creation and the
+            // delivery must not create a second account and must not verify anything: the
+            // address can request a new mail, which retires whatever was issued. The exception
+            // is reported by its type only, because a database error can carry the address.
+            _logger.LogError(
+                "The verification mail for account {UserId} could not be prepared ({ErrorType}).",
+                user.Id,
+                ex.GetType().Name);
+
+            return ToSummary(
+                user,
+                role.Name,
+                VerificationStatuses.Failed,
+                "The verification mail could not be handed over for delivery. The account stays inactive until the address is confirmed.");
+        }
+
+        return ToSummary(user, role.Name, VerificationStatuses.HandedOver);
     }
 
     public async Task<AuthResponse?> LoginAsync(LoginRequest request, CancellationToken cancellationToken = default)
@@ -176,8 +254,12 @@ public sealed class AuthService : IAuthService
     private int GetExpiryMinutes() =>
         _configuration.GetValue<int?>("Jwt:ExpiryMinutes") ?? 120;
 
-    private static AuthUserSummary ToSummary(User user, string role) =>
-        new(user.Id, user.FullName, role, user.IsApproved);
+    private static AuthUserSummary ToSummary(
+        User user,
+        string role,
+        string verification = VerificationStatuses.NotApplicable,
+        string? verificationMessage = null) =>
+        new(user.Id, user.FullName, role, user.IsApproved, verification, verificationMessage);
 }
 
 public sealed class DuplicateRegistrationException : BusinessRuleException

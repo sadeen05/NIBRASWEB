@@ -28,6 +28,15 @@ namespace NIBRAS.API.Services;
 /// </summary>
 public sealed class RegistrationVerificationService : IRegistrationVerificationService
 {
+    /// <summary>
+    /// The time the onboarding delivery may take. The mail client allows half a minute, but an
+    /// anonymous request must not be held that long: a delivery that does not finish in time is
+    /// reported as failed, the account stays unverified, and the address can request a new
+    /// mail. The budget is a bound, not a security control - the verification itself is
+    /// carried by the token.
+    /// </summary>
+    public const int OnboardingDeliveryTimeoutSeconds = 10;
+
     private readonly NebrasdbContext _context;
     private readonly IEmailVerificationService _verification;
     private readonly IEmailSender _emailSender;

@@ -9,6 +9,12 @@ public static class UserSecurityEventTypes
     /// <summary>A self-registration created an account that still has to verify its address.</summary>
     public const string RegistrationCreated = "RegistrationCreated";
 
+    /// <summary>
+    /// A SuperAdmin created a Landlord or an Investor account that still has to verify its
+    /// address.
+    /// </summary>
+    public const string AdminCreatedUnverified = "AdminCreatedUnverified";
+
     /// <summary>A SuperAdmin created an Admin account that still has to activate.</summary>
     public const string AdminAccountCreated = "AdminAccountCreated";
 
@@ -61,6 +67,7 @@ public static class UserSecurityEventTypes
     private static readonly HashSet<string> Known = new(StringComparer.Ordinal)
     {
         RegistrationCreated,
+        AdminCreatedUnverified,
         AdminAccountCreated,
         VerificationEmailSent,
         VerificationEmailResent,

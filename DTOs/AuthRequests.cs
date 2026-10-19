@@ -19,7 +19,32 @@ public record AuthUserSummary(
     int Id,
     string FullName,
     string Role,
-    bool IsApproved);
+    bool IsApproved,
+    string Verification = VerificationStatuses.NotApplicable,
+    string? VerificationMessage = null);
+
+/// <summary>
+/// The status of a verification that was handed to the mailer. The values are part of the API
+/// contract: the client shows its confirmation step for <see cref="HandedOver"/> and for
+/// <see cref="Failed"/>, because both mean that the account has to confirm its address.
+/// </summary>
+public static class VerificationStatuses
+{
+    /// <summary>No verification applies to the account.</summary>
+    public const string NotApplicable = "not_applicable";
+
+    /// <summary>
+    /// The mail was handed to the mailer. It does **not** mean that the message was received:
+    /// the server never sees the inbox of the recipient.
+    /// </summary>
+    public const string HandedOver = "handed_over";
+
+    /// <summary>
+    /// The mail could not be handed over. The account stays unverified and unusable, and a new
+    /// verification can be requested - which retires the failed one.
+    /// </summary>
+    public const string Failed = "failed";
+}
 
 public record AuthResponse(
     string Token,

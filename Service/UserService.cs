@@ -14,19 +14,22 @@ public class UserService : IUserService
     private readonly ICurrentUser _currentUser;
     private readonly IEmailVerificationService _emailVerification;
     private readonly IAdminInvitationService _adminInvitation;
+    private readonly IRegistrationVerificationService _registrationVerification;
 
     public UserService(
         NebrasdbContext context,
         ILogger<UserService> logger,
         ICurrentUser currentUser,
         IEmailVerificationService emailVerification,
-        IAdminInvitationService adminInvitation)
+        IAdminInvitationService adminInvitation,
+        IRegistrationVerificationService registrationVerification)
     {
         _context = context;
         _logger = logger;
         _currentUser = currentUser;
         _emailVerification = emailVerification;
         _adminInvitation = adminInvitation;
+        _registrationVerification = registrationVerification;
     }
 
     public async Task<UserListResponse> GetAllAsync(
@@ -77,7 +80,7 @@ public class UserService : IUserService
         return ToDto(user);
     }
 
-    public async Task<UserCreationResponse> CreateAsync(CreateUserRequest request)
+    public async Task<UserCreationResponse> CreateAsync(CreateUserRequest request, CancellationToken cancellationToken = default)
     {
         EnsureCallerCanCreateRole(request.RoleId);
 
@@ -131,34 +134,96 @@ public class UserService : IUserService
                 : BCrypt.Net.BCrypt.HashPassword(request.Password!, workFactor: 12),
             IsDeleted = false,
             IsApproved = request.RoleId is 1 or 3,
-            // A new Admin has to prove the address before the account can be used. A landlord
-            // or an investor created by an admin keeps the legacy value (NULL, "verified"),
-            // because their verification flow is part of a later increment.
-            EmailVerified = isAdminAccount ? false : null,
+            // Every new account has to prove its address before it may be used: a new Admin
+            // through its own activation link, a new landlord or investor through a
+            // verification mail. A legacy account (NULL) counts as verified and is never
+            // touched by this path.
+            EmailVerified = false,
+            EmailVerifiedAt = null,
             CompanyName = request.CompanyName,
             CompanyRegistrationNumber = request.CompanyRegistrationNumber
         };
 
+        // The account and its audit event are written in one transaction: the trail can never
+        // disagree with the accounts. The event is linked through the navigation, so the
+        // foreign key is filled in when the account is inserted.
         _context.Users.Add(user);
+        _context.UserSecurityEvents.Add(new UserSecurityEvent
+        {
+            User = user,
+            EventType = isAdminAccount
+                ? UserSecurityEventTypes.AdminAccountCreated
+                : UserSecurityEventTypes.AdminCreatedUnverified,
+            ActorId = _currentUser.Id,
+            CreatedAt = DateTime.UtcNow,
+        });
         await _context.SaveChangesAsync();
         await _context.Entry(user).Reference(u => u.Role).LoadAsync();
 
         var dto = ToDto(user);
         if (!isAdminAccount)
         {
-            return new UserCreationResponse(dto, "not_applicable");
+            // A new landlord or investor is verified the same way a self-registered account
+            // is: the account stays unverified until the address is confirmed.
+            // The verification mail is delivered in process: the plaintext token never returns
+            // to the caller and never reaches a log. A delivery failure leaves the account
+            // unverified and unusable, and the verification can be requested again - which
+            // retires the failed link, so a retry never leaves two usable links and never
+            // creates a second account. The delivery is bounded, so the request is not held
+            // for the whole timeout of the mail server.
+            using var deliveryCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            deliveryCts.CancelAfter(
+                TimeSpan.FromSeconds(RegistrationVerificationService.OnboardingDeliveryTimeoutSeconds));
+
+            try
+            {
+                var verification = await _registrationVerification.SendAsync(
+                    user.Id,
+                    _currentUser.Id,
+                    null,
+                    deliveryCts.Token);
+
+                if (!verification.Sent)
+                {
+                    _logger.LogWarning(
+                        "The verification mail for account {UserId} could not be handed over; it can be requested again.",
+                        user.Id);
+
+                    return new UserCreationResponse(
+                        dto,
+                        VerificationStatuses.NotApplicable,
+                        null,
+                        VerificationStatuses.Failed,
+                        "The verification mail could not be handed over for delivery. The account stays unverified until the address is confirmed.");
+                }
+            }
+            catch (Exception ex)
+            {
+                // The account exists and stays unverified. A failure between the creation and
+                // the delivery must not create a second account and must not verify anything.
+                // The exception is reported by its type only, because a database error can
+                // carry the address.
+                _logger.LogError(
+                    "The verification mail for account {UserId} could not be prepared ({ErrorType}).",
+                    user.Id,
+                    ex.GetType().Name);
+
+                return new UserCreationResponse(
+                    dto,
+                    VerificationStatuses.NotApplicable,
+                    null,
+                    VerificationStatuses.Failed,
+                    "The verification mail could not be handed over for delivery. The account stays unverified until the address is confirmed.");
+            }
+
+            return new UserCreationResponse(
+                dto,
+                VerificationStatuses.NotApplicable,
+                null,
+                VerificationStatuses.HandedOver);
         }
 
-        // The audit records who created the account.
-        _context.UserSecurityEvents.Add(new UserSecurityEvent
-        {
-            UserId = user.Id,
-            EventType = UserSecurityEventTypes.AdminAccountCreated,
-            ActorId = _currentUser.Id,
-            CreatedAt = DateTime.UtcNow,
-        });
-        await _context.SaveChangesAsync();
-
+        // The audit recorded who created the account together with the account itself.
         // The invitation is delivered in process: the plaintext token never returns to the
         // caller and never reaches a log. A delivery failure leaves the account unverified and
         // unusable, and the SuperAdmin can send the invitation again - which retires the failed
@@ -172,11 +237,16 @@ public class UserService : IUserService
                 user.Id);
             return new UserCreationResponse(
                 dto,
-                "failed",
-                "The invitation could not be handed over for delivery. The account stays inactive until the invitation succeeds.");
+                VerificationStatuses.Failed,
+                "The invitation could not be handed over for delivery. The account stays inactive until the invitation succeeds.",
+                VerificationStatuses.NotApplicable);
         }
 
-        return new UserCreationResponse(dto, "handed_over");
+        return new UserCreationResponse(
+            dto,
+            VerificationStatuses.HandedOver,
+            null,
+            VerificationStatuses.NotApplicable);
     }
 
     /// <summary>
@@ -364,7 +434,7 @@ public class UserService : IUserService
     /// instead of surfacing as a server error.
     /// </summary>
     private static bool IsUniqueViolation(DbUpdateException ex) =>
-        ex.InnerException is SqlException sql && (sql.Number == 2601 || sql.Number == 2627);
+        DatabaseErrors.IsUniqueViolation(ex);
 
     private void EnsureCallerCanCreateRole(int roleId)
     {

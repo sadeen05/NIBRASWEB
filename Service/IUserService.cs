@@ -6,7 +6,7 @@ public interface IUserService
 {
     Task<UserListResponse> GetAllAsync(int pageNumber, int pageSize, string? role, bool? isApproved);
     Task<UserDto?> GetByIdAsync(int id);
-    Task<UserCreationResponse> CreateAsync(CreateUserRequest request);
+    Task<UserCreationResponse> CreateAsync(CreateUserRequest request, CancellationToken cancellationToken = default);
     Task<bool> ApproveAsync(int id, int approvedById);
     Task<bool> UpdateAsync(int id, UpdateUserRequest request);
     Task<bool> DeleteAsync(int id);

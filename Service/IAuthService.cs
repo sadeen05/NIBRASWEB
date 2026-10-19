@@ -4,7 +4,12 @@ namespace NIBRAS.API.Services;
 
 public interface IAuthService
 {
-    Task<AuthUserSummary> RegisterAsync(RegisterRequest request);
+    /// <summary>
+    /// Creates a new Landlord or Investor account. The account is unverified: it has to confirm
+    /// its address before it may be used, and the answer carries the status of the
+    /// verification.
+    /// </summary>
+    Task<AuthUserSummary> RegisterAsync(RegisterRequest request, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Signs an account in. The answer is null when the address or the password is wrong, and

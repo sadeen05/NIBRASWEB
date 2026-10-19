@@ -35,7 +35,7 @@ public sealed class AuthController : ControllerBase
     {
         try
         {
-            return Ok(await _authService.RegisterAsync(request));
+            return Ok(await _authService.RegisterAsync(request, HttpContext.RequestAborted));
         }
         catch (DuplicateRegistrationException)
         {

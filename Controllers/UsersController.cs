@@ -55,14 +55,14 @@ public class UsersController : ControllerBase
             throw new ForbiddenException("You are not authorized to create this user role.");
         }
 
-        var created = await _userService.CreateAsync(request);
+        var created = await _userService.CreateAsync(request, HttpContext.RequestAborted);
         var user = created.User;
 
         // The body keeps the flat user shape that every existing consumer of
         // POST /api/users already reads, and adds what happened to the activation
-        // invitation of a new administrator account. The account exists; the invitation
-        // status only reports what happened at the mailer and never claims that a message was
-        // received.
+        // invitation of a new administrator account and to the verification of a new
+        // landlord or investor account. The account exists; the statuses only report what
+        // happened at the mailer and never claim that a message was received.
         return CreatedAtAction(
             nameof(GetById),
             new { id = user.Id },
@@ -79,6 +79,8 @@ public class UsersController : ControllerBase
                 user.CompanyRegistrationNumber,
                 created.Invitation,
                 created.InvitationMessage,
+                created.Verification,
+                created.VerificationMessage,
             });
     }
 

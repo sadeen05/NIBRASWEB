@@ -37,4 +37,6 @@ public record UserListResponse(
 public record UserCreationResponse(
     UserDto User,
     string Invitation,
-    string? InvitationMessage = null);
+    string? InvitationMessage = null,
+    string? Verification = null,
+    string? VerificationMessage = null);
