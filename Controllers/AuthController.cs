@@ -48,7 +48,7 @@ public sealed class AuthController : ControllerBase
     [HttpPost("login")]
     public async Task<ActionResult<AuthResponse>> Login(LoginRequest request)
     {
-        var result = await _authService.LoginAsync(request);
+        var result = await _authService.LoginAsync(request, HttpContext.RequestAborted);
         return result is null
             ? Unauthorized(new { message = "Invalid email or password" })
             : Ok(result);

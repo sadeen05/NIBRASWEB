@@ -138,6 +138,18 @@ builder.Services
                 if (user is null || user.IsDeleted || !string.Equals(user.Role.Name, role, StringComparison.Ordinal))
                 {
                     context.Fail("Token user is no longer valid.");
+                    return;
+                }
+
+                // An account whose address has not been confirmed may not use a session that
+                // was issued before the restriction existed: the token is rejected, so a
+                // session can never bypass the sign-in gate. A legacy account (a null
+                // verification flag) counts as verified and keeps its access. The rejection is
+                // not audited: it would repeat on every request of a session, and the sign-in
+                // attempt itself is already recorded.
+                if (user.EmailVerified is false)
+                {
+                    context.Fail("Token user is no longer valid.");
                 }
             }
         };

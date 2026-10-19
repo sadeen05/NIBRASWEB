@@ -5,6 +5,7 @@ using Microsoft.IdentityModel.Tokens;
 using NIBRAS;
 using NIBRAS.API.DTOs;
 using NIBRAS.Models;
+using NibrasWeb.Enums;
 
 namespace NIBRAS.API.Services;
 
@@ -13,11 +14,22 @@ public sealed class AuthService : IAuthService
     private const string DummyPasswordHash = "$2a$12$C6UzMDM.H6dfI/f/IKcEe.6QxT5s0L9L8h1f4mM7Q7V9n2M3j7b6W";
     private readonly NebrasdbContext _context;
     private readonly IConfiguration _configuration;
+    private readonly IUserSecurityEventService _audit;
+    private readonly ICurrentUser _currentUser;
+    private readonly ILogger<AuthService> _logger;
 
-    public AuthService(NebrasdbContext context, IConfiguration configuration)
+    public AuthService(
+        NebrasdbContext context,
+        IConfiguration configuration,
+        IUserSecurityEventService audit,
+        ICurrentUser currentUser,
+        ILogger<AuthService> logger)
     {
         _context = context;
         _configuration = configuration;
+        _audit = audit;
+        _currentUser = currentUser;
+        _logger = logger;
     }
 
     public async Task<AuthUserSummary> RegisterAsync(RegisterRequest request)
@@ -62,7 +74,7 @@ public sealed class AuthService : IAuthService
         return ToSummary(user, role.Name);
     }
 
-    public async Task<AuthResponse?> LoginAsync(LoginRequest request)
+    public async Task<AuthResponse?> LoginAsync(LoginRequest request, CancellationToken cancellationToken = default)
     {
         PasswordPolicy.Validate(request.Password);
 
@@ -85,6 +97,40 @@ public sealed class AuthService : IAuthService
         if (!PasswordVerifier.TryVerify(request.Password, user.PasswordHash))
         {
             return null;
+        }
+
+        // The address of the account has to be proven before the account may be used. The
+        // check comes **after** the password was confirmed, so a wrong password never reveals
+        // the verification state of the account, and it refuses only an account that is
+        // explicitly unverified: a legacy account (EMAIL_VERIFIED IS NULL) counts as verified
+        // and keeps its access. The refusal is recorded in the audit trail without any
+        // credential, and the answer carries a stable code the client can act on.
+        if (user.EmailVerified is false)
+        {
+            // A failing audit write must not change the answer: the refusal is the safe action
+            // and the client needs the stable code. The failure of the audit write is logged
+            // instead, exactly as the delivery audit of the invitation flow does it.
+            try
+            {
+                await _audit.RecordAsync(
+                    user.Id,
+                    UserSecurityEventTypes.LoginBlockedUnverified,
+                    null,
+                    _currentUser.Ip,
+                    "email_not_verified",
+                    cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(
+                    ex,
+                    "The security audit event {EventType} for account {UserId} could not be written.",
+                    UserSecurityEventTypes.LoginBlockedUnverified,
+                    user.Id);
+            }
+
+            throw new EmailNotVerifiedException(
+                "The email address of this account has not been confirmed yet.");
         }
 
         var expiresAt = DateTime.UtcNow.AddMinutes(GetExpiryMinutes());

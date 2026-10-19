@@ -22,4 +22,7 @@ public sealed class CurrentUser : ICurrentUser
 
     public string? Role =>
         _httpContextAccessor.HttpContext?.User.FindFirstValue(ClaimTypes.Role);
+
+    public string? Ip =>
+        _httpContextAccessor.HttpContext?.Connection.RemoteIpAddress?.ToString();
 }

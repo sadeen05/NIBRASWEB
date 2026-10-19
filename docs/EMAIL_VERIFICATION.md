@@ -357,6 +357,40 @@ confirm an address is a valid, single-use registration token. The administrative
 never activate an administrator account — that flow has its own invitation — and it never
 verifies anything by itself.
 
+### The sign-in gate
+
+An account whose address has not been confirmed may not sign in. The gate is deliberately
+narrow, and it is applied **after** the password was confirmed:
+
+- only an account with `EMAIL_VERIFIED = false` is refused — a **legacy account**
+  (`EMAIL_VERIFIED IS NULL`) counts as verified and keeps its access, and an account whose
+  address was confirmed is not affected;
+- a wrong address, a wrong password and an unusable stored hash still answer the same generic
+  **401**, so the verification state of an account is never revealed before the password was
+  confirmed;
+- a refusal answers **403** with the stable code `EMAIL_NOT_VERIFIED` and a static message.
+  The message carries no credential, no token and no detail about the account;
+- the refusal is recorded in the audit trail as `LoginBlockedUnverified`, with the account and
+  the remote address — never with the password, the hash or a token;
+- **the investor approval stays independent**: a confirmed account that still waits for the
+  approval keeps exactly the restrictions it had before, and a verification never implies an
+  approval.
+
+**An existing session cannot bypass the gate.** Every request re-reads the account — the token
+revalidation that already refuses a deleted account or a changed role — and the session is
+rejected when the account is explicitly unverified. The rejection is deliberately not audited:
+it would repeat on every request of a session, while the sign-in attempt itself is recorded.
+The sign-in is the only place where a session is issued, so there is no other path that could
+hand one out.
+
+```
+POST /api/auth/login
+401  ->  the address or the password is wrong - the same generic answer for both, and for an
+          account whose stored hash is unusable
+403  ->  the address of the account has not been confirmed yet (errorCode EMAIL_NOT_VERIFIED)
+200  ->  a session, as before
+```
+
 ## 9. The database-level guarantees (applied)
 
 ```sql
@@ -396,21 +430,19 @@ free-text context is stripped of control characters and truncated.
 1. **RELEASE-BLOCKING — every new Landlord and Investor account must be
    `EMAIL_VERIFIED = false` and must prove its address.** Today `AuthService.RegisterAsync`
    and `UserService.CreateAsync` give them the legacy value (`NULL`, treated as verified), so
-   a new account can be used without proving its address. The delivery layer and the endpoints
-   of the registration verification now exist (§8) and the issuance guard refuses any account
-   that is not explicitly unverified, so the server enforces the order. The remaining work, in
-   this order:
-   (a) the sign-in gate that refuses an unverified account (it blocks **only** `EMAIL_VERIFIED =
-   false`, so it can be merged before the flag flip without touching the legacy accounts),
-   (b) then set `EMAIL_VERIFIED = false` for new self-registered and admin-created Landlord
-   and Investor accounts, and deliver the verification mail,
-   (c) then re-point the account list so an administrator can see that an account is still
+   a new account can be used without proving its address. The delivery layer, the endpoints and
+   the sign-in gate of the registration verification now exist (§8) and the issuance guard
+   refuses any account that is not explicitly unverified, so the server enforces the order.
+   The remaining work, in this order:
+   (a) set `EMAIL_VERIFIED = false` for new self-registered and admin-created Landlord and
+   Investor accounts, and deliver the verification mail,
+   (b) then re-point the account list so an administrator can see that an account is still
    awaiting verification,
-   (d) then the frontend confirmation page and the "check your email" step of the registration
+   (c) then the frontend confirmation page and the "check your email" step of the registration
    (the verification link points at `/verify-email`, which does not exist yet).
-   The order matters: flipping the flag before (a) and the confirmation page exist would lock
-   those accounts out with no way to verify them. The existing 230 accounts keep `NULL` (=
-   verified) and are not touched.
+   The order matters: flipping the flag before the confirmation page exists would lock those
+   accounts out with no way to verify them. The existing 230 accounts keep `NULL` (= verified)
+   and are not touched.
    The order matters: flipping the flag before (a) and (b) exist would lock those accounts
    out with no way to verify them and no way to sign in. The existing 230 accounts keep
    `NULL` (= verified) and are not touched.
@@ -466,13 +498,14 @@ free-text context is stripped of control characters and truncated.
 - **Account safety:** a direct address change of a verified account is refused with a 409, a
   correction of an unverified account keeps it unverified and retires every stale link and the
   pending change, and an unusable password hash answers a generic 401 instead of a server error.
-- **Registration verification (delivery and endpoints):** the bilingual EN/AR verification mail
-  with a fragment link, the issuance guard that reserves the purpose for an explicitly
+- **Registration verification (delivery, endpoints and gate):** the bilingual EN/AR verification
+  mail with a fragment link, the issuance guard that reserves the purpose for an explicitly
   unverified Landlord or Investor account, the address binding of the token, the resend limits
   and the in-process handover of the token, the anonymous confirmation endpoint with its own
-  rate-limit budget, the anonymous resend that answers the same in every case, and the
-  SuperAdmin-only resend. The sign-in gate and the flag flip are **not** part of it yet
-  (§11.1).
+  rate-limit budget, the anonymous resend that answers the same in every case and whose work
+  runs outside the request, the SuperAdmin-only resend, and the sign-in gate that refuses an
+  unverified account without touching the legacy accounts. The flag flip is **not** part of it
+  yet (§11.1).
 - **Activation UI (implemented, untested):** the public page `/activate-admin` reads the token
   from the URL fragment, drops the fragment from the address bar and the history before the first
   paint, mirrors the server's password policy, redeems the token and shows the 204 / 400 / 409 /

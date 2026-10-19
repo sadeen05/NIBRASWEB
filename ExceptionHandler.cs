@@ -37,6 +37,7 @@ public class GlobalExceptionHandler : IExceptionHandler
         {
             NotFoundException => (StatusCodes.Status404NotFound, "Resource not found.", "RESOURCE_NOT_FOUND"),
             ForbiddenException => (StatusCodes.Status403Forbidden, "Not authorized to perform this action.", "FORBIDDEN"),
+            EmailNotVerifiedException => (StatusCodes.Status403Forbidden, "The email address is not verified.", "EMAIL_NOT_VERIFIED"),
             BusinessRuleException => (StatusCodes.Status409Conflict, "Request violates a business rule.", "INVALID_STATE"),
             ValidationFailedException => (StatusCodes.Status400BadRequest, "Invalid request.", "BAD_REQUEST"),
             _ => (StatusCodes.Status500InternalServerError, "An unexpected error occurred.", "INTERNAL_ERROR")
@@ -57,7 +58,7 @@ public class GlobalExceptionHandler : IExceptionHandler
             Title = title,
             Detail = exception switch
             {
-                NotFoundException or ForbiddenException
+                NotFoundException or ForbiddenException or EmailNotVerifiedException
                     or BusinessRuleException or ValidationFailedException
                     => exception.Message,
                 _ => "An unexpected error occurred."
