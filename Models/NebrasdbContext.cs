@@ -473,6 +473,14 @@ public partial class NebrasdbContext : DbContext
             // The hash is the only way a token row can be looked up, so it is unique: two
             // different tokens can never share a hash, and the plaintext token is never stored.
             entity.HasIndex(e => e.TokenHash, "UQ_EMAIL_VERIFICATION_TOKENS_HASH").IsUnique();
+            // At most one live token per account and purpose. The issuance retires every earlier
+            // token of that purpose (consumed or expired) in the same transaction before it
+            // inserts the new one, so the slot is always free. A filtered index may not use
+            // GETDATE(), so the expiry of a token is handled by that retirement and not by the
+            // filter.
+            entity.HasIndex(e => new { e.UserId, e.Purpose }, "UX_EMAIL_VERIFICATION_TOKENS_LIVE")
+                .IsUnique()
+                .HasFilter("[CONSUMED_AT] IS NULL");
             entity.HasIndex(e => new { e.UserId, e.Purpose, e.ExpiresAt },
                 "IX_EMAIL_VERIFICATION_TOKENS_USER");
             entity.Property(e => e.Id).HasColumnName("ID");
@@ -661,6 +669,14 @@ public partial class NebrasdbContext : DbContext
             entity.ToTable("USERS");
             entity.HasIndex(e => e.Email, "UQ__USERS__161CF724F5C148C0").IsUnique();
             entity.HasIndex(e => e.Phone, "UQ__USERS__D4FA0A2658412415").IsUnique();
+            // One account may hold at most one pending address, and one address may be pending
+            // for at most one account. The filter keeps every existing row out of the index
+            // (PENDING_EMAIL is NULL for all of them), so the index is created without touching
+            // a single row. The service writes and clears PENDING_EMAIL inside the token
+            // transaction, so the index simply follows the row.
+            entity.HasIndex(e => e.PendingEmail, "UX_USERS_PENDING_EMAIL")
+                .IsUnique()
+                .HasFilter("[PENDING_EMAIL] IS NOT NULL");
             entity.Property(e => e.Id).HasColumnName("ID");
             entity.Property(e => e.Email).HasMaxLength(255).HasColumnName("EMAIL");
             entity.Property(e => e.FullName).HasMaxLength(100).HasColumnName("FULL_NAME");

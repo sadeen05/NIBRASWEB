@@ -326,6 +326,10 @@ namespace NIBRAS.API.Migrations
                     b.HasIndex(new[] { "TokenHash" }, "UQ_EMAIL_VERIFICATION_TOKENS_HASH")
                         .IsUnique();
 
+                    b.HasIndex(new[] { "UserId", "Purpose" }, "UX_EMAIL_VERIFICATION_TOKENS_LIVE")
+                        .IsUnique()
+                        .HasFilter("[CONSUMED_AT] IS NULL");
+
                     b.ToTable("EMAIL_VERIFICATION_TOKENS", (string)null);
                 });
 
@@ -1391,6 +1395,10 @@ namespace NIBRAS.API.Migrations
 
                     b.HasIndex(new[] { "Phone" }, "UQ__USERS__D4FA0A2658412415")
                         .IsUnique();
+
+                    b.HasIndex(new[] { "PendingEmail" }, "UX_USERS_PENDING_EMAIL")
+                        .IsUnique()
+                        .HasFilter("[PENDING_EMAIL] IS NOT NULL");
 
                     b.ToTable("USERS", (string)null);
 
