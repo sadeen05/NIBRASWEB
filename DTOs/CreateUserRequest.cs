@@ -16,9 +16,6 @@ public record CreateUserRequest
     [param: MaxLength(20)]
     string Phone,
 
-    [param: Required, MinLength(10), MaxLength(128), NoControlCharacters, MaxUtf8Bytes(72)]
-    string Password,
-
     [param: Required]
     [param: Range(1, 3)]
     int RoleId,
@@ -27,5 +24,13 @@ public record CreateUserRequest
     string? CompanyName = null,
 
     [param: MaxLength(100), NoControlCharacters]
-    string? CompanyRegistrationNumber = null
-);
+    string? CompanyRegistrationNumber = null,
+
+    /// <summary>
+    /// The password of the new account. It is required for a Landlord or an Investor, who
+    /// chooses their own password. It is <b>not</b> used for an Admin: a new Admin sets
+    /// their own password through the single-use activation link, so a super administrator can
+    /// never know or choose it. A value sent for an Admin is ignored.
+    /// </summary>
+    [param: MaxLength(128), NoControlCharacters, MaxUtf8Bytes(72)]
+    string? Password = null);

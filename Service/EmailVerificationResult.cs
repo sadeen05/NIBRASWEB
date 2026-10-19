@@ -36,6 +36,12 @@ public enum VerificationOutcome
     InvalidAddress,
 
     /// <summary>
+    /// The account has already been activated. An invitation can never reset the password of
+    /// an account that is already in use.
+    /// </summary>
+    AlreadyActivated,
+
+    /// <summary>
     /// The current password was not confirmed. A new address may only be claimed with the
     /// current password of the account, so a hijacked session alone cannot move it.
     /// </summary>

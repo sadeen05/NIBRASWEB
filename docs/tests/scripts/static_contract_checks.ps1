@@ -91,14 +91,23 @@ foreach ($file in Get-ChildItem -Path $controllersDir -Filter '*.cs' | Sort-Obje
     }
 }
 
-# Check 2: [AllowAnonymous] may only appear on the two public auth endpoints.
+# Check 2: [AllowAnonymous] may only appear on the public auth endpoints.
+# The allow-list is explicit and closed: registration and login are anonymous, and the admin
+# activation endpoint is anonymous because the single-use invitation token is its only
+# credential (it is rate-limited with its own budget and answers a generic failure). Any other
+# anonymous endpoint still fails this check.
+$allowedAnonymous = @{
+    'AuthController.cs' = @('Register', 'Login', 'ActivateAdmin')
+}
+
 foreach ($file in Get-ChildItem -Path $controllersDir -Filter '*.cs') {
     $text = Get-Content -LiteralPath $file.FullName -Raw
     foreach ($anonymous in [regex]::Matches($text, '\[AllowAnonymous\]')) {
         $tail = $text.Substring($anonymous.Index)
         $nameMatch = [regex]::Match($tail, 'public\s+[^;{}]*?\b(\w+)\s*\(')
         $actionName = if ($nameMatch.Success) { $nameMatch.Groups[1].Value } else { '<unparsed>' }
-        $isPublicAuth = ($file.Name -eq 'AuthController.cs') -and ($actionName -in @('Register', 'Login'))
+        $allowedForFile = if ($allowedAnonymous.ContainsKey($file.Name)) { $allowedAnonymous[$file.Name] } else { @() }
+        $isPublicAuth = $allowedForFile -contains $actionName
         if (-not $isPublicAuth) {
             $failures.Add("AllowAnonymous outside the public auth endpoints: $($file.Name) -> $actionName")
         }

@@ -2,9 +2,9 @@
 
 Scope: the Phase-1 "F1" email verification feature for newly created Landlord, Investor and
 Admin accounts. This document covers the **configuration** the feature needs, the requirements
-a production host has to meet, the concurrency and uniqueness guarantees, and what is still
-open. It is deliberately implementation-agnostic about the HTTP surface, which is added in a
-later increment.
+a production host has to meet, the concurrency and uniqueness guarantees, the admin activation
+flow, the invitation-delivery contract for the next increment, and the open items. It is
+deliberately implementation-agnostic about the rest of the HTTP surface.
 
 ## 1. Delivery modes (`Email:DeliveryMode`)
 
@@ -35,6 +35,7 @@ A production host must provide, through configuration or user-secrets (never in 
 | `Email:AdminActivationTokenTtlHours` | lifetime of an admin activation token (default 24). |
 | `Email:ResendCooldownSeconds` | minimum gap between two resends for one account (default 60). |
 | `Email:ResendDailyCap` | maximum number of verification mails per account per day (default 10). |
+| `RateLimit:ActivationPerMinute` | attempts per minute and address on the admin activation endpoint (default 5). It has its **own** budget, so a flood of activation attempts can never exhaust the sign-in and registration budget of the same address. |
 
 Secrets handling: the password is read from configuration into the options object and handed to
 the SMTP client only. It is never written to a log, never returned in a result, never included
@@ -63,7 +64,7 @@ recipient** and the outcome only.
 |---|---|---|
 | `Registration` | 24 h | A newly registered Landlord or Investor must prove the address before the account can be used. |
 | `EmailChange` | 1 h | The active address is only replaced by a successful verification of the new one. The new address must be free everywhere (also for a soft-deleted account and as another account's pending address). The token is **bound to the requested address**; the consumption refuses it when the account's pending address is no longer that address. Issuing one requires the **current password** of the account. |
-| `AdminActivation` | 24 h | Reserved for an Admin account created by a SuperAdmin. The token proves the address **and** lets the new Admin set their own password, so no password is ever chosen by somebody else. The purpose is refused for an account that does not hold the Admin role, at issuance *and* at consumption. |
+| `AdminActivation` | 24 h | Reserved for an Admin account created by a SuperAdmin. The token proves the address **and** lets the new Admin set their own password, so no password is ever chosen by somebody else. The purpose is refused for an account that does not hold the Admin role, and for an account that is **not explicitly unverified** — a legacy account (`EMAIL_VERIFIED IS NULL`) and an already activated account are both refused, so an invitation can never take over a legacy account nor reset the password of an account that is in use. |
 
 Token handling: 32 bytes from a cryptographically secure random source, base64url encoded. Only
 the **SHA-256 hash** is stored, so a leaked database row cannot be replayed. A token is bound to
@@ -75,13 +76,14 @@ the same purpose invalidates the earlier ones, so only the newest link works.
 - **One live token per account and purpose.** Every issuance locks the account row
   (`UPDLOCK, HOLDLOCK` on the primary key — an index seek) before it invalidates the earlier
   tokens of the same purpose and inserts the new one, so two concurrent issuances cannot
-  interleave and leave two usable links. The invalidation and the insertion share one
-  transaction, so a **failed issuance leaves the previous, still usable token untouched**.
+  interleave and leave two usable links. The invalidation, the new token and the audit events
+  share one transaction, so a **failed issuance leaves the previous, still usable token untouched**
+  and the trail can never disagree with the tokens.
 - **One lock order everywhere.** Every path that touches both the account and its tokens locks
-  the **account first** and the token table second — the issuance, the consumption, the resend
-  and the administrative correction of an address. The administrative path therefore takes the
-  account lock through the token service (`LockAccountAsync`) before it retires the tokens, so
-  it cannot deadlock against the token service.
+  the **account first** and the token table second — the issuance, the consumption, the resend,
+  the administrative correction of an address and the admin activation. The administrative path
+  takes the account lock through the token service (`LockAccountAsync`) before it retires the
+  tokens, so it cannot deadlock against the token service.
 - **Consumption is atomic.** The token is read to learn the account, the account row is then
   locked, and the consumption is one conditional update — exactly one caller can win the row. A
   token issued for another purpose is refused and stays usable for its own purpose; an expired
@@ -112,14 +114,14 @@ the same purpose invalidates the earlier ones, so only the newest link works.
   `IgnoreQueryFilters`, so it agrees with the index. A claim also has to be free as the
   **pending** address of another account, not only as an active one. The uniqueness of the
   pending address and of the live token is additionally enforced by the two filtered unique
-  indexes listed in §7.
+  indexes listed in §8.
 
 ## 6. Every path that writes an address
 
 | Path | What it writes | Status |
 |---|---|---|
 | `AuthService.RegisterAsync` | the address of a new, **unverified** account | By design. Note the side effect: an unverified registration **reserves** the address (the unique index covers it) until the account is deleted, so a third party can squat an address — the smallest safe follow-up is a release policy for unverified accounts (delete on expiry, or an administrative "release the address" action). |
-| `UserService.CreateAsync` | the address of an admin-created account | By design; the account stays unusable until it is verified. |
+| `UserService.CreateAsync` | the address of an admin-created account | For a **new Admin** the account starts unverified, with a password hash nobody can match and with an activation invitation (see §7). For an **admin-created Landlord or Investor** the account keeps the legacy value (`EMAIL_VERIFIED = NULL`, treated as verified) — see the release-blocking item in §10. |
 | `UserService.UpdateAsync` | the address of an **existing** account | **Changed (security).** A direct address change of a **verified** account (including a legacy account, whose `EMAIL_VERIFIED` is NULL and therefore counts as verified) is refused with a controlled **409**: the address may only be replaced by a successful verification of the new one. For an **unverified** account the correction is allowed, because no address was ever proven — and it is complete in one transaction: the account stays unverified (`EMAIL_VERIFIED = false`, `EMAIL_VERIFIED_AT` cleared), an outstanding address change of the owner is **dropped** (`PENDING_EMAIL` cleared), and **every** live link of the account is retired, so a link sent to the previous address or for the pending address can no longer confirm anything. The conflict check covers the active **and** the pending address of every account, soft-deleted ones included, and a unique-index violation is answered with the same 409. |
 | `EmailVerificationService` (verified swap) | the active address, only after a successful verification | Correct: the pending address must be the one the token is bound to, and the current password must have been confirmed when the change was requested. |
 
@@ -130,7 +132,76 @@ anybody. It is therefore treated as a **failed login (401)**, never as a server 
 verification helper catches an unreadable hash and reports a mismatch. The generic "incorrect
 email or password" answer and the timing equaliser for an unknown address are unchanged.
 
-## 7. The database-level guarantees (applied)
+## 7. Admin onboarding, activation and invitation delivery
+
+**Creation (SuperAdmin only).** `POST /api/users` with `roleId = 3` is restricted to a
+SuperAdmin by the existing role check (a regular Admin may only create Landlords and
+Investors), and public registration stays Landlord/Investor only. The account is created:
+- **unverified** (`EMAIL_VERIFIED = false` — explicitly, not NULL),
+- with a password hash that **nobody can match**: 32 random bytes are hashed with BCrypt and
+  thrown away, so the account has no usable password and cannot be signed in before the
+  activation,
+- with the password field of the request **ignored** — a super administrator can neither know
+  nor choose the final password,
+- with an activation invitation issued by the token service (the plaintext token is never
+  returned to the caller of the creation endpoint),
+- and with the audit event `AdminAccountCreated`, naming the acting super administrator.
+
+**Who may be activated.** Only an account that is **explicitly unverified** (`EMAIL_VERIFIED =
+false`) and holds the **Admin** role, is not deleted, and has never been activated. A legacy
+account (`EMAIL_VERIFIED = NULL`) and an already activated account are refused at issuance, at
+reissue **and** at redemption, so an invitation can never take over a legacy account and can
+never reset the password of an account that is in use.
+
+**Redemption.** The invitation token is redeemed together with the password the new Admin
+chooses. The redemption requires, in one transaction: the token exists and is **unused**, its
+**purpose** is `AdminActivation`, it has **not expired**, the account exists, is **not deleted**
+and holds the **Admin** role, the account is **not already activated**, no newer invitation
+exists, and the atomic consumption update wins the row. The password is validated with the
+existing policy (at least 10 characters, at most 128, at most 72 UTF-8 bytes). The commit sets
+the new password hash, marks the address verified and appends the audit events `AdminActivated`
+and `AdminPasswordSet`. A failure rolls everything back, and two concurrent redemptions have
+exactly one winner.
+
+**Reissue.** A fresh invitation can be issued for an account that has not been activated yet; it
+invalidates the older invitations in the same transaction and appends the audit event
+`VerificationTokenInvalidated` with the reason `invitation_reissued`.
+
+### The invitation-delivery gap (for the next increment)
+Today the invitation is **issued but not delivered**: the mail composition is out of scope, so
+the plaintext token is discarded at creation and only the reissue operation returns one. The
+next increment (mail delivery) must follow this contract:
+1. **Issue** the invitation through the token service (`ReissueAdminInvitationAsync`), which
+   invalidates every older invitation in the same transaction.
+2. **Deliver** the message through `IEmailSender`. The plaintext token is handed to the mailer
+   **in process only**: no HTTP endpoint may return it, and it must never appear in a log, an
+   exception message, an audit detail or a database column.
+3. **On a delivery failure**, the account stays unactivated, the audit records
+   `VerificationEmailDeliveryFailed`, and the SuperAdmin reissues — which retires the failed
+   link, so a retry can never leave two usable invitations.
+4. **Throttle** the delivery per account (the resend cooldown and the daily cap already apply)
+   and record the masked recipient only.
+5. A delivery failure must never mark the account as activated or verified.
+
+### Endpoint contract (the only endpoint of this increment)
+```
+POST /api/auth/activate-admin
+Authorization: anonymous - the single-use token is the only credential
+Rate limit:     the dedicated "activation" policy (RateLimit:ActivationPerMinute, default 5)
+Body:           { "token": "<from the invitation link>", "password": "<the new Admin's own password>" }
+
+204  ->  activated; the account can sign in
+400  ->  the activation link is not valid (unknown, expired, already used, wrong purpose,
+          superseded) - always the same generic message, so the endpoint is not an oracle;
+          a password that does not meet the policy is answered with the policy message
+409  ->  the account cannot be activated (already active, not an Admin, deleted) or the
+          address is already in use
+429  ->  rate limited
+```
+The endpoint never returns the token, the password or the hash, and it never issues a session:
+the new Admin signs in with their own password afterwards, so the JWT behaviour is unchanged.
+
+## 8. The database-level guarantees (applied)
 
 ```sql
 -- One account may hold at most one pending address, and one address may be pending for at
@@ -158,13 +229,45 @@ merely removes the database-level backstop; the application-level checks keep wo
 sets in `Enums\EmailVerificationPurposes` and `Enums\UserSecurityEventTypes`, exactly like
 `LAND_CHANGE_REQUESTS.STATUS` and `LAND_DOCUMENTS.STATUS`.
 
-## 8. Audit trail
+## 9. Audit trail
 
 `USER_SECURITY_EVENTS` is append-only: the service offers no way to change or remove a recorded
 event, the event type must come from the closed set in `Enums\UserSecurityEventTypes`, and the
 free-text context is stripped of control characters and truncated.
 
-## 9. What exists today
+## 10. Open items
+
+1. **RELEASE-BLOCKING — every new admin-created Landlord or Investor must be
+   `EMAIL_VERIFIED = false`.** Today `UserService.CreateAsync` gives them the legacy value
+   (`NULL`, treated as verified), so an admin-created account can be used without proving its
+   address. The required follow-up, in this order:
+   (a) implement the registration-verification endpoints for Landlords and Investors (the
+   verification token, the resend and the confirmation surface),
+   (b) then set `EMAIL_VERIFIED = false` for admin-created Landlord and Investor accounts in
+   `UserService.CreateAsync`,
+   (c) then re-point the account list so an administrator can see that an account is still
+   awaiting verification.
+   The order matters: flipping the flag before (a) exists would lock those accounts out with
+   no way to verify them. The existing 230 accounts keep `NULL` (= verified) and are not
+   touched.
+2. **The committed Swagger export is one operation behind** (`POST /api/auth/activate-admin`),
+   so `docs/tests/scripts/static_contract_checks.ps1` currently reports one hard violation.
+   The export can only be produced by a running instance, so the refresh is a separately
+   approved step: run `docs/tests/verify-swagger-export.ps1` (it starts its own instance with
+   both seeders forced to a no-op and performs no database writes) — or, with a Development
+   instance already running, fetch `GET /swagger/v1/swagger.json` and write it to
+   `docs/api/swagger.json` — then re-run the static check until it passes. The live API surface
+   is already correct; only the published contract lags.
+3. The invitation is issued but not delivered (see the contract in §7); the administrative
+   surface that issues or reissues an invitation is part of the next increment.
+4. An unverified registration still **reserves** its address (squattoing) until the account is
+   deleted; an admin-created Landlord/Investor still counts as verified (item 1).
+5. The seeded `"N/A"` account still exists — it can never sign in (now a clean 401); removing
+   it is an operator decision.
+6. No dynamic test has been executed for any of this (no data-creating tests are permitted
+   yet), so the flows rest on compilation, guard analysis and code review.
+
+## 11. What exists today
 
 - **Schema (applied):** `USERS.EMAIL_VERIFIED` / `EMAIL_VERIFIED_AT` / `PENDING_EMAIL`,
   `EMAIL_VERIFICATION_TOKENS`, `USER_SECURITY_EVENTS` (migration
@@ -173,13 +276,12 @@ free-text context is stripped of control characters and truncated.
 - **Infrastructure:** the mailer abstraction with the SMTP, development-outbox and fail-closed
   senders, the configuration and its startup validation, and the append-only audit service.
 - **Token service:** issuance (registration, address change with current-password
-  confirmation, admin activation), atomic consumption, resend invalidation with cooldown and
-  daily cap, and the account-bound, purpose-checked, expiring, single-use rules.
+  confirmation, admin activation), atomic consumption, admin activation redemption, invitation
+  reissue, resend invalidation with cooldown and daily cap, and the account-bound,
+  purpose-checked, expiring, single-use rules.
+- **Admin onboarding:** SuperAdmin-only creation, an unusable placeholder password, a
+  single-use activation link that the new Admin redeems with their own password, and the
+  `POST /api/auth/activate-admin` endpoint with its own rate-limit budget.
 - **Account safety:** a direct address change of a verified account is refused with a 409, a
   correction of an unverified account keeps it unverified and retires every stale link and the
   pending change, and an unusable password hash answers a generic 401 instead of a server error.
-
-**Not implemented yet (later increments):** the HTTP endpoints, the mail bodies and the
-bilingual message templates, the login and JWT gates, the frontend surfaces, the admin
-onboarding with password setup, and the owner-facing address change with current-password
-confirmation (the service rule exists, the endpoint does not).

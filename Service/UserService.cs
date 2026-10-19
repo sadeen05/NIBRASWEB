@@ -97,7 +97,25 @@ public class UserService : IUserService
             throw new ValidationFailedException("Investor company details are required.");
         }
 
-        PasswordPolicy.Validate(request.Password);
+        // A Landlord or an Investor chooses their own password at creation. A new Admin does
+        // not: the super administrator who creates the account must never know or choose the
+        // final password, so the account starts with a hash nobody can match and the new Admin
+        // sets their own password through the single-use activation link.
+        var isAdminAccount = request.RoleId == 3;
+        if (!isAdminAccount)
+        {
+            if (string.IsNullOrWhiteSpace(request.Password))
+            {
+                throw new ValidationFailedException("A password is required for a landlord or an investor account.");
+            }
+
+            if (request.Password.Length < 10 || request.Password.Length > 128)
+            {
+                throw new ValidationFailedException("The password must be between 10 and 128 characters.");
+            }
+
+            PasswordPolicy.Validate(request.Password);
+        }
 
         var user = new User
         {
@@ -105,9 +123,15 @@ public class UserService : IUserService
             Email = request.Email,
             Phone = request.Phone,
             RoleId = request.RoleId,
-            PasswordHash = BCrypt.Net.BCrypt.HashPassword(request.Password, workFactor: 12),
+            PasswordHash = isAdminAccount
+                ? CreateUnusablePasswordHash()
+                : BCrypt.Net.BCrypt.HashPassword(request.Password!, workFactor: 12),
             IsDeleted = false,
             IsApproved = request.RoleId is 1 or 3,
+            // A new Admin has to prove the address before the account can be used. A landlord
+            // or an investor created by an admin keeps the legacy value (NULL, "verified"),
+            // because their verification flow is part of a later increment.
+            EmailVerified = isAdminAccount ? false : null,
             CompanyName = request.CompanyName,
             CompanyRegistrationNumber = request.CompanyRegistrationNumber
         };
@@ -116,7 +140,41 @@ public class UserService : IUserService
         await _context.SaveChangesAsync();
         await _context.Entry(user).Reference(u => u.Role).LoadAsync();
 
+        if (isAdminAccount)
+        {
+            // The audit records who created the account. The invitation itself is issued by the
+            // token service, and its plaintext is never returned to the caller of this method.
+            _context.UserSecurityEvents.Add(new UserSecurityEvent
+            {
+                UserId = user.Id,
+                EventType = UserSecurityEventTypes.AdminAccountCreated,
+                ActorId = _currentUser.Id,
+                CreatedAt = DateTime.UtcNow,
+            });
+            await _context.SaveChangesAsync();
+
+            var invitation = await _emailVerification.IssueAdminActivationTokenAsync(user.Id);
+            if (!invitation.Succeeded)
+            {
+                _logger.LogWarning(
+                    "The activation invitation for admin account {UserId} could not be issued; it can be reissued.",
+                    user.Id);
+            }
+        }
+
         return ToDto(user);
+    }
+
+    /// <summary>
+    /// A password hash nobody can match: 32 random bytes are hashed and then thrown away, so
+    /// the account has no usable password until the new Admin sets one through the activation
+    /// link. The secret never leaves this method.
+    /// </summary>
+    private static string CreateUnusablePasswordHash()
+    {
+        var secret = new byte[32];
+        System.Security.Cryptography.RandomNumberGenerator.Fill(secret);
+        return BCrypt.Net.BCrypt.HashPassword(Convert.ToBase64String(secret), workFactor: 12);
     }
 
     public async Task<bool> ApproveAsync(int id, int approvedById)

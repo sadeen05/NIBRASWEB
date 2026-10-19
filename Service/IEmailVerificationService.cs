@@ -74,4 +74,24 @@ public interface IEmailVerificationService
     /// cannot deadlock against each other.
     /// </summary>
     Task<bool> LockAccountAsync(int userId, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Redeems an admin activation invitation: the single-use token together with the
+    /// password the new Admin chooses. The token is consumed, the password hash is set, the
+    /// address is marked verified and the audit events are appended - all in one transaction,
+    /// so a concurrent redemption has exactly one winner and a failure changes nothing.
+    /// </summary>
+    Task<EmailVerificationResult> RedeemAdminActivationAsync(
+        string token,
+        string newPassword,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Issues a fresh activation invitation for a new Admin account and invalidates the older
+    /// ones, so only the newest link works. The plaintext token is returned to the caller that
+    /// delivers the invitation; it is never logged and never stored.
+    /// </summary>
+    Task<EmailVerificationResult> ReissueAdminInvitationAsync(
+        int adminUserId,
+        CancellationToken cancellationToken = default);
 }

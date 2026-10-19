@@ -25,3 +25,14 @@ public record AuthResponse(
     string Token,
     DateTime ExpiresAt,
     AuthUserSummary User);
+
+/// <summary>
+/// Activation of a new Admin account: the single-use invitation token together with the
+/// password the new Admin chooses for themselves.
+/// </summary>
+public record ActivateAdminRequest(
+    [param: Required, MaxLength(200), NoControlCharacters]
+    string Token,
+
+    [param: Required, MinLength(10), MaxLength(128), NoControlCharacters, MaxUtf8Bytes(72)]
+    string Password);

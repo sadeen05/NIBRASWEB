@@ -50,6 +50,20 @@ builder.Services.AddRateLimiter(options =>
                 QueueLimit = 0,
                 AutoReplenishment = true
             }));
+
+    // The admin activation endpoint has its own budget, so that a flood of activation attempts
+    // can never exhaust the sign-in and registration budget of the same address. The limit has a
+    // safe default, so the endpoint is never blocked by a missing configuration value.
+    options.AddPolicy("activation", httpContext =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = builder.Configuration.GetValue<int?>("RateLimit:ActivationPerMinute") ?? 5,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0,
+                AutoReplenishment = true
+            }));
 });
 
 builder.Services.AddDbContext<NebrasdbContext>(options =>

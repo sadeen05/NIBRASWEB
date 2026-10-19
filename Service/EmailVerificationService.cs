@@ -46,12 +46,208 @@ public sealed class EmailVerificationService : IEmailVerificationService
     public async Task<EmailVerificationResult> IssueRegistrationTokenAsync(
         int userId,
         CancellationToken cancellationToken = default) =>
-        await IssueInTransactionAsync(userId, EmailVerificationPurposes.Registration, cancellationToken);
+        await IssueInTransactionAsync(userId, EmailVerificationPurposes.Registration, null, cancellationToken);
+
+    public async Task<EmailVerificationResult> RedeemAdminActivationAsync(
+        string token,
+        string newPassword,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(token))
+        {
+            return EmailVerificationResult.Failed(VerificationOutcome.InvalidToken, "empty_token");
+        }
+
+        // The password of the new Admin is their own: it is validated with the existing policy
+        // (at least 10 characters, at most 128, at most 72 UTF-8 bytes) and it is never
+        // returned, logged or stored in clear text.
+        if (string.IsNullOrWhiteSpace(newPassword) ||
+            newPassword.Length < 10 ||
+            newPassword.Length > 128)
+        {
+            throw new ValidationFailedException("The password must be between 10 and 128 characters.");
+        }
+
+        PasswordPolicy.Validate(newPassword);
+
+        var now = DateTime.UtcNow;
+        var hash = VerificationTokenCodec.HashToken(token.Trim());
+
+        await using var transaction = await _context.Database.BeginTransactionAsync(cancellationToken);
+
+        var row = await _context.EmailVerificationTokens
+            .AsNoTracking()
+            .SingleOrDefaultAsync(t => t.TokenHash == hash, cancellationToken);
+        if (row is null)
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            return EmailVerificationResult.Failed(VerificationOutcome.InvalidToken, "unknown_token");
+        }
+
+        // Only an activation token may activate an account, and only once.
+        if (!string.Equals(row.Purpose, EmailVerificationPurposes.AdminActivation, StringComparison.Ordinal))
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            return EmailVerificationResult.Failed(VerificationOutcome.WrongPurpose, "purpose_mismatch");
+        }
+
+        if (row.ConsumedAt is not null)
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            return EmailVerificationResult.Failed(VerificationOutcome.AlreadyUsed, "already_consumed");
+        }
+
+        if (row.ExpiresAt <= now)
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            return EmailVerificationResult.Failed(VerificationOutcome.Expired, "expired");
+        }
+
+        // The account row is locked before the token row, the same order every other path uses.
+        if (!await LockAccountAsync(row.UserId, cancellationToken))
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            return EmailVerificationResult.Failed(VerificationOutcome.UserNotFound, "user_missing");
+        }
+
+        var user = await _context.Users
+            .Include(u => u.Role)
+            .SingleOrDefaultAsync(u => u.Id == row.UserId && !u.IsDeleted, cancellationToken);
+        if (user is null)
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            return EmailVerificationResult.Failed(VerificationOutcome.UserNotFound, "user_deleted_or_missing");
+        }
+
+        // The purpose is restricted to an Admin account, and the account must still be active.
+        if (!string.Equals(
+                user.Role.Name,
+                EmailVerificationPurposes.AdminActivationRequiredRole,
+                StringComparison.Ordinal))
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            _logger.LogWarning(
+                "Refused an admin activation for account {UserId}: the account does not hold the {RequiredRole} role.",
+                user.Id,
+                EmailVerificationPurposes.AdminActivationRequiredRole);
+            return EmailVerificationResult.Failed(VerificationOutcome.RoleNotAllowed, "role_not_allowed");
+        }
+
+        // An account that is already verified has been activated before, and a legacy account
+        // (EMAIL_VERIFIED IS NULL) counts as verified as well: an invitation can never reset the
+        // password of an account that is in use, and it can never take over a legacy account.
+        if (user.EmailVerified is not false)
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            return EmailVerificationResult.Failed(VerificationOutcome.AlreadyActivated, "not_activatable");
+        }
+
+        // A newer invitation invalidates the older one, so a superseded link is refused.
+        var otherLiveTokens = await _context.EmailVerificationTokens
+            .AsNoTracking()
+            .CountAsync(
+                t => t.UserId == row.UserId &&
+                     t.Purpose == row.Purpose &&
+                     t.Id != row.Id &&
+                     t.ConsumedAt == null &&
+                     t.ExpiresAt > now,
+                cancellationToken);
+        if (otherLiveTokens > 0)
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            return EmailVerificationResult.Failed(VerificationOutcome.AlreadyUsed, "superseded_invitation");
+        }
+
+        // The atomic consumption: exactly one caller can win the row, so a double click or two
+        // parallel redemptions cannot both activate the account.
+        var affected = await _context.Database.ExecuteSqlInterpolatedAsync(
+            $"UPDATE [EMAIL_VERIFICATION_TOKENS] SET [CONSUMED_AT] = {now} WHERE [ID] = {row.Id} AND [CONSUMED_AT] IS NULL AND [EXPIRES_AT] > {now}",
+            cancellationToken);
+        if (affected != 1)
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            return EmailVerificationResult.Failed(VerificationOutcome.AlreadyUsed, "consumed_concurrently");
+        }
+
+        var appliedAt = DateTime.UtcNow;
+        user.PasswordHash = BCrypt.Net.BCrypt.HashPassword(newPassword, workFactor: 12);
+        user.EmailVerified = true;
+        user.EmailVerifiedAt = appliedAt;
+
+        _context.UserSecurityEvents.Add(new UserSecurityEvent
+        {
+            UserId = user.Id,
+            EventType = UserSecurityEventTypes.AdminActivated,
+            CreatedAt = appliedAt,
+        });
+        _context.UserSecurityEvents.Add(new UserSecurityEvent
+        {
+            UserId = user.Id,
+            EventType = UserSecurityEventTypes.AdminPasswordSet,
+            CreatedAt = appliedAt,
+        });
+
+        try
+        {
+            // One commit for the consumed token, the new password, the verified address and the
+            // audit events.
+            await _context.SaveChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateException ex) when (IsUniqueViolation(ex))
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            return EmailVerificationResult.Failed(VerificationOutcome.EmailInUse, "address_already_active");
+        }
+
+        await transaction.CommitAsync(cancellationToken);
+
+        // The account, the role and the token are never part of the log line.
+        _logger.LogInformation("Admin account {UserId} activated.", user.Id);
+
+        return new EmailVerificationResult(VerificationOutcome.Succeeded);
+    }
+
+    public async Task<EmailVerificationResult> ReissueAdminInvitationAsync(
+        int adminUserId,
+        CancellationToken cancellationToken = default)
+    {
+        var user = await _context.Users
+            .Include(u => u.Role)
+            .SingleOrDefaultAsync(u => u.Id == adminUserId && !u.IsDeleted, cancellationToken);
+        if (user is null)
+        {
+            return EmailVerificationResult.Failed(VerificationOutcome.UserNotFound, "user_missing");
+        }
+
+        if (!string.Equals(
+                user.Role.Name,
+                EmailVerificationPurposes.AdminActivationRequiredRole,
+                StringComparison.Ordinal))
+        {
+            return EmailVerificationResult.Failed(VerificationOutcome.RoleNotAllowed, "role_not_allowed");
+        }
+
+        // Only an account that is explicitly unverified may receive an invitation. A legacy
+        // account (EMAIL_VERIFIED IS NULL) counts as verified, and so does an activated account.
+        if (user.EmailVerified is not false)
+        {
+            return EmailVerificationResult.Failed(VerificationOutcome.AlreadyActivated, "not_activatable");
+        }
+
+        // Issuing a new invitation retires the older ones in the same transaction, so only the
+        // newest link works. The retirement and its audit event are written together with the new
+        // token, so the trail can never disagree with the tokens.
+        return await IssueInTransactionAsync(
+            adminUserId,
+            EmailVerificationPurposes.AdminActivation,
+            "invitation_reissued",
+            cancellationToken);
+    }
 
     public async Task<EmailVerificationResult> IssueAdminActivationTokenAsync(
         int userId,
         CancellationToken cancellationToken = default) =>
-        await IssueInTransactionAsync(userId, EmailVerificationPurposes.AdminActivation, cancellationToken);
+        await IssueInTransactionAsync(userId, EmailVerificationPurposes.AdminActivation, null, cancellationToken);
 
     public async Task<EmailVerificationResult> IssueEmailChangeTokenAsync(
         int userId,
@@ -304,7 +500,7 @@ public sealed class EmailVerificationService : IEmailVerificationService
             return EmailVerificationResult.Failed(VerificationOutcome.DailyCapReached, "daily_cap_reached");
         }
 
-        var result = await IssueCoreAsync(userId, purpose, cancellationToken);
+        var result = await IssueCoreAsync(userId, purpose, null, cancellationToken);
         if (result.Succeeded)
         {
             await transaction.CommitAsync(cancellationToken);
@@ -357,10 +553,11 @@ public sealed class EmailVerificationService : IEmailVerificationService
     private async Task<EmailVerificationResult> IssueInTransactionAsync(
         int userId,
         string purpose,
+        string? invalidationReason,
         CancellationToken cancellationToken)
     {
         await using var transaction = await _context.Database.BeginTransactionAsync(cancellationToken);
-        var result = await IssueCoreAsync(userId, purpose, cancellationToken);
+        var result = await IssueCoreAsync(userId, purpose, invalidationReason, cancellationToken);
         if (result.Succeeded)
         {
             await transaction.CommitAsync(cancellationToken);
@@ -430,7 +627,7 @@ public sealed class EmailVerificationService : IEmailVerificationService
         // The active address is only replaced by a successful verification of the new one.
         user.PendingEmail = address;
 
-        return await IssueCoreAsync(userId, EmailVerificationPurposes.EmailChange, cancellationToken);
+        return await IssueCoreAsync(userId, EmailVerificationPurposes.EmailChange, null, cancellationToken);
     }
 
     /// <summary>
@@ -441,6 +638,7 @@ public sealed class EmailVerificationService : IEmailVerificationService
     private async Task<EmailVerificationResult> IssueCoreAsync(
         int userId,
         string purpose,
+        string? invalidationReason,
         CancellationToken cancellationToken)
     {
         if (!IsKnownPurpose(purpose))
@@ -477,13 +675,36 @@ public sealed class EmailVerificationService : IEmailVerificationService
             return EmailVerificationResult.Failed(VerificationOutcome.RoleNotAllowed, "role_not_allowed");
         }
 
+        // Only an account that is explicitly unverified may be activated. A legacy account
+        // (EMAIL_VERIFIED IS NULL) counts as verified, and so does an activated account: an
+        // invitation may therefore never set the password of an account that is already in use,
+        // and it can never take over a legacy account.
+        if (purpose == EmailVerificationPurposes.AdminActivation && user.EmailVerified is not false)
+        {
+            _logger.LogWarning(
+                "Refused an admin activation token for account {UserId}: the account is not an unactivated account.",
+                userId);
+            return EmailVerificationResult.Failed(VerificationOutcome.AlreadyActivated, "not_activatable");
+        }
+
         var now = DateTime.UtcNow;
 
         // A new token invalidates the earlier ones of the same purpose, so only the newest
-        // link for that purpose works.
-        await _context.Database.ExecuteSqlInterpolatedAsync(
+        // link for that purpose works. The retirement and its audit event are written in the
+        // same transaction as the new token, so the trail can never disagree with the tokens.
+        var retiredTokens = await _context.Database.ExecuteSqlInterpolatedAsync(
             $"UPDATE [EMAIL_VERIFICATION_TOKENS] SET [CONSUMED_AT] = {now} WHERE [USER_ID] = {userId} AND [PURPOSE] = {purpose} AND [CONSUMED_AT] IS NULL",
             cancellationToken);
+        if (retiredTokens > 0)
+        {
+            _context.UserSecurityEvents.Add(new UserSecurityEvent
+            {
+                UserId = userId,
+                EventType = UserSecurityEventTypes.VerificationTokenInvalidated,
+                Details = invalidationReason ?? purpose,
+                CreatedAt = now,
+            });
+        }
 
         var plaintext = VerificationTokenCodec.CreateToken();
         var expiresAt = now.AddHours(GetTtlHours(purpose));

@@ -12,11 +12,16 @@ public sealed class AuthController : ControllerBase
 {
     private readonly IAuthService _authService;
     private readonly ICurrentUser _currentUser;
+    private readonly IEmailVerificationService _emailVerification;
 
-    public AuthController(IAuthService authService, ICurrentUser currentUser)
+    public AuthController(
+        IAuthService authService,
+        ICurrentUser currentUser,
+        IEmailVerificationService emailVerification)
     {
         _authService = authService;
         _currentUser = currentUser;
+        _emailVerification = emailVerification;
     }
 
     [AllowAnonymous]
@@ -55,5 +60,42 @@ public sealed class AuthController : ControllerBase
 
         var user = await _authService.GetCurrentUserAsync(id);
         return user is null ? Unauthorized() : Ok(user);
+    }
+
+    /// <summary>
+    /// Activation of a new Admin account. The single-use invitation token is the only
+    /// credential, so the endpoint is anonymous, but it is rate-limited like the other
+    /// authentication endpoints. Every failed activation answers with the same generic
+    /// message, so the endpoint does not reveal whether a token ever existed; the precise
+    /// reason is kept in the server-side audit trail.
+    /// </summary>
+    [AllowAnonymous]
+    [EnableRateLimiting("activation")]
+    [HttpPost("activate-admin")]
+    public async Task<IActionResult> ActivateAdmin(ActivateAdminRequest request)
+    {
+        var result = await _emailVerification.RedeemAdminActivationAsync(request.Token, request.Password);
+
+        return result.Outcome switch
+        {
+            VerificationOutcome.Succeeded => NoContent(),
+            VerificationOutcome.EmailInUse => Conflict(new
+            {
+                message = "The address of the account is already in use.",
+                errorCode = "ACTIVATION_CONFLICT",
+            }),
+            VerificationOutcome.AlreadyActivated
+                or VerificationOutcome.RoleNotAllowed
+                or VerificationOutcome.UserNotFound => Conflict(new
+                {
+                    message = "The activation link is not valid.",
+                    errorCode = "ACTIVATION_INVALID",
+                }),
+            _ => BadRequest(new
+            {
+                message = "The activation link is not valid.",
+                errorCode = "ACTIVATION_INVALID",
+            }),
+        };
     }
 }
