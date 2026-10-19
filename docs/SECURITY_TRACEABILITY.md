@@ -24,14 +24,14 @@ Backend: ASP.NET Core (.NET 10) + EF Core 10 + SQL Server. Frontend: React 19 + 
 | SEC-03 | User must exist, not soft-deleted, DB role == role claim, else 401 | `Program.cs:78-100` (`OnTokenValidated`, `IgnoreQueryFilters`, `IsDeleted`, role equality) | `step3_suite.ps1` Phase D (deactivate user → old token 401; DB role change → old token 401) | VERIFIED (prior step) / STATIC |
 | SEC-04 | No cookies / no server session; fresh token every login; `Jwt:ExpiryMinutes = 120` | `Program.cs:60-101` (`SaveToken=false`); `appsettings.json` `Jwt.ExpiryMinutes=120`; `AuthService.cs:125-126` | No `AddSession`/cookie scheme anywhere; no `Set-Cookie` on any of the 63 responses (§2.1); expiry read from config | **VERIFIED NOW** (cookies/session) + STATIC (fresh-token-per-login needs a real login) |
 | SEC-05 | Login hardening: BCrypt ≥ 11, generic message + dummy-hash timing, password ≥ 10, rate limiter on login+register via `RateLimit:AuthPerMinute` → 429 | `AuthService.cs:13,74-83,52`; `PasswordPolicy.cs`; `Program.cs:39-52`; `appsettings.json:17` | `step3_ratelimit.ps1` (6th attempt → 429 with limit 5); BCrypt `workFactor: 12` | VERIFIED (prior step) — **deviation on the demo default, see §3.1** |
-| SEC-06 | Every non-public endpoint declares its roles **and** the service enforces ownership/participation via `ICurrentUser` | Controllers (`[Authorize]` class-level on Contracts/Criteria/DocumentTypes/Lands/Offers/Roles; role-scoped on Users/GridCapacityReservations; per-action on Grids/Regions); services: `LandService.cs:71,417,436`, `OfferService.cs:69,78`, `ContractService.cs:57,300`, `UserService.cs:234-261` | No endpoint is reachable anonymously (§2.1); ownership 403/404 asserted by the step suites | **VERIFIED NOW** (authz surface) + prior (ownership) |
+| SEC-06 | Every non-public endpoint declares its roles **and** the service enforces ownership/participation via `ICurrentUser` | Controllers (`[Authorize]` class-level on Contracts/Criteria/DocumentTypes/Lands/Offers/Roles; role-scoped on Users/GridCapacityReservations; per-action on Grids/Regions); services: `LandService.cs:1214` (`EnsureOwner`; called at 152, 211, 244, 403, 415, 704), `OfferService.cs:69,78`, `ContractService.cs:57,300`, `UserService.cs:234-261` | No endpoint is reachable anonymously (§2.1); ownership 403/404 asserted by the step suites | **VERIFIED NOW** (authz surface) + prior (ownership) |
 | SEC-07 | No actor/privilege field from the client; entities never bound | `RegisterRequest.RoleId [Range(1,2)]` is the only permitted exception; all other request DTOs carry no `userId`/`adminId`/`IsApproved`/`Status` | **Fixed in this session:** `DTOs/AdminReviewRequest.cs` (declared `AdminId`) removed — dead code, 0 references. Sweep is now clean; mass-assignment negatives in the step suites | **VERIFIED NOW** |
 | SEC-08 | Register → Landlord/Investor only; Admin created by SuperAdmin only; no SuperAdmin creation/promotion via API; investor approval only Admin/SuperAdmin | `AuthService.cs:27-30`; `UserService.cs:129-134,234-244,246-262`; `UsersController.cs:11,44-48,54-64` | `step3_suite.ps1`, `s4_tests.ps1` (role matrix, one negative per row) | VERIFIED (prior step) / STATIC |
 | SEC-09 | IDOR: a second user with the same role gets 403 or 404, consistently | Ownership checks in `LandService`/`OfferService`/`ContractService` via `ICurrentUser` | Step-4/5/6 suites (landlord B on A's land/documents; investor B on A's offers/contracts) | VERIFIED (prior step) / not re-run |
 | SEC-10 | Only Admin sees other users' email/phone and user lists; party views expose `FullName` only; no `PasswordHash` in any response DTO | `UsersController.cs:11` (Admin/SuperAdmin only); `ContractDto` exposes names only; no `PasswordHash` in `DTOs/` | `PasswordHash` grep over `DTOs/` and `Controllers/` → 0 hits | STATIC |
 | SEC-11 | LINQ or parameterized SQL only; filters bind to enums/whitelist | 7 `FromSqlInterpolated` uses, every one parameterized (`{id}`, `{offer.Id}`, `{offer.LandId}`, `{land.GridId}`) | Sweep: no `FromSqlRaw`/`ExecuteSqlRaw`/`SqlCommand`; only hit is the literal CSP string in `Program.cs:182` (§2.2). `s7_status_filter.ps1`: `?status=' OR 1=1--` → 400 | **VERIFIED NOW** |
 | SEC-12 | No `Process`, `Assembly.Load*`, scripting/Roslyn, reflection on user strings, `unsafe`, `stackalloc`, P/Invoke, `Marshal` | none | Sweep returns 0 real hits — the single match is the word `unsafe` inside `script-src 'self' 'unsafe-inline'` (§2.2) | **VERIFIED NOW** |
-| SEC-13 | No outbound HTTP; `FilePath` is stored text only (never opened/fetched/redirected); max 500; reject `://`, leading `\\`, `..`, control chars | `LandDocumentDtos.cs:10` (`[Required, NoControlCharacters, MaxLength(500), SafeRelativePath]`); `ValidationAttributes.cs:53-69`; `LandService.cs:324` | No `HttpClient`/`WebClient`; no `File`/`Directory`/`StreamReader` use. Negative payloads (`http://169.254.169.254/`, `file:///c:/windows/win.ini`, `\\server\share`, `..\..\x`) → 400 in `s4_regression.ps1`/`s4_tests.ps1` | **VERIFIED NOW** (static) + prior (negatives) |
+| SEC-13 | No outbound HTTP; `FilePath` is stored text only (never opened/fetched/redirected); max 500; reject `://`, leading `\\`, `..`, control chars | `LandDocumentDtos.cs:10` (`[Required, NoControlCharacters, MaxLength(500), SafeRelativePath]`); `DTOs/ValidationAttributes.cs:53-70`; `LandService.cs:460` (the `FilePath` text is stored as-is, never opened) | No `HttpClient`/`WebClient`; no `File`/`Directory`/`StreamReader` use. Negative payloads (`http://169.254.169.254/`, `file:///c:/windows/win.ini`, `\\server\share`, `..\..\x`) → 400 in `s4_regression.ps1`/`s4_tests.ps1` | **VERIFIED NOW** (static) + prior (negatives) |
 | SEC-14 | `MaxLength` = DB column, `Range` on numbers, collections capped, Kestrel `MaxRequestBodySize` ≤ 1 MB, `pageSize` ≤ 50 | `Program.cs:12-15` (1 048 576); `UserService.cs:32-33`; DTO attributes | `verify-request-size.ps1` (2 MiB body → 413, fixed Content-Length); boundary cases in `s4_regression.ps1` | STATIC + prior |
 | SEC-15 | API headers on every response; HTTPS redirect + HSTS outside Development; Swagger UI Development only; CORS not enabled | `Program.cs:170-189` (headers + CSP), `:192-196` (Swagger, dev only), `:198-201` (HSTS, non-dev), `:203` (HTTPS redirect); no `AddCors` | Live assertions on a 401: `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, `Content-Security-Policy: default-src 'none'; frame-ancestors 'none'`; Swagger UI 200 in Development; HSTS absent in Development (§2.4) | **VERIFIED NOW** (HSTS/redirect are Production-only paths: STATIC only, §3.2) |
 | SEC-16 | Frontend: no `dangerouslySetInnerHTML`/`innerHTML`/`eval`/`new Function`/`document.write`; user text rendered as text, never into `href`/`src`; strict production CSP | **Fixed in this session:** `frontend/vite.config.ts` (`nibras-production-csp`) injects the CSP meta on `vite build` only; regression check `docs/tests/verify-frontend-csp.ps1` | Sweep 0 hits. Built page carries the policy byte-for-byte with 0 inline `<script>`; the production bundle loads and renders the full login layout with 26 runtime style tags and **no** CSP violation reports (§2.5) | **VERIFIED NOW** |
@@ -161,9 +161,11 @@ the model since the last migration"), `dotnet ef migrations script` (reviewed, *
 `npm run typecheck` / `npm run lint` / `npm run build` (all exit 0), and
 `verify-frontend-csp.ps1` (PASS - SEC-16 production CSP unchanged).
 
-BLOCKED pending a write-scope approval: `verify-swagger-export.ps1` (needs a live app to
-regenerate `docs/api/swagger.json`, which is stale for the new operations and schemas),
-`verify-request-size.ps1` (needs a live app), and every DB-writing suite listed in 3.2.
+RESOLVED in Phase D: `verify-swagger-export.ps1` was run against a live instance and reports PASS -
+`docs/api/swagger.json` was regenerated for the Phase-1/2 operations and schemas and now matches the
+live API surface - and every DB-writing suite listed in 3.2 was executed against the confirmed test
+target (results in 3.2). STILL BLOCKED pending a write-scope approval: `verify-request-size.ps1`
+(needs a live app).
 
 ### 2.11 Phase 2 - rejection corrections and approved-land change requests
 
@@ -284,12 +286,15 @@ warnings are pre-existing) re-run after the evidence/lock audit, and `npm run ty
 `npm run lint` / `npm run build` (all exit 0) plus `verify-frontend-csp.ps1 -SkipBuild` (PASS) when
 the frontend was last changed.
 
-BLOCKED: migration `20261018090000_Phase2_LandCorrectionAndChangeRequests` has **not** been applied.
-The change-request endpoints, the hidden-land visibility, the derived evidence visibility and the
-owner correction path are therefore **static-only** - verified by inspection and compilation, never
-exercised against a database. The Step-4 regression suite (`s4_tests.ps1`) was updated for the new
-routing (status 6, SuperAdmin token for the resubmission cycle, negative 403s for a regular Admin)
-but was **not executed**; the document-correction lifecycle has no automated suite yet.
+RESOLVED (Phase D): migration `20261018090000_Phase2_LandCorrectionAndChangeRequests` is **applied**
+on the confirmed test target `SADEEN\SQLEXPRESS / NEBRASDB_Step1` (migration history: 14 rows, the
+Phase-2 migration last). The change-request endpoints, the hidden-land visibility, the derived
+evidence visibility and the owner correction path are therefore **no longer static-only**: they are
+exercised by the Phase-2 suite `docs/tests/scripts/p2_change_requests.ps1` (84 checks, all passing)
+and by a browser end-to-end run of the landlord and SuperAdmin journeys, while the Step-4 regression
+suite (`s4_tests.ps1`, 114 checks) covers the status-6 routing (SuperAdmin token for the resubmission
+cycle, negative 403s for a regular Admin). The document-correction lifecycle now has an automated
+suite.
 
 ## 3. Open items, deviations and risks
 
@@ -302,26 +307,41 @@ stricter than the documented demo default. `docs/tests/security-step3.http` reco
 value as intentional. **Not changed:** raising it to 30 would weaken a working control.
 Needs a reviewer ruling on whether the shipped value must be 30.
 
-### 3.2 Dynamic coverage that needs an approved write scope (BLOCKED)
+### 3.2 Dynamic coverage — executed in Phase D, and what remains open
 
-The following required checks need an app run that **creates data** (registers users, creates
-lands/offers/contracts) or a privilege change, which is a new database write scope:
+The write scope these checks needed was approved for Phase D and used against the confirmed test
+target `SADEEN\SQLEXPRESS / NEBRASDB_Step1` (app started through `s4_app.ps1`,
+`-AuthPerMinute 1000`, disposable stamped fixtures only). All of them pass, with 0 failures:
 
-- `docs/tests/security-step3.http`, `docs/tests/security-step4.http`, `docs/tests/step-3.http` … `step-6.http`
-- `step3_suite.ps1`, `s4_tests.ps1`, `s4_admin.ps1`, `s4_regression.ps1`, `s5_offers.ps1`,
-  `s6_contracts.ps1`, `parallel-approval.ps1`, `step3_ratelimit.ps1`
-- SEC-03 (deactivate user / change role), SEC-09 (second-user IDOR), SEC-16's manual
-  `<img src=x onerror=alert(1)>` entry in village/notes/reasons/messages/company name
+- `step3_suite.ps1` (PASS=29 FAIL=0), `step3_ratelimit.ps1` (PASS=4 FAIL=0), `s4_tests.ps1` (114),
+  `s4_admin.ps1` (44), `s4_regression.ps1` (47), `s4_review.ps1` (14), `s5_offers.ps1` (127),
+  `s6_contracts.ps1` (95), `s7_status_filter.ps1` (9), `s7_reservations.ps1` (41),
+  `parallel-approval.ps1` (`PARALLEL APPROVAL PASS`: one 200, one 409, grid not oversubscribed) and
+  the Phase-2 suite `p2_change_requests.ps1` (84) — plus a browser end-to-end run of the landlord and
+  SuperAdmin journeys (submit → queue → reject → resubmit → approve, EN/AR, 403 route).
+- SEC-03 (deactivate user / change role → the old token stops working) is exercised by
+  `step3_suite.ps1`; SEC-09 (second-user IDOR) by the s4/s5/s6 suites.
+
+Still open — no execution evidence, deliberately not claimed:
+
+- The `.http` request collections (`docs/tests/security-step3.http`, `security-step4.http`,
+  `step-3.http` … `step-6.http`) were updated for the governorate + admin-assessment contract but
+  remain manual clients and were **not executed**.
+- SEC-16's manual `<img src=x onerror=alert(1)>` entry in village/notes/reasons/messages/company
+  name is **not executed**; only the automated payload negatives (path traversal, `://`, control
+  characters) were run.
 - **SEC-15 HSTS + HTTPS redirect**: code-verified only. A Production-mode launch is needed to
   observe them, but `Jwt:Key` lives in user-secrets (Development-only), so a Production run
   would require supplying the signing key through the environment — deliberately not done.
+- `verify-request-size.ps1` was **not** run in this work. `verify-swagger-export.ps1` **was** run and
+  reports PASS (the committed export matches the live API surface).
 
-- Phase 1: the suites and `.http` files listed above were updated for the governorate +
-  admin-assessment contract, but **none of them has been executed** in this session.
-- `verify-swagger-export.ps1` and `verify-request-size.ps1` both need a running app, which
-  requires a connection string; neither was run.
-- Migration `20261017140348_Phase1_GovernoratesAndLandAssessment` has **not** been applied to any
-  database. Its `Down()` deliberately carries **no** `DEFAULT 0` for the six relaxed columns, so a
+- Phase 1: the suites listed above were updated for the governorate + admin-assessment contract and
+  were executed in Phase D (results above). The `.http` files listed above were updated as well and
+  remain unexecuted.
+- Migration `20261017140348_Phase1_GovernoratesAndLandAssessment` is **applied** on the confirmed
+  test target, as is the Phase-2 migration — the migration history holds 14 rows with Phase-2 last.
+  Its `Down()` deliberately carries **no** `DEFAULT 0` for the six relaxed columns, so a
   rollback fails loudly (SQL Server rejects `ALTER COLUMN ... NOT NULL` while NULLs remain) instead
   of fabricating zero technical values or concealing NULLs; recovery is forward-fix-first with a
   backup, never an automatic `Down`.
@@ -392,14 +412,29 @@ lands/offers/contracts) or a privilege change, which is a new database write sco
   evidence is re-reviewed. Serializing that last path was outside L3's scope and cannot be runtime
   tested here (no database access), so it remains a statically reviewed residual rather than a
   claimed race-free state.
-- `DocumentTypeService.DeleteAsync` checks "unused" and then deletes without a transaction
-  (`Service/DocumentTypeService.cs:81-85`). A concurrent upload of that type loses the race to the
-  FK `FK_LD_DOCTYPES` (`Models/NebrasdbContext.cs:429-432`): whichever statement commits second
-  raises a `DbUpdateException` that is not translated, so the caller sees a generic 500 instead of a
-  clean 409. Robustness only - no visibility or authorization consequence. Recommended (not
-  implemented): catch the FK violation in `DeleteAsync` (and defensively around the upload insert)
-  and map it to the existing 409 document-type message, the way `SaveLandChangesAsync` maps its two
-  unique indexes.
+- **Reference-delete FK violations are now translated into the controlled 409 path (implemented).**
+  `DocumentTypeService.DeleteAsync`, `GridService.DeleteAsync`, `RegionService.DeleteAsync` and
+  `RoleService.DeleteAsync` now catch the SQL Server foreign-key violation (error 547) and re-throw it
+  as the existing `BusinessRuleException`, so a reference conflict answers **409 `INVALID_STATE`**
+  instead of a generic 500 (`ExceptionHandler.cs:40`). The filter matches **only** 547
+  (`ex.InnerException is SqlException sql && sql.Number == 547`), so every unrelated SQL error and
+  every programming error still surfaces as 500 `INTERNAL_ERROR`; the pre-existing unique-violation
+  handlers (2601/2627) in `ContractService`/`LandService`/`OfferService` are untouched. An exhaustive
+  audit of the codebase confirms these four services are the only FK-to-409 handlers.
+  **Dynamically verified for `Region`:** an isolated test with three disposable `TEST-DEL-*` fixtures
+  (one region, one grid referencing it, one document type) on `NEBRASDB_Step1` answered **409
+  `INVALID_STATE`** ("Cannot delete a region that is in use by grids or lands") while the referencing
+  grid existed, and 204 for the unreferenced rows; the run left no residue and every table count and
+  business invariant was unchanged. **`Grid`, `DocumentType` and `Role` remain STATIC-ONLY:** a grid
+  can only be referenced by a land or a reservation, and because no land or document delete endpoint
+  exists the chain cannot be cleaned up (the residue variant was not approved); the document-type
+  pre-check always fires before the catch (only a concurrent upload could reach it); and
+  `RolesController` exposes no delete route at all. **This is not a claim of full dynamic coverage.**
+- **Still OPEN - the upload-insert half of the same race.** The mirror race on the *insert* side is
+  not addressed: `UploadDocumentAsync` performs no FK catch, so an upload that loses to a concurrent
+  delete of its document type still surfaces a generic 500. It is deferred to the future **Real
+  Document Upload** phase, which will replace the stored path reference with a real upload and can
+  then settle the insert and delete sides together.
 - The investor list materialises the outstanding-evidence land ids as an `IN`/`NOT IN` list
   (`LandService.ApplyVisibilityAsync`). In the normal lifecycle that set is tiny, but making a new
   document type required across many verified lands grows it; if that operation is ever expected at
