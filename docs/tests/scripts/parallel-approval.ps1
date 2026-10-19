@@ -20,7 +20,7 @@
 #   - Does NOT clean up its fixtures (leave them for inspection).
 #   - Exits non-zero on setup failure or assertion failure (never silently skips).
 #
-# Usage:   powershell -File docs/tests/parallel-approval.ps1
+# Usage:   powershell -File docs/tests/scripts/parallel-approval.ps1
 # Requires: the app running on http://localhost:5181 against NEBRASDB_Step1.
 
 $ErrorActionPreference = 'Stop'
