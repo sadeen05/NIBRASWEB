@@ -1,3 +1,4 @@
+using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using NIBRAS;
 using NIBRAS.API.DTOs;
@@ -82,8 +83,26 @@ public class DocumentTypeService : IDocumentTypeService
             throw new BusinessRuleException("This document type is used by uploaded documents and cannot be deleted.");
 
         _context.DocumentTypes.Remove(documentType);
-        await _context.SaveChangesAsync();
+
+        // The check above and the delete below are not atomic: an upload can insert a
+        // LAND_DOCUMENTS row for this type in between, and the foreign key then rejects the
+        // delete. That race enforces the same business rule as the check, so it must answer 409
+        // like the check does instead of surfacing as an unexpected 500.
+        try
+        {
+            await _context.SaveChangesAsync();
+        }
+        catch (DbUpdateException ex) when (IsForeignKeyViolation(ex))
+        {
+            throw new BusinessRuleException(
+                "This document type is used by uploaded documents and cannot be deleted.");
+        }
     }
+
+    // SQL Server reports a foreign-key violation as error 547. The constraint name is not matched
+    // because LAND_DOCUMENTS is the only foreign key that references DOCUMENT_TYPES.
+    private static bool IsForeignKeyViolation(DbUpdateException ex) =>
+        ex.InnerException is SqlException sql && sql.Number == 547;
 
     private static DocumentTypeDto ToDto(DocumentType documentType) =>
         new(documentType.Id, documentType.Name, documentType.IsRequiredForVerification);

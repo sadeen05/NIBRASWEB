@@ -1,4 +1,5 @@
 using Mapster;
+using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using NIBRAS.API.DTOs;
 using NIBRAS.Models;
@@ -60,7 +61,24 @@ public class RegionService : IRegionService
         var region = await _context.Regions.FindAsync(id);
         if (region == null) return false;
         _context.Regions.Remove(region);
-        await _context.SaveChangesAsync();
+
+        // A region is referenced by GRIDS and by LANDS. Deleting one that is still in use must be
+        // refused with the same controlled conflict the rest of the API uses instead of surfacing
+        // as an unexpected 500.
+        try
+        {
+            await _context.SaveChangesAsync();
+        }
+        catch (DbUpdateException ex) when (IsForeignKeyViolation(ex))
+        {
+            throw new BusinessRuleException("Cannot delete a region that is in use by grids or lands.");
+        }
+
         return true;
     }
+
+    // SQL Server reports a foreign-key violation as error 547; GRIDS and LANDS are the only tables
+    // that reference REGIONS.
+    private static bool IsForeignKeyViolation(DbUpdateException ex) =>
+        ex.InnerException is SqlException sql && sql.Number == 547;
 }

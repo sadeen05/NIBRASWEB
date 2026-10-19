@@ -1,4 +1,5 @@
 using Mapster;
+using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using NIBRAS.API.DTOs;
 using NIBRAS.Models;
@@ -55,7 +56,23 @@ public class RoleService : IRoleService
         var role = await _context.Roles.FindAsync(id);
         if (role == null) return false;
         _context.Roles.Remove(role);
-        await _context.SaveChangesAsync();
+
+        // A role that is still assigned to users cannot be deleted: USERS.ROLE_ID references it and
+        // the foreign key rejects the delete, which must answer 409 instead of an unexpected 500.
+        try
+        {
+            await _context.SaveChangesAsync();
+        }
+        catch (DbUpdateException ex) when (IsForeignKeyViolation(ex))
+        {
+            throw new BusinessRuleException("Cannot delete a role that is assigned to users.");
+        }
+
         return true;
     }
+
+    // SQL Server reports a foreign-key violation as error 547; USERS is the only table that
+    // references ROLES.
+    private static bool IsForeignKeyViolation(DbUpdateException ex) =>
+        ex.InnerException is SqlException sql && sql.Number == 547;
 }
