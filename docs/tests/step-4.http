@@ -39,69 +39,53 @@ Authorization: Bearer {{landlordToken}}
 Content-Type: application/json
 
 {
-  "regionId": 2,
-  "gridId": 2,
+  "governorateId": 1,
   "landNumber": "L-<stamp>",
   "village": "Village-A",
   "basin": "Basin-A",
   "parcelNumber": "P-<stamp>",
-  "areaDonum": 25,
-  "slopePercentage": 5,
-  "distanceToGridKm": 10,
-  "solarIrradiance": 6,
-  "elevationM": 100
+  "areaDonum": 25
 }
 
-### Duplicate parcel (same region, village, basin, parcel) — EXPECTED: 409
+### Duplicate parcel (same governorate, village, basin, parcel) - EXPECTED: 409
 # Result: PASS (409)
 POST {{baseUrl}}/api/lands
 Authorization: Bearer {{landlordToken}}
 Content-Type: application/json
 
 {
-  "regionId": 2,
-  "gridId": 2,
+  "governorateId": 1,
   "landNumber": "L-<other-stamp>",
   "village": "Village-A",
   "basin": "Basin-A",
   "parcelNumber": "P-<stamp>",
-  "areaDonum": 25,
-  "slopePercentage": 5,
-  "distanceToGridKm": 10,
-  "solarIrradiance": 6,
-  "elevationM": 100
+  "areaDonum": 25
 }
 
-### Duplicate LandNumber in the same region (different parcel) — EXPECTED: 409, no SQL detail in body
+### Duplicate LandNumber in the same governorate (different parcel) - EXPECTED: 409, no SQL detail in body
 # Result: PASS (409; regression R-02, body checked for UQ_/SqlException text: none)
 POST {{baseUrl}}/api/lands
 Authorization: Bearer {{landlordToken}}
 Content-Type: application/json
 
 {
-  "regionId": 2,
-  "gridId": 2,
+  "governorateId": 1,
   "landNumber": "L-<stamp>",
   "village": "Village-A",
   "basin": "Basin-A",
   "parcelNumber": "P-<stamp>-new",
-  "areaDonum": 25,
-  "slopePercentage": 5,
-  "distanceToGridKm": 10,
-  "solarIrradiance": 6,
-  "elevationM": 100
+  "areaDonum": 25
 }
 
-### Update to a LandNumber taken in the same region — EXPECTED: 409
+### Update to a LandNumber taken in the same governorate - EXPECTED: 409
 # Result: PASS (409; regression R-05)
 PUT {{baseUrl}}/api/lands/{{landId}}
 Authorization: Bearer {{landlordToken}}
 Content-Type: application/json
 
 {
-  "regionId": 2, "gridId": 2, "landNumber": "L-<stamp>", "village": "Village-A", "basin": "Basin-A",
-  "parcelNumber": "P-<stamp>-other", "areaDonum": 25, "slopePercentage": 5, "distanceToGridKm": 10,
-  "solarIrradiance": 6, "elevationM": 100
+  "governorateId": 1, "landNumber": "L-<stamp>", "village": "Village-A", "basin": "Basin-A",
+  "parcelNumber": "P-<stamp>-other", "areaDonum": 25
 }
 
 ### Update keeping its own LandNumber — EXPECTED: 204 (self excluded)
@@ -111,54 +95,45 @@ Authorization: Bearer {{landlordToken}}
 Content-Type: application/json
 
 {
-  "regionId": 2, "gridId": 2, "landNumber": "L3-<stamp>", "village": "Village-A", "basin": "Basin-A",
-  "parcelNumber": "P-<stamp>-other", "areaDonum": 25, "slopePercentage": 5, "distanceToGridKm": 10,
-  "solarIrradiance": 6, "elevationM": 100
+  "governorateId": 1, "landNumber": "L3-<stamp>", "village": "Village-A", "basin": "Basin-A",
+  "parcelNumber": "P-<stamp>-other", "areaDonum": 25
 }
 
 ### Race: five parallel creates with the same LandNumber — EXPECTED: one 201, four 409, no 500
 # Result: PASS (codes 201,409,409,409,409; DB holds one row). Parallel requests cannot be
 # sent from this file; the driver sends them concurrently (regression R-07..R-10).
 
-### Grid from another region — EXPECTED: 400
-# Result: PASS (400). Note: the database has one region, so "another region" is
-# modelled as regionId 1 (nonexistent) with grid 2 (region 2).
+### Unknown governorate — EXPECTED: 400
+# Result: PASS (400). Phase 1: region/grid are no longer accepted from a landlord, so the
+# region/grid consistency negative now belongs to PUT /api/lands/{id}/assessment
+# (region and grid are still refused together/individually and when the grid is not in the region).
 POST {{baseUrl}}/api/lands
 Authorization: Bearer {{landlordToken}}
 Content-Type: application/json
 
 {
-  "regionId": 1,
-  "gridId": 2,
+  "governorateId": 999999,
   "landNumber": "L-<stamp>-b",
   "village": "Village-A",
   "basin": "Basin-A",
   "parcelNumber": "P-<stamp>-b",
-  "areaDonum": 25,
-  "slopePercentage": 5,
-  "distanceToGridKm": 10,
-  "solarIrradiance": 6,
-  "elevationM": 100
+  "areaDonum": 25
 }
 
-### Slope 15 fails the criterion (max 10) — EXPECTED: 400, message lists "slope"
-# Result: PASS (400; message contains "slope")
+### Area 5 fails the criterion (min 20) — EXPECTED: 400, message lists "area"
+# Result: PASS (400; message contains "area"). Phase 1: the landowner no longer supplies
+# slope/elevation/solar/grid-distance, so the landowner-enforced criterion is area.
 POST {{baseUrl}}/api/lands
 Authorization: Bearer {{landlordToken}}
 Content-Type: application/json
 
 {
-  "regionId": 2,
-  "gridId": 2,
+  "governorateId": 1,
   "landNumber": "L-<stamp>-c",
   "village": "Village-A",
   "basin": "Basin-A",
   "parcelNumber": "P-<stamp>-c",
-  "areaDonum": 25,
-  "slopePercentage": 15,
-  "distanceToGridKm": 10,
-  "solarIrradiance": 6,
-  "elevationM": 100
+  "areaDonum": 5
 }
 
 ### Extra fields are ignored — EXPECTED: 201; DB row: owner = token user, status Draft(1), dataVerified 0
@@ -168,17 +143,12 @@ Authorization: Bearer {{landlordToken}}
 Content-Type: application/json
 
 {
-  "regionId": 2,
-  "gridId": 2,
+  "governorateId": 1,
   "landNumber": "L4-<stamp>",
   "village": "Village-A",
   "basin": "Basin-A",
   "parcelNumber": "P4-<stamp>",
   "areaDonum": 25,
-  "slopePercentage": 5,
-  "distanceToGridKm": 10,
-  "solarIrradiance": 6,
-  "elevationM": 100,
   "landlordId": 999999,
   "status": "Verified",
   "dataVerifiedByAdmin": true,
@@ -192,17 +162,12 @@ Authorization: Bearer {{landlordToken}}
 Content-Type: application/json
 
 {
-  "regionId": 2,
-  "gridId": 2,
+  "governorateId": 1,
   "landNumber": "L-<stamp>-d",
   "village": "<10000 characters generated locally>",
   "basin": "Basin-A",
   "parcelNumber": "P-<stamp>-d",
-  "areaDonum": 25,
-  "slopePercentage": 5,
-  "distanceToGridKm": 10,
-  "solarIrradiance": 6,
-  "elevationM": 100
+  "areaDonum": 25
 }
 
 ### Control character in Village — EXPECTED: 400
@@ -212,17 +177,12 @@ Authorization: Bearer {{landlordToken}}
 Content-Type: application/json
 
 {
-  "regionId": 2,
-  "gridId": 2,
+  "governorateId": 1,
   "landNumber": "L-<stamp>-e",
   "village": "Vil\u0001lage",
   "basin": "Basin-A",
   "parcelNumber": "P-<stamp>-e",
-  "areaDonum": 25,
-  "slopePercentage": 5,
-  "distanceToGridKm": 10,
-  "solarIrradiance": 6,
-  "elevationM": 100
+  "areaDonum": 25
 }
 
 ### Submit with no required-type document — EXPECTED: 409
@@ -367,17 +327,12 @@ Authorization: Bearer {{landlordToken}}
 Content-Type: application/json
 
 {
-  "regionId": 2,
-  "gridId": 2,
+  "governorateId": 1,
   "landNumber": "L-<stamp>",
   "village": "Village-A",
   "basin": "Basin-A",
   "parcelNumber": "P-<stamp>",
-  "areaDonum": 25,
-  "slopePercentage": 5,
-  "distanceToGridKm": 10,
-  "solarIrradiance": 6,
-  "elevationM": 100
+  "areaDonum": 25
 }
 
 ### Criteria: current version (any authenticated) — EXPECTED: 200
@@ -478,9 +433,8 @@ Authorization: Bearer {{landlordToken}}
 Content-Type: application/json
 
 {
-  "regionId": 2, "gridId": 2, "landNumber": "OVF-<stamp>", "village": "Village-A", "basin": "Basin-A",
-  "parcelNumber": "POVF-<stamp>", "areaDonum": 200000000, "slopePercentage": 5, "distanceToGridKm": 10,
-  "solarIrradiance": 6, "elevationM": 100
+  "governorateId": 1, "landNumber": "OVF-<stamp>", "village": "Village-A", "basin": "Basin-A",
+  "parcelNumber": "POVF-<stamp>", "areaDonum": 200000000
 }
 
 ### pageNumber near Int32.Max — EXPECTED: 200 with an empty page (SEC-14, R-45)

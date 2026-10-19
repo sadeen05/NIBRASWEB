@@ -10,7 +10,7 @@ Deadline: **18 Oct 2026**.
 > - A1. A React frontend is required. The API must stay stable and its Swagger JSON is exported after every backend step.
 > - A2. REMOVED from the MVP (do not build): `Land.OwnershipType`, `Land.LandUseType`, `DocumentType.RequiredWhen` (replaced by a bool `DocumentType.IsRequiredForVerification`), `LandCriterion.LandUseChangeFeePerM2`, `LandCriterion.EnvironmentalReviewThresholdMw`, reservation `ExpiresAt` and any expiry logic (BR-G4, HoldDays), `ProjectApproval` (optional extra only if time remains after Step 7), the cancellation request/respond/dispute flow, force-terminate, all background services, `DELETE /api/lands/{id}`.
 > - A3. Contracts MVP = create, sign, review (approve/reject), terminate (Admin). BR-K5 and the force-terminate rows are out.
-> - A4. Verification (BR-V2) requires: the latest version of every document type with `IsRequiredForVerification = true` is Approved, AND eligibility passes, AND a current criteria version exists.
+> - A4. Verification (BR-V2) requires: the latest version of every document type with `IsRequiredForVerification = true` is Approved, AND eligibility passes, AND a current criteria version exists. **Phase 1:** every enforced criterion must be assessed (a missing measurement is `NotAssessed`, never a pass) and the land must carry an assigned grid in its assigned region.
 > - A5. A reservation is released when its contract is Rejected or Terminated (the admin release endpoint comes in Step 7).
 
 ## 1. Purpose and scope
@@ -79,14 +79,14 @@ Not verified (agent must inspect before touching): tail of `GridCapacityReservat
 **Land**
 - BR-L1 Only the owner (token user) creates/edits/submits/deletes their land.
 - BR-L2 Editable only in Draft or Rejected. A Rejected land returns to Draft through explicit `revise`. Any edit when Verified/UnderContract/PendingVerification → 409.
-- BR-L3 Submit only from Draft; requires Village, Basin, ParcelNumber, Area, Slope, DistanceToGrid, Irradiance, Elevation, and at least one `TitleDeed` upload.
+- BR-L3 Submit only from Draft; requires Village, Basin, ParcelNumber, Area and at least one `TitleDeed` upload. **Phase 1 amendment:** Slope, DistanceToGrid, Irradiance and Elevation are no longer landlord-supplied. They are recorded by the admin-only `PUT /api/lands/{id}/assessment`, and a measurement that has not been assessed is reported as `NotAssessed` (never as a pass).
 - BR-L4 `GridId` must belong to `RegionId`; changing region requires a new grid in the same request.
 - BR-L5 Parcel unique per (Region, Village, Basin, ParcelNumber) among non-deleted lands.
 - BR-L6 Creating a land does not check grid capacity.
 
 **Verification**
 - BR-V1 Only Admin verifies/rejects, only from PendingVerification.
-- BR-V2 Verify requires: required documents' latest version Approved (Always; WhenShared if Shared; WhenAgricultural if Agricultural) AND eligibility passes against the current criteria version AND a current version exists.
+- BR-V2 Verify requires: required documents' latest version Approved (Always; WhenShared if Shared; WhenAgricultural if Agricultural) AND eligibility passes against the current criteria version AND a current version exists. **Phase 1 amendment:** eligibility is evaluated against the current criteria version and *every enforced criterion must be assessed* — a missing measurement is `NotAssessed`, which blocks verification and is never treated as a pass; the land must also carry an assigned grid whose region equals its assigned region.
 - BR-V3 On verify: Status=Verified, `DataVerifiedByAdmin=true`, `VerifiedAgainstCriterionId` = current version, history row with admin id.
 - BR-V4 Reject requires a reason; history row.
 - BR-V5 Eligibility is ONE function returning per-criterion results `{criterion, required, actual, passed|notEnforced}`. A null threshold is `notEnforced` (not a failure). Used by create, submit, verify and `GET eligibility`.

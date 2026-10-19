@@ -40,14 +40,9 @@ Content-Type: application/json
 
 {
   "landlordId": 1,
-  "regionId": 1,
-  "gridId": 1,
+  "governorateId": 1,
   "landNumber": "ACCEPTANCE-LAND-1",
-  "areaDonum": 10,
-  "slopePercentage": 1,
-  "distanceToGridKm": 1,
-  "solarIrradiance": 5,
-  "elevationM": 100
+  "areaDonum": 10
 }
 
 ### Submit Land

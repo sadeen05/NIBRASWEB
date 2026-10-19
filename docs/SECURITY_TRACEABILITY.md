@@ -140,6 +140,157 @@ sides, no difference.** The export is therefore not stale.
 `npm run typecheck` → exit 0; `npm run lint` → exit 0; `npm run build` → exit 0
 (only the pre-existing bundle-size advisory).
 
+### 2.10 Phase 1 - governorates, admin technical assessment and verification gating
+
+Land registration now collects a governorate (`GOVERNORATES`, twelve seeded rows) plus village,
+basin, parcel number, owner-entered land number, area and an optional description. `REGION_ID`,
+`GRID_ID` and the four technical measurements are nullable and are written **only** by the
+SuperAdmin-only `PUT /api/lands/{id}/assessment` (`[Authorize(Roles=SuperAdmin)]` plus the
+service-level `EnsureSuperAdmin`; a regular Admin receives 403), which also appends an
+append-only `LAND_ASSESSMENTS` snapshot
+(actor taken from the JWT, UTC timestamp, note, effective values with real nulls preserved; no
+update or delete route exists). The landlord create/update DTOs carry no admin-only field, so an
+owner request can neither write nor erase an assessment (SEC-07). Eligibility gains a
+`NotAssessed` result for an enforced criterion whose measurement is NULL; `NotAssessed` blocks
+verification and is never a pass, and verification additionally requires an assigned grid whose
+region equals the land's assigned region. Offer approval returns 409 when the land has no grid.
+
+Checks run in this session (no database writes): `dotnet build` (0 errors; the 4 CS8618 warnings
+are pre-existing), `dotnet ef migrations has-pending-model-changes` ("No changes have been made to
+the model since the last migration"), `dotnet ef migrations script` (reviewed, **not applied**),
+`npm run typecheck` / `npm run lint` / `npm run build` (all exit 0), and
+`verify-frontend-csp.ps1` (PASS - SEC-16 production CSP unchanged).
+
+BLOCKED pending a write-scope approval: `verify-swagger-export.ps1` (needs a live app to
+regenerate `docs/api/swagger.json`, which is stale for the new operations and schemas),
+`verify-request-size.ps1` (needs a live app), and every DB-writing suite listed in 3.2.
+
+### 2.11 Phase 2 - rejection corrections and approved-land change requests
+
+Rule 1/4 introduce a second SuperAdmin-only surface: land data (region, grid, technical
+measurements) is assessed only by a SuperAdmin, so a regular Admin reviews submitted evidence but
+never edits or re-measures a land.
+
+A rejected land's owner can correct the owner-entered fields and resubmit. The resubmission is
+routed to `LandStatus.PendingSuperAdminReview` (6), a status the regular admin queue never filters
+on, so a correction can never silently re-enter `PendingVerification`. `LandService.EnsureReviewAuthority`
+refuses every non-SuperAdmin document review, verify or reject decision on that status with 403
+(the frontend mirrors this in `canDecide`, but the backend re-checks every call).
+
+For an already-approved (`Verified`) land the owner submits a separate change request through
+`POST /api/land-change-requests` with a reason and supporting documents. The request is stored
+append-only in `LAND_CHANGE_REQUESTS` with the immutable old/new JSON snapshots, the reason, the
+documents, the requester/reviewer ids, the timestamps and the final decision. The land is hidden
+from investors for the whole review through a new `LANDS.IS_HIDDEN_FROM_INVESTORS` flag: investor
+visibility is `Status == Verified && !IsHiddenFromInvestors`, and `OfferService.CreateAsync` refuses
+new offers on a hidden land. Only a SuperAdmin decides
+(`POST /api/land-change-requests/{id}/decision`). Approval writes the proposed owner-entered fields
+and deliberately leaves the pinned `VERIFIED_AGAINST_CRITERION_ID` and `DATA_VERIFIED_BY_ADMIN`
+untouched (rule 5), re-validating the proposed area against the frozen criterion version; rejection
+keeps the original data and restores visibility only while the land is still `Verified`.
+
+Three guarantees keep the approval and evidence trail sound (F1/F3 of the audit, plus the
+re-review follow-up):
+
+- **One pending request per land.** A filtered unique index
+  `UX_LAND_CHANGE_REQUESTS_PENDING_LAND` on `(LAND_ID) WHERE [STATUS] = N'Pending'` is the
+  database-level guarantee; a losing concurrent submission is mapped to the same 409 as the
+  pre-check instead of surfacing as a 500. `LAND_CHANGE_REQUESTS.ROW_VERSION` is a rowversion
+  concurrency token, so two concurrent decisions cannot overwrite each other: the loser gets 409
+  and reloads, and the land change and its history row roll back with it.
+- **Stale proposals are refused.** On approval the land's persisted fields are compared with the
+  immutable `OLD_SNAPSHOT`; a mismatch means the land moved on after the request captured its
+  snapshot, so the stale proposal is refused (409) instead of overwriting newer data. Rejection is
+  always allowed, so a request can never be left stuck.
+- **Only affected approvals are invalidated (F1).** When the approved change moves the land's
+  identity, location or area, every `Approved` document returns to `Pending` with its review
+  (`REVIEWED_BY_ID`, `REVIEWED_AT`, `REVIEW_NOTE`) and version intact - nothing is deleted and no
+  approval becomes a rejection. A description-only change keeps every approval. A `Pending`
+  document that still carries a `REVIEWED_AT` is exactly the "re-review required" state.
+
+The re-review of an approved land's evidence is SuperAdmin-only and can only act on the **latest
+version** of a document type, and only while that land's required evidence is outstanding (an
+approval invalidated by an approved change, or a required document a SuperAdmin rejected). A
+frozen document is a conflict for every caller, so it is decided before the authority check: a
+regular Admin receives 409 (not 403) for a document that cannot be reviewed at all. On approval of
+a required document the land must still satisfy the criteria version it was verified against
+(`EnsurePinnedCriteriaStillSatisfiedAsync`), so visibility can never be restored onto a land that
+fails its pinned criteria; that guard fails closed (L2) - a missing pin or a missing criteria row
+refuses the approval (409) instead of substituting the current criteria, and rejection stays
+available.
+
+**Investor visibility is derived, not just flagged.** A verified land is presented to investors
+only while `Status == Verified && !IS_HIDDEN_FROM_INVESTORS` **and** every document type required
+for verification has an `Approved` latest version (`LandEvidence.VerifiedLandsWithOutstandingRequiredDocument`).
+Only the latest version of a type is the land's evidence, so a superseded older version never
+hides a land on its own - the same rule `VerifyAsync` applies. A required type with **no** uploaded
+version at all is outstanding too: `VerifyAsync` requires an approved latest version for every
+required type (never a vacuous pass), so a type made required after a land was verified is missing
+evidence. This is what closes the dead-end: when a SuperAdmin rejects a required document during
+the re-review, the land is already hidden (and stays hidden), and it becomes visible again only
+after a corrected version is approved. The same derived rule gates `OfferService.CreateAsync`,
+`OfferService.AdminApproveAsync` and `ContractService.CreateAsync`, so a land whose evidence is
+outstanding receives no new offer, is never committed under contract, and never has a contract
+created from its accepted offer.
+
+**Making a required type optional cannot cancel a specific rejection.** `IS_REQUIRED_FOR_VERIFICATION`
+is documented to affect future verifications and the derived evidence, not to resolve a document a
+reviewer already refused, so `DocumentTypeService.UpdateAsync` refuses (409) to clear it while an
+approved (`Verified`/`UnderContract`) land has, as the latest version of that type, a document a
+reviewer rejected **after** the land was approved (`LandEvidence.HasRejectedEvidenceForTypeAsync`).
+Otherwise clearing the flag would reveal the land to investors, re-open it for offers and make the
+rejected version un-reviewable, silently bypassing the SuperAdmin's recorded decision. With the
+guard the land stays hidden and the type stays required until the owner corrects the document and a
+SuperAdmin approves it, which is the normal re-review path. Only a re-review rejection blocks, and
+that exception is fail-closed: it applies only when the history proves it, i.e. a known review
+timestamp older than a known approval timestamp. A rejected latest version with no review timestamp,
+or an approved land with no recorded approval time, is indeterminate and is reported as a re-review
+rejection rather than silently revealing the land, so an incomplete history can never become a
+bypass. The correction flow resolves it either way: a corrected upload becomes the latest version
+(no longer `Rejected`), after which the flag change is allowed again.
+
+**Owner-only correction path.** `LandService.UploadDocumentAsync` additionally accepts an upload on
+an approved (`Verified`/`UnderContract`) land when the requested document type's latest version is
+not approved or is absent (no version uploaded at all). Only those outstanding types are accepted. The upload is a **new version** in
+`Pending` (the rejected version and its review are preserved) and on an approved land only a
+SuperAdmin can review it, so a landlord can correct evidence but cannot self-approve, supersede
+valid evidence, or bypass the SuperAdmin review. A regular Admin cannot use this path
+(`EnsureOwner`). No new schema is required for this: the state is fully derived from
+`LAND_DOCUMENTS`.
+
+**The correction upload, the document review, the verification and the change-request decision
+serialize on the land row.** All four pin the `LANDS` row with `UPDLOCK, HOLDLOCK` inside their
+transaction (`LandService.LockLandAsync`, the same convention `OfferService`/`ContractService` use)
+and read the land status, the required-document evidence and the document version *after* taking it.
+Without that, an upload's correction guard could be satisfied by evidence a concurrent review had
+just made complete, and the upload would insert a `Pending` version that supersedes valid evidence -
+silently pushing an approved land back into re-review. `VerifyAsync` takes the same lock before it
+reads the status, the criteria and the required evidence and then writes the status, the pinned
+criterion and the history in one transaction (L3), so a review can neither approve the last
+outstanding document after the evidence check read it as outstanding nor reject an approved one
+after it read it as approved; the status write is a tracking read of the same pinned row. The
+technical assessment takes the lock and re-reads the land status under it as well, because an
+assessment can withdraw document approvals while a verification is deciding on them. The decision
+leans on the same lock because its batch writes `LANDS`, `LAND_DOCUMENTS` (the invalidation) and
+`LAND_CHANGE_REQUESTS` at once: leaving that order to EF while a concurrent review holds the land
+lock and then takes a `LAND_DOCUMENTS` lock could deadlock, and taking the lock first also keeps the
+invalidation from interleaving with a re-review (whose pinned-criteria re-check then reads the
+post-decision values). Invalidating approvals only moves documents towards `Pending`, and clearing
+`IS_HIDDEN_FROM_INVESTORS` cannot reveal a land whose evidence is outstanding, so every interleaving
+stays conservative.
+
+Checks run for this work (no database writes): `dotnet build -c Release` (0 errors; the 4 CS8618
+warnings are pre-existing) re-run after the evidence/lock audit, and `npm run typecheck` /
+`npm run lint` / `npm run build` (all exit 0) plus `verify-frontend-csp.ps1 -SkipBuild` (PASS) when
+the frontend was last changed.
+
+BLOCKED: migration `20261018090000_Phase2_LandCorrectionAndChangeRequests` has **not** been applied.
+The change-request endpoints, the hidden-land visibility, the derived evidence visibility and the
+owner correction path are therefore **static-only** - verified by inspection and compilation, never
+exercised against a database. The Step-4 regression suite (`s4_tests.ps1`) was updated for the new
+routing (status 6, SuperAdmin token for the resubmission cycle, negative 403s for a regular Admin)
+but was **not executed**; the document-correction lifecycle has no automated suite yet.
+
 ## 3. Open items, deviations and risks
 
 ### 3.1 SEC-05 — demo rate-limit default (REQUIRES DECISION)
@@ -165,11 +316,95 @@ lands/offers/contracts) or a privilege change, which is a new database write sco
   observe them, but `Jwt:Key` lives in user-secrets (Development-only), so a Production run
   would require supplying the signing key through the environment — deliberately not done.
 
+- Phase 1: the suites and `.http` files listed above were updated for the governorate +
+  admin-assessment contract, but **none of them has been executed** in this session.
+- `verify-swagger-export.ps1` and `verify-request-size.ps1` both need a running app, which
+  requires a connection string; neither was run.
+- Migration `20261017140348_Phase1_GovernoratesAndLandAssessment` has **not** been applied to any
+  database. Its `Down()` deliberately carries **no** `DEFAULT 0` for the six relaxed columns, so a
+  rollback fails loudly (SQL Server rejects `ALTER COLUMN ... NOT NULL` while NULLs remain) instead
+  of fabricating zero technical values or concealing NULLs; recovery is forward-fix-first with a
+  backup, never an automatic `Down`.
+
 ### 3.3 Residual risks recorded
 
 - The concurrency fixes in `4d651b8` rely on SQL Server honouring `WITH (UPDLOCK, HOLDLOCK)`
   inside EF's composed derived table; this is evidenced empirically (SQL trace + passing
   suites) rather than proven statically.
+- `DOCUMENT_TYPES.IS_REQUIRED_FOR_VERIFICATION` is editable by a regular Admin (documented
+  behaviour, `S4-61a`/`S4-62a`; see §2.11). Because investor visibility is derived from the
+  required set, making a type required now hides *every* verified land that has no approved
+  version of it until the owner uploads one and a SuperAdmin approves it - which is exactly what
+  `VerifyAsync` already enforced at verification time. It never rewrites an existing verification
+  snapshot, and making a type optional can no longer reveal a land whose latest version of that
+  type a reviewer rejected after approval - that toggle is refused (next bullet). Restricting the
+  field to a SuperAdmin would be a product-policy change and is **not** implemented; the permission
+  is unchanged.
+- Making a required type optional cannot cancel a specific rejection.
+  `DocumentTypeService.UpdateAsync` refuses (409) to clear `IS_REQUIRED_FOR_VERIFICATION` while an
+  approved (`Verified`/`UnderContract`) land has, as the latest version of that type, a document a
+  reviewer rejected **after** the land was approved (`LandEvidence.HasRejectedEvidenceForTypeAsync`;
+  see §2.11). Without it the flag change would reveal the land to investors, re-open it for offers
+  and make the rejected version un-reviewable - silently bypassing the recorded SuperAdmin
+  decision. Making a type required and renaming it remain 200, and no rejection exists in the
+  `S4-61a`/`S4-62a` flow, so those expectations are unchanged.
+- Contract creation re-checks the land's evidence (`ContractService.CreateAsync`; see §2.11), so a
+  land that stopped having valid evidence after its offer was approved is not committed to a
+  contract. Residual: the trigger is a `DOCUMENT_TYPES` write (creating or making a type required),
+  which takes no lock on `LANDS` or on the offer, so it can commit between that check and the
+  contract insert. No lock in `CreateAsync` can close this - a `LANDS` `UPDLOCK` would only
+  serialize against the re-review, which cannot start until such a change has already committed -
+  and locking the required set in `DocumentTypeService.UpdateAsync` would serialize every
+  document-type edit against every contract creation. Accepted as a bounded, benign interleaving:
+  the land is `UnderContract`, so it is never investor-visible and receives no new offers, and the
+  correction flow resolves the evidence. Recommendation: no change; revisit only if a hard
+  serialization point is required.
+- **Stored change-request snapshots are read defensively (L1).** An approval reads
+  `OLD_SNAPSHOT`/`NEW_SNAPSHOT` only on the approval path; JSON that cannot be read fails the
+  approval closed with a controlled 409 and is never replaced by an empty, current or guessed
+  snapshot. JSON that parses but is not a usable proposal - an empty object such as `{}`, a blank
+  identity field, or an area outside the range the create request accepts - is treated the same
+  way, so a stored snapshot can never blank the land's fields on approval or be shown as if it
+  were real data. A rejection deserializes nothing and always stays possible, so no request can be
+  stuck and no land can be trapped behind one. The read endpoints return the unreadable snapshot
+  (and the stored supporting-document list) as `null`, and the UI reports that it cannot be read
+  instead of showing invented values; the stored row is never repaired, rewritten or replaced.
+  Recovery for genuinely corrupt stored JSON is an authorized data operation, not an automatic
+  repair.
+- **The pinned criteria version is mandatory for a positive decision (L2).** A land with no
+  `VERIFIED_AGAINST_CRITERION_ID`, or whose pinned `LAND_CRITERIA` row no longer exists, cannot
+  approve a change request (`LandService.EnsureFrozenAreaCriterionAsync`) or re-approve a required
+  document (`LandService.EnsurePinnedCriteriaStillSatisfiedAsync`): both guards fail closed with a
+  controlled 409 instead of substituting the latest criteria, which would move an approval onto
+  criteria it was never granted against. Criteria rows are append-only (no update or delete endpoint
+  exists), so the state is only reachable through out-of-band data loss. Rejection stays available at
+  every call site, so no request is ever stuck; a verified land in that state stays hidden from
+  investors while its evidence is outstanding - the safe state, because restoring its visibility is
+  exactly the act that must not happen without its criteria basis. Documented recovery: an
+  authorized repair that restores the referenced `LAND_CRITERIA` row (or, if the row cannot be
+  restored, a SuperAdmin-led data decision). No automatic substitution and no DB repair script.
+- **Writers of `LANDS`/`LAND_DOCUMENTS` outside the land lock.** `LandService.UpdateAsync` (owner
+  edit, only from `Draft`/`Rejected`) still writes `LANDS` and can withdraw approvals without taking
+  the land lock, and the plain status transitions (`Submit`/`Revise`/`Reject`) write `LANDS` the same
+  way. Their preconditions are disjoint from verification by status, and the owner edit's
+  invalidation only moves approvals towards `Pending`, so the recorded failure mode is fail-safe: an
+  owner edit that commits after a verification leaves the land verified but hidden until the
+  evidence is re-reviewed. Serializing that last path was outside L3's scope and cannot be runtime
+  tested here (no database access), so it remains a statically reviewed residual rather than a
+  claimed race-free state.
+- `DocumentTypeService.DeleteAsync` checks "unused" and then deletes without a transaction
+  (`Service/DocumentTypeService.cs:81-85`). A concurrent upload of that type loses the race to the
+  FK `FK_LD_DOCTYPES` (`Models/NebrasdbContext.cs:429-432`): whichever statement commits second
+  raises a `DbUpdateException` that is not translated, so the caller sees a generic 500 instead of a
+  clean 409. Robustness only - no visibility or authorization consequence. Recommended (not
+  implemented): catch the FK violation in `DeleteAsync` (and defensively around the upload insert)
+  and map it to the existing 409 document-type message, the way `SaveLandChangesAsync` maps its two
+  unique indexes.
+- The investor list materialises the outstanding-evidence land ids as an `IN`/`NOT IN` list
+  (`LandService.ApplyVisibilityAsync`). In the normal lifecycle that set is tiny, but making a new
+  document type required across many verified lands grows it; if that operation is ever expected at
+  scale, the predicate should move into a server-side `NOT EXISTS`. Unchanged shape from the
+  original derived-evidence implementation.
 - `GET /api/criteria/current`, `GetAllAsync` aggregations and similar endpoints are unbounded
   by design (pre-existing); `pageSize` is capped at 50 where paging exists.
 - No automated CI: the `.http` suites are executed manually (accepted risk G7 in the spec).
