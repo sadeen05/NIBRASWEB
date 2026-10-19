@@ -2,6 +2,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using System.Threading.RateLimiting;
+using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 using NIBRAS;
 using NIBRAS.API.Services;
@@ -119,6 +120,38 @@ builder.Services.AddScoped<IContractService, ContractService>();
 builder.Services.AddScoped<ICriteriaService, CriteriaService>();
 builder.Services.AddScoped<IDocumentTypeService, DocumentTypeService>();
 builder.Services.AddScoped<IGridCapacityReservationService, GridCapacityReservationService>();
+
+// Email verification support. The delivery mode, the sender and the token lifetimes come from
+// configuration only - no address, host, user or password is part of the source. The
+// configuration is validated at startup: outside Development the mode must be SMTP, so email
+// verification can neither be switched off nor diverted into the development outbox.
+builder.Services.AddOptions<EmailOptions>()
+    .Bind(builder.Configuration.GetSection(EmailOptions.SectionName))
+    .ValidateOnStart();
+builder.Services.AddSingleton<IValidateOptions<EmailOptions>>(sp =>
+    new EmailOptionsValidator(sp.GetRequiredService<IHostEnvironment>()));
+builder.Services.AddSingleton<IEmailSender>(sp =>
+{
+    var options = sp.GetRequiredService<IOptions<EmailOptions>>().Value;
+    var loggerFactory = sp.GetRequiredService<ILoggerFactory>();
+
+    if (options.IsSmtp)
+    {
+        return new SmtpEmailSender(Options.Create(options), loggerFactory.CreateLogger<SmtpEmailSender>());
+    }
+
+    if (options.IsFileOutbox)
+    {
+        return new FileOutboxEmailSender(
+            Options.Create(options),
+            sp.GetRequiredService<IHostEnvironment>(),
+            loggerFactory.CreateLogger<FileOutboxEmailSender>());
+    }
+
+    return new DisabledEmailSender(loggerFactory.CreateLogger<DisabledEmailSender>());
+});
+builder.Services.AddScoped<IUserSecurityEventService, UserSecurityEventService>();
+
 builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
 builder.Services.AddProblemDetails();
 builder.Services.AddEndpointsApiExplorer();

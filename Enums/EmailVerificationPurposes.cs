@@ -1,3 +1,5 @@
+using NIBRAS.Models;
+
 namespace NibrasWeb.Enums;
 
 /// <summary>
@@ -23,4 +25,11 @@ public static class EmailVerificationPurposes
     /// else and no activation can be skipped.
     /// </summary>
     public const string AdminActivation = "AdminActivation";
+
+    /// <summary>
+    /// The role an account must hold for the <see cref="AdminActivation"/> purpose to be
+    /// issued. The purpose is reserved for an Admin account created by a SuperAdmin and is
+    /// never issued for a Landlord, an Investor or a SuperAdmin account.
+    /// </summary>
+    public const string AdminActivationRequiredRole = RoleNames.Admin;
 }

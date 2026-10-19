@@ -44,4 +44,27 @@ public static class UserSecurityEventTypes
 
     /// <summary>An admin approved an account (the investor approval, independent of verification).</summary>
     public const string AccountApproved = "AccountApproved";
+
+    private static readonly HashSet<string> Known = new(StringComparer.Ordinal)
+    {
+        RegistrationCreated,
+        AdminAccountCreated,
+        VerificationEmailSent,
+        VerificationEmailResent,
+        VerificationEmailDeliveryFailed,
+        EmailVerified,
+        VerificationFailed,
+        LoginBlockedUnverified,
+        EmailChangeRequested,
+        EmailChanged,
+        AdminActivated,
+        AdminPasswordSet,
+        AccountApproved,
+    };
+
+    /// <summary>
+    /// Whether the value belongs to the closed set of event types. An unknown type is a
+    /// programming error and is refused, so no free-form value ever reaches the audit trail.
+    /// </summary>
+    public static bool IsKnown(string? eventType) => eventType is not null && Known.Contains(eventType);
 }
