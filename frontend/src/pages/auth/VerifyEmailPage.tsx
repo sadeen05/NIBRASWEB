@@ -1,22 +1,16 @@
-import { Alert, Button, Form, Input, Spin, Typography } from 'antd';
-import { CheckCircle2, Mail, RefreshCw } from 'lucide-react';
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { Alert, Button, Spin, Typography } from 'antd';
+import { CheckCircle2 } from 'lucide-react';
+import { useLayoutEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router-dom';
 
-import { resendVerification, verifyEmail } from '@/api/auth';
+import { verifyEmail } from '@/api/auth';
 import { isApiError } from '@/api/errors';
 import { LanguageToggle } from '@/components/LanguageToggle';
+import { VerificationResendForm } from '@/components/VerificationResendForm';
 import { AuthAside } from '@/pages/auth/AuthAside';
 import { takeTokenFromFragment } from '@/pages/auth/verificationToken';
-import type { ResendVerificationRequest, VerifyEmailRequest } from '@/types/auth';
-
-/**
- * The cooldown of the resend endpoint, mirrored from the backend configuration
- * (`Email:ResendCooldownSeconds`, default 60). The countdown is a courtesy: the
- * server enforces the limit, the page only avoids a pointless round trip.
- */
-const RESEND_COOLDOWN_SECONDS = 60;
+import type { VerifyEmailRequest } from '@/types/auth';
 
 type VerifyState =
   | 'checking'
@@ -27,12 +21,6 @@ type VerifyState =
   | 'network'
   | 'error'
   | 'missingToken';
-
-type ResendState = 'idle' | 'sending' | 'sent' | 'failed';
-
-interface ResendFormValues {
-  email: string;
-}
 
 /**
  * Maps the answer of the endpoint to a state. The server answers every failed
@@ -71,11 +59,7 @@ function describeVerificationError(error: unknown): VerifyState {
  */
 export function VerifyEmailPage() {
   const { t } = useTranslation();
-  const [form] = Form.useForm<ResendFormValues>();
   const [verifyState, setVerifyState] = useState<VerifyState>('checking');
-  const [resendState, setResendState] = useState<ResendState>('idle');
-  const [resendError, setResendError] = useState<string | null>(null);
-  const [cooldown, setCooldown] = useState(0);
   const redemptionStarted = useRef(false);
 
   useLayoutEffect(() => {
@@ -105,43 +89,7 @@ export function VerifyEmailPage() {
     })();
   }, []);
 
-  // The countdown of the resend cooldown. It only tells the user when the next
-  // request can be made; the server enforces the limit.
-  useEffect(() => {
-    if (cooldown <= 0) {
-      return;
-    }
-
-    const timer = window.setInterval(() => {
-      setCooldown((current) => (current > 0 ? current - 1 : 0));
-    }, 1000);
-
-    return () => window.clearInterval(timer);
-  }, [cooldown]);
-
-  const handleResend = async (values: ResendFormValues) => {
-    setResendState('sending');
-    setResendError(null);
-
-    try {
-      const payload: ResendVerificationRequest = { email: values.email.trim() };
-      await resendVerification(payload);
-
-      // The answer is the same for every address, so nothing is shown about
-      // the account. The cooldown starts now, so the next request is not sent
-      // before the server would accept it.
-      setResendState('sent');
-      setCooldown(RESEND_COOLDOWN_SECONDS);
-      form.resetFields();
-    } catch (error) {
-      setResendState('failed');
-      setResendError(
-        isApiError(error) && error.status === 429
-          ? t('verifyEmail.rateLimitedBody')
-          : t('verifyEmail.resendFailed'),
-      );
-    }
-  };
+  // The countdown of the resend cooldown lives in the shared form.
 
   const renderAlert = (title: string, body: string) => (
     <Alert
@@ -217,79 +165,7 @@ export function VerifyEmailPage() {
             <>
               {state}
 
-              <Typography.Title level={5} style={{ marginTop: 4 }}>
-                {t('verifyEmail.resendTitle')}
-              </Typography.Title>
-              <Typography.Paragraph type="secondary">
-                {t('verifyEmail.resendSubtitle')}
-              </Typography.Paragraph>
-
-              {resendError && (
-                <Alert
-                  type="error"
-                  showIcon
-                  role="alert"
-                  title={resendError}
-                  style={{ marginBottom: 18 }}
-                />
-              )}
-
-              {resendState === 'sent' && (
-                <Alert
-                  type="success"
-                  showIcon
-                  role="status"
-                  title={t('verifyEmail.resendSent')}
-                  style={{ marginBottom: 18 }}
-                />
-              )}
-
-              <Form<ResendFormValues>
-                form={form}
-                layout="vertical"
-                requiredMark={false}
-                onFinish={handleResend}
-                disabled={resendState === 'sending' || cooldown > 0}
-                autoComplete="off"
-              >
-                <Form.Item
-                  name="email"
-                  label={t('verifyEmail.emailLabel')}
-                  rules={[
-                    { required: true, message: t('verifyEmail.emailRequired') },
-                    { type: 'email', message: t('verifyEmail.emailInvalid') },
-                  ]}
-                >
-                  <Input
-                    size="large"
-                    type="email"
-                    maxLength={255}
-                    autoComplete="email"
-                    placeholder={t('verifyEmail.emailPlaceholder')}
-                    prefix={<Mail size={16} aria-hidden="true" />}
-                  />
-                </Form.Item>
-
-                <Form.Item style={{ marginBottom: 0, marginTop: 8 }}>
-                  <Button
-                    type="primary"
-                    size="large"
-                    htmlType="submit"
-                    block
-                    icon={<RefreshCw size={16} aria-hidden="true" />}
-                    loading={resendState === 'sending'}
-                    disabled={resendState === 'sending' || cooldown > 0}
-                  >
-                    {t('verifyEmail.resendSubmit')}
-                  </Button>
-                </Form.Item>
-              </Form>
-
-              {cooldown > 0 && (
-                <Typography.Paragraph type="secondary" style={{ marginTop: 12, marginBottom: 0 }}>
-                  {t('verifyEmail.cooldown', { seconds: cooldown })}
-                </Typography.Paragraph>
-              )}
+              <VerificationResendForm />
 
               <p style={{ margin: '18px 0 0', textAlign: 'center' }}>
                 <Link to="/login">{t('verifyEmail.backToSignIn')}</Link>

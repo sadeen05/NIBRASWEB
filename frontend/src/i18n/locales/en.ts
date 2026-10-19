@@ -38,6 +38,10 @@ export const en = {
     invalidCredentials: 'Incorrect email or password.',
     networkError: 'Cannot reach the server. Make sure the backend is running and try again.',
     unexpectedError: 'Something went wrong while signing in. Please try again.',
+    emailNotVerifiedTitle: 'Confirm your email address first',
+    emailNotVerifiedBody:
+      'This account has not confirmed its email address yet. Request a new verification message below, confirm the address, and then sign in again.',
+    goToVerify: 'Open the verification page',
     asideTitle: 'Land and renewable-energy investment, in one platform.',
     pointRegister: 'Register land, verify it against policy criteria, and track its status.',
     pointDiscover: 'Discover verified parcels and negotiate investment offers.',
@@ -86,6 +90,14 @@ export const en = {
     goToSignIn: 'Go to sign in',
     duplicate: 'This email or phone number is already registered. Try signing in instead.',
     roleNotAllowed: 'Only Landlord and Investor accounts can be created here.',
+    verifyRequiredTitle: 'Confirm your email address',
+    verifyRequiredBody:
+      'We sent a verification message to {{email}}. Open the link in that message to confirm your address - you can sign in once you have confirmed it.',
+    verifyRequiredInvestorBody:
+      'We sent a verification message to {{email}}. Open the link in that message to confirm your address - you can sign in once you have confirmed it. An administrator must still approve the account before you can browse lands and make offers.',
+    verifyRequiredFailedBody:
+      'The verification message for {{email}} could not be sent. Request a new one below - the account stays inactive until the address is confirmed.',
+    goToVerify: 'Open the verification page',
   },
   activateAdmin: {
     title: 'Activate your administrator account',

@@ -1,6 +1,6 @@
 import { useMutation } from '@tanstack/react-query';
 import { Alert, Button, Form, Input, Space, Typography } from 'antd';
-import { ArrowLeft, CheckCircle2, HandCoins, Lock, Mail, Phone, Sprout, User } from 'lucide-react';
+import { ArrowLeft, CheckCircle2, HandCoins, Lock, Mail, MailCheck, Phone, Sprout, User } from 'lucide-react';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link, useNavigate } from 'react-router-dom';
@@ -8,6 +8,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { register as registerAccount } from '@/api/auth';
 import { resolveApiMessage } from '@/api/knownMessages';
 import { LanguageToggle } from '@/components/LanguageToggle';
+import { VerificationResendForm } from '@/components/VerificationResendForm';
 import { AuthAside } from '@/pages/auth/AuthAside';
 import type { AuthUserSummary, RegisterRequest, RegisterRoleId } from '@/types/auth';
 
@@ -56,12 +57,21 @@ export function RegisterPage() {
   const [step, setStep] = useState<RegisterStep>('role');
   const [roleId, setRoleId] = useState<RegisterRoleId>(LANDLORD_ROLE_ID);
   const [created, setCreated] = useState<AuthUserSummary | null>(null);
+  const [registeredEmail, setRegisteredEmail] = useState('');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [form] = Form.useForm<RegisterFormValues>();
 
   const isInvestor = roleId === INVESTOR_ROLE_ID;
   const roleLabel = isInvestor ? t('roles.Investor') : t('roles.Landlord');
   const createdIsInvestor = created?.role === 'Investor';
+
+  // The backend tells the page whether the new account has to confirm its address before it
+  // may be used. The field arrives with the increment that creates the accounts unverified;
+  // while it is absent, a registration does not require a confirmation and the old success
+  // step is shown.
+  const verificationStatus = created?.verification;
+  const verificationRequired = verificationStatus === 'handed_over' || verificationStatus === 'failed';
+  const verificationFailed = verificationStatus === 'failed';
 
   const mutation = useMutation({
     mutationFn: (values: RegisterFormValues) => {
@@ -78,9 +88,10 @@ export function RegisterPage() {
       };
       return registerAccount(payload);
     },
-    onSuccess: (summary) => {
+    onSuccess: (summary, variables) => {
       setErrorMessage(null);
       setCreated(summary);
+      setRegisteredEmail(variables.email.trim());
       setStep('done');
     },
     onError: (error: unknown) => setErrorMessage(resolveApiMessage(error, t)),
@@ -335,7 +346,36 @@ export function RegisterPage() {
             </>
           )}
 
-          {step === 'done' && (
+          {step === 'done' && verificationRequired && (
+            <div>
+              <div role="status" aria-live="polite">
+                <MailCheck size={44} color="var(--nb-primary)" aria-hidden="true" />
+                <Typography.Title level={5} style={{ marginTop: 14, marginBottom: 0 }}>
+                  {t('register.verifyRequiredTitle')}
+                </Typography.Title>
+                <Typography.Paragraph style={{ margin: '8px 0 0' }}>
+                  {verificationFailed
+                    ? t('register.verifyRequiredFailedBody', { email: registeredEmail })
+                    : createdIsInvestor
+                      ? t('register.verifyRequiredInvestorBody', { email: registeredEmail })
+                      : t('register.verifyRequiredBody', { email: registeredEmail })}
+                </Typography.Paragraph>
+              </div>
+              <Button
+                type="primary"
+                size="large"
+                block
+                onClick={() => navigate('/verify-email')}
+                style={{ marginTop: 12 }}
+              >
+                {t('register.goToVerify')}
+              </Button>
+
+              <VerificationResendForm initialEmail={registeredEmail} />
+            </div>
+          )}
+
+          {step === 'done' && !verificationRequired && (
             <div role="status" aria-live="polite" style={{ textAlign: 'center' }}>
               <CheckCircle2 size={44} color="var(--nb-primary)" aria-hidden="true" />
               <Typography.Paragraph style={{ margin: '14px 0 0' }}>

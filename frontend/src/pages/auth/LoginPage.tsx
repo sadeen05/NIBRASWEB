@@ -9,6 +9,7 @@ import { safeRedirectTarget } from '@/auth/routeAccess';
 import { useAuth } from '@/auth/useAuth';
 import { FullPageState } from '@/components/FullPageState';
 import { LanguageToggle } from '@/components/LanguageToggle';
+import { VerificationResendForm } from '@/components/VerificationResendForm';
 import { AuthAside } from '@/pages/auth/AuthAside';
 
 interface LoginFormValues {
@@ -63,6 +64,8 @@ export function LoginPage() {
   const location = useLocation();
   const [submitting, setSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [emailNotVerified, setEmailNotVerified] = useState(false);
+  const [attemptedEmail, setAttemptedEmail] = useState('');
 
   if (status === 'authenticated') {
     // Only honour the intended destination when this role may actually open it;
@@ -83,13 +86,21 @@ export function LoginPage() {
   const handleSubmit = async (values: LoginFormValues) => {
     setSubmitting(true);
     setErrorMessage(null);
+    setEmailNotVerified(false);
     try {
       const authenticated = await login(values.email.trim(), values.password);
       navigate(safeRedirectTarget(fromTarget(location.state), authenticated.role), { replace: true });
     } catch (error) {
       if (!isApiError(error)) {
         setErrorMessage(t('login.unexpectedError'));
+      } else if (error.status === 403 && error.errorCode === 'EMAIL_NOT_VERIFIED') {
+        // The address of the account has not been confirmed yet. This is a different
+        // situation than a wrong password, and the account is not wrong: the page explains
+        // how to get a new verification message.
+        setEmailNotVerified(true);
+        setAttemptedEmail(values.email.trim());
       } else if (error.kind === 'unauthorized') {
+        // A wrong address and a wrong password still answer the same generic message.
         setErrorMessage(t('login.invalidCredentials'));
       } else if (error.kind === 'network' || error.kind === 'unavailable') {
         setErrorMessage(t('login.networkError'));
@@ -119,6 +130,31 @@ export function LoginPage() {
             </div>
             <LanguageToggle />
           </div>
+
+          {emailNotVerified && (
+            <div style={{ marginBottom: 18 }}>
+              <div role="status" aria-live="polite">
+                <Alert
+                  type="warning"
+                  showIcon
+                  role="status"
+                  title={t('login.emailNotVerifiedTitle')}
+                  description={t('login.emailNotVerifiedBody')}
+                />
+              </div>
+              <Button
+                type="primary"
+                size="large"
+                block
+                onClick={() => navigate('/verify-email')}
+                style={{ marginTop: 12 }}
+              >
+                {t('login.goToVerify')}
+              </Button>
+
+              <VerificationResendForm initialEmail={attemptedEmail} />
+            </div>
+          )}
 
           {errorMessage && (
             <Alert

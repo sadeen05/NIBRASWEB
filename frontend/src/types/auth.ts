@@ -13,6 +13,18 @@ export interface AuthUserSummary {
   role: string;
   /** Whether an investor account has been approved. Not the same as authentication. */
   isApproved: boolean;
+  /**
+   * The verification part of a registration answer: `handed_over` when a verification mail
+   * was handed to the mailer, `failed` when it could not be handed over, and
+   * `not_applicable` when the registration does not require a confirmation.
+   *
+   * The backend does not return the field yet - it arrives with the increment that creates
+   * new accounts unverified. The field is therefore optional, and the client keeps working
+   * with both shapes: while it is absent, a registration does not require a confirmation.
+   */
+  verification?: 'not_applicable' | 'handed_over' | 'failed';
+  /** A short explanation that belongs to the verification status. Never a credential. */
+  verificationMessage?: string;
 }
 
 /** `POST /api/auth/login` response body. */
