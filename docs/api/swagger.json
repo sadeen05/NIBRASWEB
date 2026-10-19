@@ -758,6 +758,84 @@
         }
       }
     },
+    "/api/Governorates": {
+      "get": {
+        "tags": [
+          "Governorates"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/GovernorateDto"
+                  }
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/GovernorateDto"
+                  }
+                }
+              },
+              "text/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/GovernorateDto"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/Governorates/{id}": {
+      "get": {
+        "tags": [
+          "Governorates"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "$ref": "#/components/schemas/GovernorateDto"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GovernorateDto"
+                }
+              },
+              "text/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GovernorateDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/GridCapacityReservations": {
       "get": {
         "tags": [
@@ -1080,6 +1158,197 @@
         }
       }
     },
+    "/api/land-change-requests": {
+      "post": {
+        "tags": [
+          "LandChangeRequests"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateLandChangeRequestRequest"
+              }
+            },
+            "text/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateLandChangeRequestRequest"
+              }
+            },
+            "application/*+json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateLandChangeRequestRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "$ref": "#/components/schemas/LandChangeRequestDto"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LandChangeRequestDto"
+                }
+              },
+              "text/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LandChangeRequestDto"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "LandChangeRequests"
+        ],
+        "parameters": [
+          {
+            "name": "landId",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/LandChangeRequestDto"
+                  }
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/LandChangeRequestDto"
+                  }
+                }
+              },
+              "text/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/LandChangeRequestDto"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/land-change-requests/pending": {
+      "get": {
+        "tags": [
+          "LandChangeRequests"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/LandChangeRequestDto"
+                  }
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/LandChangeRequestDto"
+                  }
+                }
+              },
+              "text/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/LandChangeRequestDto"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/land-change-requests/{id}/decision": {
+      "post": {
+        "tags": [
+          "LandChangeRequests"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReviewLandChangeRequestRequest"
+              }
+            },
+            "text/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReviewLandChangeRequestRequest"
+              }
+            },
+            "application/*+json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReviewLandChangeRequestRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "$ref": "#/components/schemas/LandChangeRequestDto"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LandChangeRequestDto"
+                }
+              },
+              "text/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LandChangeRequestDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/Lands": {
       "get": {
         "tags": [
@@ -1324,6 +1593,25 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VerifyLandRequest"
+              }
+            },
+            "text/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VerifyLandRequest"
+              }
+            },
+            "application/*+json": {
+              "schema": {
+                "$ref": "#/components/schemas/VerifyLandRequest"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": "OK"
@@ -1629,6 +1917,114 @@
               "text/json": {
                 "schema": {
                   "$ref": "#/components/schemas/LandDocumentDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/Lands/{id}/assessment": {
+      "put": {
+        "tags": [
+          "Lands"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AssessLandRequest"
+              }
+            },
+            "text/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AssessLandRequest"
+              }
+            },
+            "application/*+json": {
+              "schema": {
+                "$ref": "#/components/schemas/AssessLandRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "$ref": "#/components/schemas/LandDto"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LandDto"
+                }
+              },
+              "text/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LandDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/Lands/{id}/assessments": {
+      "get": {
+        "tags": [
+          "Lands"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/LandAssessmentDto"
+                  }
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/LandAssessmentDto"
+                  }
+                }
+              },
+              "text/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/LandAssessmentDto"
+                  }
                 }
               }
             }
@@ -2703,6 +3099,59 @@
   },
   "components": {
     "schemas": {
+      "AssessLandRequest": {
+        "type": "object",
+        "properties": {
+          "regionId": {
+            "maximum": 2147483647,
+            "minimum": 1,
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "gridId": {
+            "maximum": 2147483647,
+            "minimum": 1,
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "slopePercentage": {
+            "maximum": 100,
+            "minimum": 0,
+            "type": "number",
+            "format": "double",
+            "nullable": true
+          },
+          "distanceToGridKm": {
+            "maximum": 1000000,
+            "minimum": 0,
+            "type": "number",
+            "format": "double",
+            "nullable": true
+          },
+          "solarIrradiance": {
+            "maximum": 12,
+            "minimum": 0,
+            "type": "number",
+            "format": "double",
+            "nullable": true
+          },
+          "elevationM": {
+            "maximum": 10000,
+            "minimum": -1000,
+            "type": "number",
+            "format": "double",
+            "nullable": true
+          },
+          "note": {
+            "maxLength": 500,
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
       "AuthResponse": {
         "type": "object",
         "properties": {
@@ -2737,6 +3186,27 @@
           },
           "isApproved": {
             "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ChangeRequestDocumentDto": {
+        "required": [
+          "documentTypeId",
+          "filePath"
+        ],
+        "type": "object",
+        "properties": {
+          "documentTypeId": {
+            "maximum": 2147483647,
+            "minimum": 1,
+            "type": "integer",
+            "format": "int32"
+          },
+          "filePath": {
+            "maxLength": 500,
+            "minLength": 1,
+            "type": "string"
           }
         },
         "additionalProperties": false
@@ -2975,6 +3445,76 @@
         },
         "additionalProperties": false
       },
+      "CreateLandChangeRequestRequest": {
+        "required": [
+          "basin",
+          "landId",
+          "landNumber",
+          "parcelNumber",
+          "reason",
+          "village"
+        ],
+        "type": "object",
+        "properties": {
+          "landId": {
+            "maximum": 2147483647,
+            "minimum": 1,
+            "type": "integer",
+            "format": "int32"
+          },
+          "reason": {
+            "maxLength": 500,
+            "minLength": 1,
+            "type": "string"
+          },
+          "governorateId": {
+            "maximum": 2147483647,
+            "minimum": 1,
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "landNumber": {
+            "maxLength": 50,
+            "minLength": 1,
+            "type": "string"
+          },
+          "village": {
+            "maxLength": 100,
+            "minLength": 1,
+            "type": "string"
+          },
+          "basin": {
+            "maxLength": 100,
+            "minLength": 1,
+            "type": "string"
+          },
+          "parcelNumber": {
+            "maxLength": 100,
+            "minLength": 1,
+            "type": "string"
+          },
+          "areaDonum": {
+            "maximum": 99999999.99,
+            "minimum": 0.0001,
+            "type": "number",
+            "format": "double"
+          },
+          "description": {
+            "maxLength": 1000,
+            "type": "string",
+            "nullable": true
+          },
+          "supportingDocuments": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ChangeRequestDocumentDto"
+            },
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
       "CreateLandCriterionRequest": {
         "required": [
           "reason"
@@ -3027,19 +3567,15 @@
       "CreateLandRequest": {
         "required": [
           "basin",
-          "gridId",
           "landNumber",
           "parcelNumber",
-          "regionId",
           "village"
         ],
         "type": "object",
         "properties": {
-          "regionId": {
-            "type": "integer",
-            "format": "int32"
-          },
-          "gridId": {
+          "governorateId": {
+            "maximum": 2147483647,
+            "minimum": 1,
             "type": "integer",
             "format": "int32"
           },
@@ -3069,29 +3605,10 @@
             "type": "number",
             "format": "double"
           },
-          "slopePercentage": {
-            "maximum": 100,
-            "minimum": 0,
-            "type": "number",
-            "format": "double"
-          },
-          "distanceToGridKm": {
-            "maximum": 1000000,
-            "minimum": 0,
-            "type": "number",
-            "format": "double"
-          },
-          "solarIrradiance": {
-            "maximum": 12,
-            "minimum": 0,
-            "type": "number",
-            "format": "double"
-          },
-          "elevationM": {
-            "maximum": 10000,
-            "minimum": -1000,
-            "type": "number",
-            "format": "double"
+          "description": {
+            "maxLength": 1000,
+            "type": "string",
+            "nullable": true
           }
         },
         "additionalProperties": false
@@ -3249,6 +3766,28 @@
         },
         "additionalProperties": false
       },
+      "GovernorateDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "code": {
+            "type": "string",
+            "nullable": true
+          },
+          "nameEn": {
+            "type": "string",
+            "nullable": true
+          },
+          "nameAr": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
       "GridCapacityReservationDto": {
         "type": "object",
         "properties": {
@@ -3321,6 +3860,135 @@
         },
         "additionalProperties": false
       },
+      "LandAssessmentDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "landId": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "assessedById": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "assessedByName": {
+            "type": "string",
+            "nullable": true
+          },
+          "assessedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "note": {
+            "type": "string",
+            "nullable": true
+          },
+          "regionId": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "gridId": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "slopePercentage": {
+            "type": "number",
+            "format": "double",
+            "nullable": true
+          },
+          "distanceToGridKm": {
+            "type": "number",
+            "format": "double",
+            "nullable": true
+          },
+          "solarIrradiance": {
+            "type": "number",
+            "format": "double",
+            "nullable": true
+          },
+          "elevationM": {
+            "type": "number",
+            "format": "double",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "LandChangeRequestDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "landId": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "landNumber": {
+            "type": "string",
+            "nullable": true
+          },
+          "status": {
+            "type": "string",
+            "nullable": true
+          },
+          "reason": {
+            "type": "string",
+            "nullable": true
+          },
+          "requestedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "requestedById": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "requestedByName": {
+            "type": "string",
+            "nullable": true
+          },
+          "originalFields": {
+            "$ref": "#/components/schemas/LandFieldsSnapshot"
+          },
+          "proposedFields": {
+            "$ref": "#/components/schemas/LandFieldsSnapshot"
+          },
+          "supportingDocuments": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ChangeRequestDocumentDto"
+            },
+            "nullable": true
+          },
+          "reviewedById": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "reviewedByName": {
+            "type": "string",
+            "nullable": true
+          },
+          "reviewedAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "decisionReason": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
       "LandCriterionDto": {
         "type": "object",
         "properties": {
@@ -3387,7 +4055,8 @@
           },
           "actual": {
             "type": "number",
-            "format": "double"
+            "format": "double",
+            "nullable": true
           },
           "result": {
             "type": "string",
@@ -3462,7 +4131,8 @@
           },
           "regionId": {
             "type": "integer",
-            "format": "int32"
+            "format": "int32",
+            "nullable": true
           },
           "regionName": {
             "type": "string",
@@ -3470,7 +4140,17 @@
           },
           "gridId": {
             "type": "integer",
-            "format": "int32"
+            "format": "int32",
+            "nullable": true
+          },
+          "governorateId": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "governorateName": {
+            "type": "string",
+            "nullable": true
           },
           "landNumber": {
             "type": "string",
@@ -3488,25 +4168,33 @@
             "type": "string",
             "nullable": true
           },
+          "description": {
+            "type": "string",
+            "nullable": true
+          },
           "areaDonum": {
             "type": "number",
             "format": "double"
           },
           "slopePercentage": {
             "type": "number",
-            "format": "double"
+            "format": "double",
+            "nullable": true
           },
           "distanceToGridKm": {
             "type": "number",
-            "format": "double"
+            "format": "double",
+            "nullable": true
           },
           "solarIrradiance": {
             "type": "number",
-            "format": "double"
+            "format": "double",
+            "nullable": true
           },
           "elevationM": {
             "type": "number",
-            "format": "double"
+            "format": "double",
+            "nullable": true
           },
           "status": {
             "type": "string",
@@ -3519,6 +4207,9 @@
             "type": "integer",
             "format": "int32",
             "nullable": true
+          },
+          "isHiddenFromInvestors": {
+            "type": "boolean"
           }
         },
         "additionalProperties": false
@@ -3540,6 +4231,41 @@
             "items": {
               "$ref": "#/components/schemas/LandCriterionResult"
             },
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "LandFieldsSnapshot": {
+        "type": "object",
+        "properties": {
+          "governorateId": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "landNumber": {
+            "type": "string",
+            "nullable": true
+          },
+          "village": {
+            "type": "string",
+            "nullable": true
+          },
+          "basin": {
+            "type": "string",
+            "nullable": true
+          },
+          "parcelNumber": {
+            "type": "string",
+            "nullable": true
+          },
+          "areaDonum": {
+            "type": "number",
+            "format": "double"
+          },
+          "description": {
+            "type": "string",
             "nullable": true
           }
         },
@@ -3948,6 +4674,23 @@
         },
         "additionalProperties": false
       },
+      "ReviewLandChangeRequestRequest": {
+        "required": [
+          "decisionReason"
+        ],
+        "type": "object",
+        "properties": {
+          "approved": {
+            "type": "boolean"
+          },
+          "decisionReason": {
+            "maxLength": 500,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
       "ReviewLandDocumentRequest": {
         "type": "object",
         "properties": {
@@ -4015,21 +4758,18 @@
       "UpdateLandRequest": {
         "required": [
           "basin",
-          "gridId",
           "landNumber",
           "parcelNumber",
-          "regionId",
           "village"
         ],
         "type": "object",
         "properties": {
-          "regionId": {
+          "governorateId": {
+            "maximum": 2147483647,
+            "minimum": 1,
             "type": "integer",
-            "format": "int32"
-          },
-          "gridId": {
-            "type": "integer",
-            "format": "int32"
+            "format": "int32",
+            "nullable": true
           },
           "landNumber": {
             "maxLength": 50,
@@ -4057,29 +4797,10 @@
             "type": "number",
             "format": "double"
           },
-          "slopePercentage": {
-            "maximum": 100,
-            "minimum": 0,
-            "type": "number",
-            "format": "double"
-          },
-          "distanceToGridKm": {
-            "maximum": 1000000,
-            "minimum": 0,
-            "type": "number",
-            "format": "double"
-          },
-          "solarIrradiance": {
-            "maximum": 12,
-            "minimum": 0,
-            "type": "number",
-            "format": "double"
-          },
-          "elevationM": {
-            "maximum": 10000,
-            "minimum": -1000,
-            "type": "number",
-            "format": "double"
+          "description": {
+            "maxLength": 1000,
+            "type": "string",
+            "nullable": true
           }
         },
         "additionalProperties": false
@@ -4215,6 +4936,17 @@
           "totalPages": {
             "type": "integer",
             "format": "int32"
+          }
+        },
+        "additionalProperties": false
+      },
+      "VerifyLandRequest": {
+        "type": "object",
+        "properties": {
+          "note": {
+            "maxLength": 400,
+            "type": "string",
+            "nullable": true
           }
         },
         "additionalProperties": false
