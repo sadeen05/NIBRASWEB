@@ -151,6 +151,7 @@ builder.Services.AddSingleton<IEmailSender>(sp =>
     return new DisabledEmailSender(loggerFactory.CreateLogger<DisabledEmailSender>());
 });
 builder.Services.AddScoped<IUserSecurityEventService, UserSecurityEventService>();
+builder.Services.AddScoped<IEmailVerificationService, EmailVerificationService>();
 
 builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
 builder.Services.AddProblemDetails();

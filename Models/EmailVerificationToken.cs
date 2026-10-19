@@ -23,8 +23,11 @@ public partial class EmailVerificationToken
     public byte[] TokenHash { get; set; } = null!;
 
     /// <summary>
-    /// The address that was active when a change was requested. Kept for the audit trail only:
-    /// an active address is replaced solely by a successful verification.
+    /// The address this token is bound to. For an address-change token it is the <b>requested</b>
+    /// address the recipient has to prove, and the consumption refuses the token when the
+    /// account's pending address is no longer that address, so a stale token can never confirm a
+    /// different address. For the other purposes it is null. (The S1 migration named the column
+    /// PREVIOUS_EMAIL; renaming it to TARGET_EMAIL is proposed as a separate follow-up.)
     /// </summary>
     public string? PreviousEmail { get; set; }
 

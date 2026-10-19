@@ -45,6 +45,12 @@ public static class UserSecurityEventTypes
     /// <summary>An admin approved an account (the investor approval, independent of verification).</summary>
     public const string AccountApproved = "AccountApproved";
 
+    /// <summary>
+    /// A verification token was created for an account. The purpose is recorded in the event
+    /// details; the token itself is never part of an event.
+    /// </summary>
+    public const string VerificationTokenIssued = "VerificationTokenIssued";
+
     private static readonly HashSet<string> Known = new(StringComparer.Ordinal)
     {
         RegistrationCreated,
@@ -60,6 +66,7 @@ public static class UserSecurityEventTypes
         AdminActivated,
         AdminPasswordSet,
         AccountApproved,
+        VerificationTokenIssued,
     };
 
     /// <summary>
