@@ -12,6 +12,7 @@ import { DashboardPlaceholder } from '@/pages/app/DashboardPlaceholder';
 import { ActivateAdminPage } from '@/pages/auth/ActivateAdminPage';
 import { LoginPage } from '@/pages/auth/LoginPage';
 import { RegisterPage } from '@/pages/auth/RegisterPage';
+import { VerifyEmailPage } from '@/pages/auth/VerifyEmailPage';
 import { ContractDetailPage } from '@/pages/contracts/ContractDetailPage';
 import { ContractsListPage } from '@/pages/contracts/ContractsListPage';
 import { DiscoverLandDetailPage } from '@/pages/investor/DiscoverLandDetailPage';
@@ -41,6 +42,9 @@ export const router = createBrowserRouter([
       // The activation link of a new administrator account carries its token in
       // the URL fragment, so this page is public and reads the fragment itself.
       { path: '/activate-admin', element: <ActivateAdminPage /> },
+      // The verification link of a new Landlord or Investor account carries its
+      // token in the URL fragment as well, so this page is public too.
+      { path: '/verify-email', element: <VerifyEmailPage /> },
       { path: '/403', element: <ForbiddenPage /> },
       { path: '*', element: <NotFoundPage /> },
     ],

@@ -101,6 +101,11 @@ export const KNOWN_MESSAGES: Record<string, string> = {
   'The activation link is not valid.': 'activateAdmin.invalidLink',
   'The address of the account is already in use.': 'activateAdmin.addressInUse',
 
+  // --- Address confirmation -------------------------------------------------
+  // The same rule: every unusable token is answered with the same generic
+  // message, so the copy stays generic and never names a reason.
+  'The verification link is not valid.': 'verifyEmail.invalidBody',
+
   // --- Land technical assessment (Phase 1) ----------------------------------
   'Governorate does not exist.': 'lands.errors.governorateMissing',
   'Region and grid must be provided together.': 'admin.assessmentRegionGridPair',

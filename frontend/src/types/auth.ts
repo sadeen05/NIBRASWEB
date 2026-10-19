@@ -60,6 +60,26 @@ export interface ActivateAdminRequest {
   password: string;
 }
 
+/**
+ * `POST /api/auth/verify-email` request body. Mirrors the backend
+ * `VerifyEmailRequest` record: the single-use registration token from the
+ * verification mail. Only a registration token is accepted; the endpoint
+ * answers 204 No Content on success.
+ */
+export interface VerifyEmailRequest {
+  token: string;
+}
+
+/**
+ * `POST /api/auth/resend-verification` request body. Mirrors the backend
+ * `ResendVerificationRequest` record. The endpoint answers with the same
+ * generic 202 whether the address belongs to an account or not, so the answer
+ * never reveals that an account exists.
+ */
+export interface ResendVerificationRequest {
+  email: string;
+}
+
 /** Client-side session, derived from {@link AuthResponse}. */
 export interface Session {
   token: string;
