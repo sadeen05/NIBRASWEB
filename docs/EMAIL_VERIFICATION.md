@@ -336,15 +336,19 @@ Rate limit:     the dedicated "verification-resend" policy
 Body:           { "email": "<the address the account was created with>" }
 
 202  ->  always. A missing account, an account that is already verified, an ineligible
-         account, an active cooldown, a reached daily cap and a failed delivery all produce
-         the same answer, so the endpoint never reveals whether an address belongs to an
-         account. The per-account cooldown and the daily cap are enforced by the token
-         service under the account lock; the external limit may answer 429.
-         The work runs **after** the answer, in its own scope: neither the answer nor its
-         duration depends on the account state or on the mail hand-off, so the endpoint is
-         not a timing oracle. A delivery that fails - or that is lost when the host shuts
-         down - is recorded in the audit trail, and the recipient can request another mail
-         once the cooldown has elapsed.
+         account, an active cooldown, a reached daily cap, a refused request and a failed
+         delivery all produce the same answer, so the endpoint never reveals whether an
+         address belongs to an account. The per-account cooldown and the daily cap are
+         enforced by the token service under the account lock; the external limit may answer
+         429.
+         The work is handed to the managed delivery worker, so neither the answer nor its
+         duration depends on the account state or on the mail hand-off: the endpoint is not a
+         timing oracle. A delivery that the **mailer** refuses is recorded in the audit trail
+         (`VerificationEmailDeliveryFailed`). A request whose work is **lost** - because the
+         host stopped, or because the process ended - is **not** audited: a graceful stop
+         counts and logs it, a sudden crash cannot even count it reliably, and a cancelled
+         delivery is not a confirmed non-delivery at all. The recipient then finds no mail and
+         requests another one once the cooldown has elapsed.
 
 POST /api/users/{id}/verification      (SuperAdmin only, no body)
 202  ->  the verification mail was handed over for delivery; the token is never in the response
@@ -356,6 +360,55 @@ No endpoint returns the token, and no endpoint verifies an account directly: the
 confirm an address is a valid, single-use registration token. The administrative resend can
 never activate an administrator account — that flow has its own invitation — and it never
 verifies anything by itself.
+
+### The delivery worker
+
+The anonymous resend hands its work to **one managed worker** with a **bounded queue** instead
+of starting a task per request:
+
+- the queue holds at most **100** pending requests, and a request that does not fit is
+  **refused** instead of waiting: the request that offers the work is never blocked, and no
+  unlimited number of tasks is created. A refused request is counted and logged (the first
+  refusal and every fiftieth one), and the anonymous caller is not told anything;
+- the queue carries **the minimum**: the address of the account and the remote address of the
+  request. The **verification token is never part of it** — it is created inside the worker,
+  in the worker's own scope, so no secret rests in the queue and no secret passes between two
+  components;
+- the worker performs one delivery at a time, each in its own scope with its own database
+  context, so the amount of work, the number of database contexts and the number of mail
+  hand-offs are all limited. The per-account cooldown, the daily cap, the atomic issuance and
+  the delivery audits are the ones of the token service and the delivery service — unchanged;
+- a failure of **one** delivery stays isolated: it is counted and the worker continues. A
+  failure that is **not** one delivery is fatal for the worker: the host is stopped
+  (`BackgroundServiceExceptionBehavior.StopHost`, set explicitly) instead of leaving a worker
+  that is gone behind a host that still answers — the endpoint would then accept requests
+  that can never be delivered. The application does not restart the worker itself; the
+  deployment does;
+- a **cancelled** delivery is not a confirmed non-delivery: the message may or may not have
+  reached the mailer, the cancellation is passed on, and **no** failed delivery is recorded
+  for it. Only a delivery the mailer actually refused is audited as
+  `VerificationEmailDeliveryFailed`;
+- the **lifecycle is controlled**: the queue stops accepting requests when the host stops, the
+  accepted work gets a **bounded drain period** (15 s) to finish, and what is left is counted
+  as interrupted. A single delivery may take at most 60 s, so a stuck mail server is reported
+  as a failed delivery instead of stalling the worker;
+- the worker counts **accepted, refused, processed, failed and interrupted** work, and the
+  summary it writes on shutdown carries counts only — never an address and never a token. A
+  failed item is reported by the **type** of its exception only, because a database error can
+  carry the address of the account. "Processed" does not mean that a mail was sent: a request
+  for an address that belongs to no account is processed as well and produces no mail — whether
+  a mail was handed over is recorded in the audit trail, not in the counters;
+- **the delivery is not durable and not crash-safe.** There is no outbox, no broker and no
+  persistent queue, and no exactly-once delivery: a mail can be handed over and the work can
+  still be lost, or a new mail can retire an earlier one. A **graceful** stop lets the
+  accepted work finish for a bounded period; what is left is counted as interrupted and
+  logged, but it is **not audited** — the audit trail only holds what the delivery service
+  itself recorded. A **sudden crash** loses the queued work *and* the counters, because they
+  live in the process: such a loss can neither be counted reliably nor be audited. A
+  recipient that receives no mail asks for another one, and the per-account cooldown and daily
+  cap keep that bounded. A delivery that survives a restart would need a durable outbox, and
+  the plaintext token would have to be protected there — that is a separate decision, not
+  part of this increment.
 
 ### The sign-in gate
 
@@ -503,9 +556,9 @@ free-text context is stripped of control characters and truncated.
   unverified Landlord or Investor account, the address binding of the token, the resend limits
   and the in-process handover of the token, the anonymous confirmation endpoint with its own
   rate-limit budget, the anonymous resend that answers the same in every case and whose work
-  runs outside the request, the SuperAdmin-only resend, and the sign-in gate that refuses an
-  unverified account without touching the legacy accounts. The flag flip is **not** part of it
-  yet (§11.1).
+  runs in a managed worker with a bounded queue, the SuperAdmin-only resend, and the sign-in
+  gate that refuses an unverified account without touching the legacy accounts. The flag flip
+  is **not** part of it yet (§11.1).
 - **Activation UI (implemented, untested):** the public page `/activate-admin` reads the token
   from the URL fragment, drops the fragment from the address bar and the history before the first
   paint, mirrors the server's password policy, redeems the token and shows the 204 / 400 / 409 /

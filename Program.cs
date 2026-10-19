@@ -209,6 +209,22 @@ builder.Services.AddScoped<IEmailVerificationService, EmailVerificationService>(
 builder.Services.AddScoped<IAdminInvitationService, AdminInvitationService>();
 builder.Services.AddScoped<IRegistrationVerificationService, RegistrationVerificationService>();
 
+// The verification deliveries run in one managed worker with a bounded queue: the request
+// that offers the work is never blocked, the amount of pending work is limited, and the
+// worker owns the lifecycle and the shutdown.
+builder.Services.AddSingleton<VerificationDeliveryCounters>();
+builder.Services.AddSingleton<IVerificationDeliveryQueue, VerificationDeliveryQueue>();
+builder.Services.AddHostedService<VerificationDeliveryWorker>();
+
+// A background service that fails fatally must not leave the application running in a
+// degraded state - a worker that is gone while the host still answers would accept requests
+// that can never be delivered. The host is stopped instead, and the deployment restarts it.
+// The behaviour is set explicitly rather than relied upon as the default.
+builder.Services.Configure<HostOptions>(options =>
+{
+    options.BackgroundServiceExceptionBehavior = BackgroundServiceExceptionBehavior.StopHost;
+});
+
 builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
 builder.Services.AddProblemDetails();
 builder.Services.AddEndpointsApiExplorer();

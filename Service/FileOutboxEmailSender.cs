@@ -68,6 +68,14 @@ public sealed class FileOutboxEmailSender : IEmailSender
             File.Move(temporaryPath, filePath, overwrite: true);
             EmailOutboxLocation.RestrictFileToOwner(filePath);
         }
+        catch (OperationCanceledException)
+        {
+            // A cancelled write is not a confirmed non-delivery: the message may or may not
+            // have been written. The cancellation is passed on, so the caller can tell the
+            // two apart and no failed delivery is recorded for it - the same rule the SMTP
+            // sender follows.
+            throw;
+        }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Writing a message to the development outbox failed.");

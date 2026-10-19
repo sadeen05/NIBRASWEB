@@ -14,18 +14,18 @@ public sealed class AuthController : ControllerBase
     private readonly IAuthService _authService;
     private readonly ICurrentUser _currentUser;
     private readonly IEmailVerificationService _emailVerification;
-    private readonly IRegistrationVerificationService _registrationVerification;
+    private readonly IVerificationDeliveryQueue _deliveryQueue;
 
     public AuthController(
         IAuthService authService,
         ICurrentUser currentUser,
         IEmailVerificationService emailVerification,
-        IRegistrationVerificationService registrationVerification)
+        IVerificationDeliveryQueue deliveryQueue)
     {
         _authService = authService;
         _currentUser = currentUser;
         _emailVerification = emailVerification;
-        _registrationVerification = registrationVerification;
+        _deliveryQueue = deliveryQueue;
     }
 
     [AllowAnonymous]
@@ -155,13 +155,15 @@ public sealed class AuthController : ControllerBase
     [AllowAnonymous]
     [EnableRateLimiting("verification-resend")]
     [HttpPost("resend-verification")]
-    public async Task<IActionResult> ResendVerification(ResendVerificationRequest request)
+    public IActionResult ResendVerification(ResendVerificationRequest request)
     {
-        // The work runs outside the request: the answer is the same in every case, and its
-        // duration never depends on the account state or on the mail hand-off.
-        await _registrationVerification.RequestToAddressAsync(
+        // The work is handed to the managed delivery worker, which performs it with its own
+        // scope: the answer is the same in every case, and its duration never depends on the
+        // account state or on the mail hand-off. A queue that is full is not reported to the
+        // caller either - the refusal is counted and logged by the queue.
+        _deliveryQueue.TryEnqueue(new VerificationDeliveryRequest(
             request.Email,
-            HttpContext.Connection.RemoteIpAddress?.ToString());
+            HttpContext.Connection.RemoteIpAddress?.ToString()));
 
         return Accepted(new
         {
