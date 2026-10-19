@@ -13,17 +13,20 @@ public class UserService : IUserService
     private readonly ILogger<UserService> _logger;
     private readonly ICurrentUser _currentUser;
     private readonly IEmailVerificationService _emailVerification;
+    private readonly IAdminInvitationService _adminInvitation;
 
     public UserService(
         NebrasdbContext context,
         ILogger<UserService> logger,
         ICurrentUser currentUser,
-        IEmailVerificationService emailVerification)
+        IEmailVerificationService emailVerification,
+        IAdminInvitationService adminInvitation)
     {
         _context = context;
         _logger = logger;
         _currentUser = currentUser;
         _emailVerification = emailVerification;
+        _adminInvitation = adminInvitation;
     }
 
     public async Task<UserListResponse> GetAllAsync(
@@ -74,7 +77,7 @@ public class UserService : IUserService
         return ToDto(user);
     }
 
-    public async Task<UserDto> CreateAsync(CreateUserRequest request)
+    public async Task<UserCreationResponse> CreateAsync(CreateUserRequest request)
     {
         EnsureCallerCanCreateRole(request.RoleId);
 
@@ -140,29 +143,40 @@ public class UserService : IUserService
         await _context.SaveChangesAsync();
         await _context.Entry(user).Reference(u => u.Role).LoadAsync();
 
-        if (isAdminAccount)
+        var dto = ToDto(user);
+        if (!isAdminAccount)
         {
-            // The audit records who created the account. The invitation itself is issued by the
-            // token service, and its plaintext is never returned to the caller of this method.
-            _context.UserSecurityEvents.Add(new UserSecurityEvent
-            {
-                UserId = user.Id,
-                EventType = UserSecurityEventTypes.AdminAccountCreated,
-                ActorId = _currentUser.Id,
-                CreatedAt = DateTime.UtcNow,
-            });
-            await _context.SaveChangesAsync();
-
-            var invitation = await _emailVerification.IssueAdminActivationTokenAsync(user.Id);
-            if (!invitation.Succeeded)
-            {
-                _logger.LogWarning(
-                    "The activation invitation for admin account {UserId} could not be issued; it can be reissued.",
-                    user.Id);
-            }
+            return new UserCreationResponse(dto, "not_applicable");
         }
 
-        return ToDto(user);
+        // The audit records who created the account.
+        _context.UserSecurityEvents.Add(new UserSecurityEvent
+        {
+            UserId = user.Id,
+            EventType = UserSecurityEventTypes.AdminAccountCreated,
+            ActorId = _currentUser.Id,
+            CreatedAt = DateTime.UtcNow,
+        });
+        await _context.SaveChangesAsync();
+
+        // The invitation is delivered in process: the plaintext token never returns to the
+        // caller and never reaches a log. A delivery failure leaves the account unverified and
+        // unusable, and the SuperAdmin can send the invitation again - which retires the failed
+        // link, so a retry never leaves two usable invitations and never creates a second
+        // account.
+        var invitation = await _adminInvitation.SendAsync(user.Id, _currentUser.Id);
+        if (!invitation.Sent)
+        {
+            _logger.LogWarning(
+                "The activation invitation for admin account {UserId} could not be sent; it can be sent again.",
+                user.Id);
+            return new UserCreationResponse(
+                dto,
+                "failed",
+                "The invitation could not be handed over for delivery. The account stays inactive until the invitation succeeds.");
+        }
+
+        return new UserCreationResponse(dto, "handed_over");
     }
 
     /// <summary>

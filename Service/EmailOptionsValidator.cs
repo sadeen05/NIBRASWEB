@@ -75,6 +75,42 @@ public sealed class EmailOptionsValidator : IValidateOptions<EmailOptions>
             }
         }
 
+        // Whenever a delivery mode is configured, the activation link has to be buildable.
+        if (!options.IsDisabled)
+        {
+            if (string.IsNullOrWhiteSpace(options.FrontendBaseUrl))
+            {
+                failures.Add("Email:FrontendBaseUrl is required when a delivery mode is configured.");
+            }
+            else if (!Uri.TryCreate(options.FrontendBaseUrl, UriKind.Absolute, out var frontendUri) ||
+                     (frontendUri.Scheme != Uri.UriSchemeHttp && frontendUri.Scheme != Uri.UriSchemeHttps))
+            {
+                failures.Add("Email:FrontendBaseUrl must be an absolute http or https address.");
+            }
+            else if (!_environment.IsDevelopment() && frontendUri.Scheme != Uri.UriSchemeHttps)
+            {
+                // The activation link carries a token, so it must never travel over an
+                // unencrypted connection outside development.
+                failures.Add("Email:FrontendBaseUrl must use https outside Development: the activation link carries a token.");
+            }
+        }
+
+        // The activation path is a fixed local path: it may not carry a query, a fragment or a
+        // scheme, so the link can never be pointed somewhere else.
+        if (!string.IsNullOrWhiteSpace(options.ActivationPath))
+        {
+            var activationPath = options.ActivationPath;
+            if (!activationPath.StartsWith('/') ||
+                activationPath.StartsWith("//") ||
+                activationPath.Contains('?') ||
+                activationPath.Contains('#') ||
+                activationPath.Contains("://", StringComparison.Ordinal) ||
+                activationPath.Any(char.IsWhiteSpace))
+            {
+                failures.Add("Email:ActivationPath must be a local path that starts with a single '/' and carries no query, fragment or scheme.");
+            }
+        }
+
         if (options.RegistrationTokenTtlHours is < 1 or > 168)
         {
             failures.Add("Email:RegistrationTokenTtlHours must be between 1 and 168.");

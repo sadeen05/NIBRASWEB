@@ -53,6 +53,17 @@ public sealed class EmailOptions
     /// </summary>
     public string OutboxPath { get; set; } = "";
 
+    /// <summary>
+    /// Base address of the frontend, used to build the activation link. The link carries the
+    /// token in the URL fragment, which no browser sends to a server. It is required whenever
+    /// a delivery mode is configured, because a host that cannot build a link cannot deliver
+    /// an invitation.
+    /// </summary>
+    public string FrontendBaseUrl { get; set; } = "";
+
+    /// <summary>Path of the frontend activation page (the frontend increment adds the route).</summary>
+    public string ActivationPath { get; set; } = "/activate-admin";
+
     /// <summary>Lifetime of a registration verification token (hours).</summary>
     public int RegistrationTokenTtlHours { get; set; } = 24;
 

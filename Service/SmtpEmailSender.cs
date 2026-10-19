@@ -27,6 +27,9 @@ public sealed class SmtpEmailSender : IEmailSender
             using var client = new SmtpClient(_options.SmtpHost, _options.SmtpPort)
             {
                 EnableSsl = _options.SmtpEnableSsl,
+                // A mail server that does not answer must not hold the request open: the
+                // delivery is reported as failed and the invitation can be sent again.
+                Timeout = 30_000,
             };
 
             if (!string.IsNullOrWhiteSpace(_options.SmtpUser))

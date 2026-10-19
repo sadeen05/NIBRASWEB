@@ -13,11 +13,16 @@ public class UsersController : ControllerBase
 {
     private readonly IUserService _userService;
     private readonly ICurrentUser _currentUser;
+    private readonly IAdminInvitationService _adminInvitation;
 
-    public UsersController(IUserService userService, ICurrentUser currentUser)
+    public UsersController(
+        IUserService userService,
+        ICurrentUser currentUser,
+        IAdminInvitationService adminInvitation)
     {
         _userService = userService;
         _currentUser = currentUser;
+        _adminInvitation = adminInvitation;
     }
 
     [HttpGet]
@@ -47,8 +52,31 @@ public class UsersController : ControllerBase
             throw new ForbiddenException("You are not authorized to create this user role.");
         }
 
-        var user = await _userService.CreateAsync(request);
-        return CreatedAtAction(nameof(GetById), new { id = user.Id }, user);
+        var created = await _userService.CreateAsync(request);
+        var user = created.User;
+
+        // The body keeps the flat user shape that every existing consumer of
+        // POST /api/users already reads, and adds what happened to the activation
+        // invitation of a new administrator account. The account exists; the invitation
+        // status only reports what happened at the mailer and never claims that a message was
+        // received.
+        return CreatedAtAction(
+            nameof(GetById),
+            new { id = user.Id },
+            new
+            {
+                user.Id,
+                user.FullName,
+                user.Email,
+                user.Phone,
+                user.Role,
+                user.CreatedAt,
+                user.IsApproved,
+                user.CompanyName,
+                user.CompanyRegistrationNumber,
+                created.Invitation,
+                created.InvitationMessage,
+            });
     }
 
     [HttpPost("{id}/approve")]
@@ -75,7 +103,39 @@ public class UsersController : ControllerBase
     public async Task<IActionResult> Delete(int id)
     {
         var result = await _userService.DeleteAsync(id);
-        if (!result) return NotFound();
-        return NoContent();
+        return result ? NoContent() : NotFound();
+    }
+
+    /// <summary>
+    /// (Re)sends the activation invitation of a new administrator account. Only a SuperAdmin
+    /// may trigger it. The token is delivered to the account by mail and is never returned in
+    /// the response; a new invitation retires the previous one, so only the newest link works.
+    /// </summary>
+    [HttpPost("{id}/admin-invitation")]
+    [Authorize(Roles = RoleNames.SuperAdmin)]
+    public async Task<IActionResult> SendAdminInvitation(int id)
+    {
+        var result = await _adminInvitation.SendAsync(
+            id,
+            _currentUser.Id,
+            HttpContext.Connection.RemoteIpAddress?.ToString());
+
+        return result.Outcome switch
+        {
+            AdminInvitationOutcome.Sent => Accepted(new
+            {
+                message = "The activation invitation was sent to the account.",
+            }),
+            AdminInvitationOutcome.DeliveryFailed => StatusCode(
+                StatusCodes.Status503ServiceUnavailable,
+                new
+                {
+                    message = "The invitation could not be delivered. The account stays inactive; the invitation can be sent again.",
+                }),
+            _ => Conflict(new
+            {
+                message = "The account cannot receive an activation invitation.",
+            }),
+        };
     }
 }
