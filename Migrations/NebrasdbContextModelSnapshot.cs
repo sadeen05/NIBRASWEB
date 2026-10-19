@@ -270,6 +270,65 @@ namespace NIBRAS.API.Migrations
                         });
                 });
 
+            modelBuilder.Entity("NIBRAS.Models.EmailVerificationToken", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int")
+                        .HasColumnName("ID");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<DateTime?>("ConsumedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("CONSUMED_AT");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("datetime2")
+                        .HasColumnName("CREATED_AT")
+                        .HasDefaultValueSql("(getdate())");
+
+                    b.Property<DateTime>("ExpiresAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("EXPIRES_AT");
+
+                    b.Property<string>("PreviousEmail")
+                        .HasMaxLength(255)
+                        .HasColumnType("nvarchar(255)")
+                        .HasColumnName("PREVIOUS_EMAIL");
+
+                    b.Property<string>("Purpose")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("nvarchar(40)")
+                        .HasColumnName("PURPOSE");
+
+                    b.Property<string>("RequestIp")
+                        .HasMaxLength(45)
+                        .HasColumnType("nvarchar(45)")
+                        .HasColumnName("REQUEST_IP");
+
+                    b.Property<byte[]>("TokenHash")
+                        .IsRequired()
+                        .HasColumnType("varbinary(32)")
+                        .HasColumnName("TOKEN_HASH");
+
+                    b.Property<int>("UserId")
+                        .HasColumnType("int")
+                        .HasColumnName("USER_ID");
+
+                    b.HasKey("Id")
+                        .HasName("PK_EMAIL_VERIFICATION_TOKENS");
+
+                    b.HasIndex(new[] { "UserId", "Purpose", "ExpiresAt" }, "IX_EMAIL_VERIFICATION_TOKENS_USER");
+
+                    b.HasIndex(new[] { "TokenHash" }, "UQ_EMAIL_VERIFICATION_TOKENS_HASH")
+                        .IsUnique();
+
+                    b.ToTable("EMAIL_VERIFICATION_TOKENS", (string)null);
+                });
+
             modelBuilder.Entity("NIBRAS.Models.Governorate", b =>
                 {
                     b.Property<int>("Id")
@@ -1277,6 +1336,14 @@ namespace NIBRAS.API.Migrations
                         .HasColumnType("nvarchar(255)")
                         .HasColumnName("EMAIL");
 
+                    b.Property<bool?>("EmailVerified")
+                        .HasColumnType("bit")
+                        .HasColumnName("EMAIL_VERIFIED");
+
+                    b.Property<DateTime?>("EmailVerifiedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("EMAIL_VERIFIED_AT");
+
                     b.Property<string>("FullName")
                         .IsRequired()
                         .HasMaxLength(100)
@@ -1298,6 +1365,11 @@ namespace NIBRAS.API.Migrations
                         .HasMaxLength(255)
                         .HasColumnType("nvarchar(255)")
                         .HasColumnName("PASSWORD_HASH");
+
+                    b.Property<string>("PendingEmail")
+                        .HasMaxLength(255)
+                        .HasColumnType("nvarchar(255)")
+                        .HasColumnName("PENDING_EMAIL");
 
                     b.Property<string>("Phone")
                         .IsRequired()
@@ -1335,6 +1407,57 @@ namespace NIBRAS.API.Migrations
                             Phone = "0000000000",
                             RoleId = 4
                         });
+                });
+
+            modelBuilder.Entity("NIBRAS.Models.UserSecurityEvent", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int")
+                        .HasColumnName("ID");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<int?>("ActorId")
+                        .HasColumnType("int")
+                        .HasColumnName("ACTOR_ID");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("datetime2")
+                        .HasColumnName("CREATED_AT")
+                        .HasDefaultValueSql("(getdate())");
+
+                    b.Property<string>("Details")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)")
+                        .HasColumnName("DETAILS");
+
+                    b.Property<string>("EventType")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("nvarchar(40)")
+                        .HasColumnName("EVENT_TYPE");
+
+                    b.Property<string>("Ip")
+                        .HasMaxLength(45)
+                        .HasColumnType("nvarchar(45)")
+                        .HasColumnName("IP");
+
+                    b.Property<int>("UserId")
+                        .HasColumnType("int")
+                        .HasColumnName("USER_ID");
+
+                    b.HasKey("Id")
+                        .HasName("PK_USER_SECURITY_EVENTS");
+
+                    b.HasIndex("ActorId");
+
+                    b.HasIndex(new[] { "EventType", "CreatedAt" }, "IX_USER_SECURITY_EVENTS_TYPE");
+
+                    b.HasIndex(new[] { "UserId", "CreatedAt" }, "IX_USER_SECURITY_EVENTS_USER");
+
+                    b.ToTable("USER_SECURITY_EVENTS", (string)null);
                 });
 
             modelBuilder.Entity("NIBRAS.Models.Contract", b =>
@@ -1429,6 +1552,17 @@ namespace NIBRAS.API.Migrations
                     b.Navigation("Land");
 
                     b.Navigation("RequestedBy");
+                });
+
+            modelBuilder.Entity("NIBRAS.Models.EmailVerificationToken", b =>
+                {
+                    b.HasOne("NIBRAS.Models.User", "User")
+                        .WithMany("EmailVerificationTokens")
+                        .HasForeignKey("UserId")
+                        .IsRequired()
+                        .HasConstraintName("FK_EVT_USERS");
+
+                    b.Navigation("User");
                 });
 
             modelBuilder.Entity("NIBRAS.Models.Grid", b =>
@@ -1690,6 +1824,24 @@ namespace NIBRAS.API.Migrations
                     b.Navigation("Role");
                 });
 
+            modelBuilder.Entity("NIBRAS.Models.UserSecurityEvent", b =>
+                {
+                    b.HasOne("NIBRAS.Models.User", "Actor")
+                        .WithMany()
+                        .HasForeignKey("ActorId")
+                        .HasConstraintName("FK_USE_ACTOR");
+
+                    b.HasOne("NIBRAS.Models.User", "User")
+                        .WithMany("UserSecurityEvents")
+                        .HasForeignKey("UserId")
+                        .IsRequired()
+                        .HasConstraintName("FK_USE_USERS");
+
+                    b.Navigation("Actor");
+
+                    b.Navigation("User");
+                });
+
             modelBuilder.Entity("NIBRAS.Models.Contract", b =>
                 {
                     b.Navigation("ContractReviews");
@@ -1766,6 +1918,8 @@ namespace NIBRAS.API.Migrations
 
                     b.Navigation("DeletionRequests");
 
+                    b.Navigation("EmailVerificationTokens");
+
                     b.Navigation("LandCriteria");
 
                     b.Navigation("LandStatusHistories");
@@ -1777,6 +1931,8 @@ namespace NIBRAS.API.Migrations
                     b.Navigation("OfferVersions");
 
                     b.Navigation("Offers");
+
+                    b.Navigation("UserSecurityEvents");
                 });
 #pragma warning restore 612, 618
         }

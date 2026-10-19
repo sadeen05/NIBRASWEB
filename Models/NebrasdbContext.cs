@@ -31,6 +31,7 @@ public partial class NebrasdbContext : DbContext
     public virtual DbSet<ContractReview> ContractReviews { get; set; }
     public virtual DbSet<DeletionRequest> DeletionRequests { get; set; }
     public virtual DbSet<DocumentType> DocumentTypes { get; set; }
+    public virtual DbSet<EmailVerificationToken> EmailVerificationTokens { get; set; }
     public virtual DbSet<Grid> Grids { get; set; }
     public virtual DbSet<GridCapacityReservation> GridCapacityReservations { get; set; }
     public virtual DbSet<Governorate> Governorates { get; set; }
@@ -45,6 +46,7 @@ public partial class NebrasdbContext : DbContext
     public virtual DbSet<OfferVersion> OfferVersions { get; set; }
     public virtual DbSet<Region> Regions { get; set; }
     public virtual DbSet<Role> Roles { get; set; }
+    public virtual DbSet<UserSecurityEvent> UserSecurityEvents { get; set; }
     public virtual DbSet<User> Users { get; set; }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -464,6 +466,63 @@ public partial class NebrasdbContext : DbContext
                 .HasConstraintName("FK_LSH_LANDS");
         });
 
+        modelBuilder.Entity<EmailVerificationToken>(entity =>
+        {
+            entity.HasKey(e => e.Id).HasName("PK_EMAIL_VERIFICATION_TOKENS");
+            entity.ToTable("EMAIL_VERIFICATION_TOKENS");
+            // The hash is the only way a token row can be looked up, so it is unique: two
+            // different tokens can never share a hash, and the plaintext token is never stored.
+            entity.HasIndex(e => e.TokenHash, "UQ_EMAIL_VERIFICATION_TOKENS_HASH").IsUnique();
+            entity.HasIndex(e => new { e.UserId, e.Purpose, e.ExpiresAt },
+                "IX_EMAIL_VERIFICATION_TOKENS_USER");
+            entity.Property(e => e.Id).HasColumnName("ID");
+            entity.Property(e => e.UserId).HasColumnName("USER_ID");
+            // Enum-like values follow the existing schema convention: a fixed nvarchar(40)
+            // column whose value is validated in the application against
+            // Enums\EmailVerificationPurposes / Enums\UserSecurityEventTypes. The schema carries
+            // no CHECK constraint for them, exactly like LAND_CHANGE_REQUESTS.STATUS and
+            // LAND_DOCUMENTS.STATUS.
+            entity.Property(e => e.Purpose).HasMaxLength(40).HasColumnName("PURPOSE");
+            entity.Property(e => e.TokenHash).HasColumnType("varbinary(32)").HasColumnName("TOKEN_HASH");
+            entity.Property(e => e.PreviousEmail).HasMaxLength(255).HasColumnName("PREVIOUS_EMAIL");
+            entity.Property(e => e.ExpiresAt).HasColumnName("EXPIRES_AT");
+            entity.Property(e => e.ConsumedAt).HasColumnName("CONSUMED_AT");
+            entity.Property(e => e.CreatedAt).HasDefaultValueSql("(getdate())").HasColumnName("CREATED_AT");
+            entity.Property(e => e.RequestIp).HasMaxLength(45).HasColumnName("REQUEST_IP");
+
+            entity.HasOne(d => d.User).WithMany(p => p.EmailVerificationTokens)
+                .HasForeignKey(d => d.UserId)
+                .OnDelete(DeleteBehavior.ClientSetNull)
+                .HasConstraintName("FK_EVT_USERS");
+        });
+
+        modelBuilder.Entity<UserSecurityEvent>(entity =>
+        {
+            entity.HasKey(e => e.Id).HasName("PK_USER_SECURITY_EVENTS");
+            entity.ToTable("USER_SECURITY_EVENTS");
+            entity.HasIndex(e => new { e.UserId, e.CreatedAt }, "IX_USER_SECURITY_EVENTS_USER");
+            entity.HasIndex(e => new { e.EventType, e.CreatedAt }, "IX_USER_SECURITY_EVENTS_TYPE");
+            entity.Property(e => e.Id).HasColumnName("ID");
+            entity.Property(e => e.UserId).HasColumnName("USER_ID");
+            entity.Property(e => e.EventType).HasMaxLength(40).HasColumnName("EVENT_TYPE");
+            entity.Property(e => e.ActorId).HasColumnName("ACTOR_ID");
+            entity.Property(e => e.Ip).HasMaxLength(45).HasColumnName("IP");
+            entity.Property(e => e.Details).HasMaxLength(500).HasColumnName("DETAILS");
+            entity.Property(e => e.CreatedAt).HasDefaultValueSql("(getdate())").HasColumnName("CREATED_AT");
+
+            // Two relationships to USERS (the account and the actor) are configured explicitly
+            // so the foreign keys are unambiguous.
+            entity.HasOne(d => d.User).WithMany(p => p.UserSecurityEvents)
+                .HasForeignKey(d => d.UserId)
+                .OnDelete(DeleteBehavior.ClientSetNull)
+                .HasConstraintName("FK_USE_USERS");
+
+            entity.HasOne(d => d.Actor).WithMany()
+                .HasForeignKey(d => d.ActorId)
+                .OnDelete(DeleteBehavior.ClientSetNull)
+                .HasConstraintName("FK_USE_ACTOR");
+        });
+
         modelBuilder.Entity<Offer>(entity =>
         {
             entity.HasKey(e => e.Id).HasName("PK__OFFERS__3214EC277FE0E225");
@@ -615,6 +674,14 @@ public partial class NebrasdbContext : DbContext
             entity.Property(e => e.Phone).HasMaxLength(20).HasColumnName("PHONE");
             entity.Property(e => e.RoleId).HasColumnName("ROLE_ID");
             entity.Property(e => e.CreatedAt).HasDefaultValueSql("(getdate())").HasColumnName("CREATED_AT");
+
+            // Email-ownership state. The column is nullable on purpose: NULL means "pre-existing
+            // account, verified under the rules in force before the verification feature
+            // existed", so no existing row needs a backfill and no value is fabricated for it.
+            // Only an explicit FALSE blocks the account, and only a verification can set it.
+            entity.Property(e => e.EmailVerified).HasColumnName("EMAIL_VERIFIED");
+            entity.Property(e => e.EmailVerifiedAt).HasColumnName("EMAIL_VERIFIED_AT");
+            entity.Property(e => e.PendingEmail).HasMaxLength(255).HasColumnName("PENDING_EMAIL");
 
             entity.HasOne(d => d.Role).WithMany(p => p.Users)
                 .HasForeignKey(d => d.RoleId)
