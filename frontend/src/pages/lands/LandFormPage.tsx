@@ -14,35 +14,40 @@ import {
   Typography,
 } from 'antd';
 import { ArrowLeft, Save } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 
 import { isApiError } from '@/api/errors';
 import { createLand, fetchLand, updateLand } from '@/api/lands';
-import { fetchGrids, fetchRegions } from '@/api/reference';
+import { fetchCurrentCriterion, fetchGovernorates } from '@/api/reference';
 import { FullPageState } from '@/components/FullPageState';
+import { criterionRequirementRows, describeEligibilityFailureWithThresholds } from '@/pages/lands/criteriaFormat';
 import { resolveLandErrorMessage } from '@/pages/lands/landMessages';
 import type { LandWriteRequest } from '@/types/lands';
 
+const DESCRIPTION_MAX = 1000;
+
 interface LandFormValues {
-  regionId: number;
-  gridId: number;
+  governorateId?: number;
   landNumber: string;
   village: string;
   basin: string;
   parcelNumber: string;
   areaDonum: number;
-  slopePercentage: number;
-  distanceToGridKm: number;
-  solarIrradiance: number;
-  elevationM: number;
+  description?: string;
 }
 
 interface LandFormPageProps {
   mode: 'create' | 'edit';
 }
 
+/**
+ * Landlord land registration / edit. Only landlord-editable fields are collected:
+ * governorate, location identifiers, area and an optional description. The region,
+ * the grid and the technical measurements are recorded later by an admin technical
+ * assessment and are never entered here.
+ */
 export function LandFormPage({ mode }: LandFormPageProps) {
   const { t, i18n } = useTranslation();
   const { message } = AntApp.useApp();
@@ -51,22 +56,31 @@ export function LandFormPage({ mode }: LandFormPageProps) {
   const queryClient = useQueryClient();
   const [form] = Form.useForm<LandFormValues>();
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const submitErrorRef = useRef<HTMLDivElement | null>(null);
 
-  const isArabic = (i18n.resolvedLanguage ?? i18n.language ?? 'en').startsWith('ar');
+  const locale = i18n.resolvedLanguage ?? i18n.language ?? 'en';
+  const isArabic = locale.startsWith('ar');
   const editId = mode === 'edit' ? Number(idParam) : null;
   const validEditId = editId !== null && Number.isInteger(editId) && editId > 0;
 
-  const regionsQuery = useQuery({
-    queryKey: ['reference', 'regions'],
-    queryFn: fetchRegions,
+  const governoratesQuery = useQuery({
+    queryKey: ['reference', 'governorates'],
+    queryFn: fetchGovernorates,
     staleTime: 5 * 60_000,
   });
 
-  const gridsQuery = useQuery({
-    queryKey: ['reference', 'grids'],
-    queryFn: fetchGrids,
+  // The thresholds the server will check on save, shown so the landlord is not
+  // guessing. Purely informational: the backend stays the only authority.
+  const criterionQuery = useQuery({
+    queryKey: ['criteria', 'current'],
+    queryFn: fetchCurrentCriterion,
     staleTime: 5 * 60_000,
   });
+
+  const criterionRows = useMemo(
+    () => criterionRequirementRows(t, locale, criterionQuery.data ?? null),
+    [t, locale, criterionQuery.data],
+  );
 
   const landQuery = useQuery({
     queryKey: ['land', editId],
@@ -79,38 +93,26 @@ export function LandFormPage({ mode }: LandFormPageProps) {
   useEffect(() => {
     if (mode === 'edit' && land) {
       form.setFieldsValue({
-        regionId: land.regionId,
-        gridId: land.gridId,
+        // Left undefined for a legacy land so the owner is never forced to
+        // retroactively assign a governorate.
+        governorateId: land.governorateId ?? undefined,
         landNumber: land.landNumber,
         village: land.village ?? '',
         basin: land.basin ?? '',
         parcelNumber: land.parcelNumber ?? '',
         areaDonum: land.areaDonum,
-        slopePercentage: land.slopePercentage,
-        distanceToGridKm: land.distanceToGridKm,
-        solarIrradiance: land.solarIrradiance,
-        elevationM: land.elevationM,
+        description: land.description ?? '',
       });
     }
   }, [mode, land, form]);
 
-  const selectedRegionId = Form.useWatch('regionId', form);
-
-  const regionOptions = useMemo(
+  const governorateOptions = useMemo(
     () =>
-      (regionsQuery.data ?? []).map((region) => ({
-        value: region.id,
-        label: isArabic ? region.nameAr : region.nameEn,
+      (governoratesQuery.data ?? []).map((governorate) => ({
+        value: governorate.id,
+        label: isArabic ? governorate.nameAr : governorate.nameEn,
       })),
-    [regionsQuery.data, isArabic],
-  );
-
-  const gridOptions = useMemo(
-    () =>
-      (gridsQuery.data ?? [])
-        .filter((grid) => grid.regionId === selectedRegionId)
-        .map((grid) => ({ value: grid.id, label: grid.name })),
-    [gridsQuery.data, selectedRegionId],
+    [governoratesQuery.data, isArabic],
   );
 
   const saveMutation = useMutation({
@@ -138,24 +140,38 @@ export function LandFormPage({ mode }: LandFormPageProps) {
       navigate(`/app/lands/${editId}`, { replace: true });
     },
     onError: (error: unknown) => {
-      setSubmitError(resolveLandErrorMessage(error, t));
+      // Use the exact thresholds when this page already has the current
+      // criterion, so a rejected save names the limit that was missed rather
+      // than only the direction of the requirement.
+      const text =
+        describeEligibilityFailureWithThresholds(
+          t,
+          locale,
+          isApiError(error) ? error.message : '',
+          criterionQuery.data ?? null,
+        ) ?? resolveLandErrorMessage(error, t);
+      setSubmitError(text);
+      // Make the failure impossible to miss: many forms are taller than the
+      // viewport, so the inline alert alone could sit off-screen and a rejected
+      // save would look like nothing happened.
+      message.error(text);
+      submitErrorRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
     },
   });
 
   const onFinish = (values: LandFormValues) => {
+    const description = values.description?.trim() ?? '';
     const payload: LandWriteRequest = {
-      regionId: values.regionId,
-      gridId: values.gridId,
       landNumber: values.landNumber.trim(),
       village: values.village.trim(),
       basin: values.basin.trim(),
       parcelNumber: values.parcelNumber.trim(),
       areaDonum: values.areaDonum,
-      slopePercentage: values.slopePercentage,
-      distanceToGridKm: values.distanceToGridKm,
-      solarIrradiance: values.solarIrradiance,
-      elevationM: values.elevationM,
+      description: description.length > 0 ? description : null,
     };
+    if (values.governorateId !== undefined && values.governorateId !== null) {
+      payload.governorateId = values.governorateId;
+    }
     saveMutation.mutate(payload);
   };
 
@@ -220,11 +236,6 @@ export function LandFormPage({ mode }: LandFormPageProps) {
     );
   }
 
-  const numberRule = (min: number, max: number) => [
-    { required: true, message: t('lands.form.required') },
-    { type: 'number' as const, min, max, message: t('lands.form.range', { min, max }) },
-  ];
-
   return (
     <Space orientation="vertical" size="large" style={{ width: '100%' }}>
       <div>
@@ -237,10 +248,40 @@ export function LandFormPage({ mode }: LandFormPageProps) {
         </Typography.Title>
       </div>
 
-      <Card>
-        {submitError && (
-          <Alert type="error" showIcon role="alert" title={submitError} style={{ marginBottom: 16 }} />
+      <Card title={t('lands.criteriaCard.title')}>
+        <Typography.Paragraph type="secondary" style={{ marginTop: 0 }}>
+          {t('lands.criteriaCard.body')}
+        </Typography.Paragraph>
+        {criterionQuery.data ? (
+          <ul style={{ margin: 0, paddingInlineStart: 20 }}>
+            {criterionRows.map((row) => (
+              <li key={row.key}>
+                {row.label}: <strong>{row.requirement}</strong>
+              </li>
+            ))}
+          </ul>
+        ) : criterionQuery.isError ? (
+          <Alert type="warning" showIcon title={t('lands.criteriaCard.unavailable')} />
+        ) : (
+          <Typography.Text type="secondary">{t('common.loading')}</Typography.Text>
         )}
+        <Typography.Paragraph type="secondary" style={{ marginBottom: 0, marginTop: 12 }}>
+          {t('lands.criteriaCard.editableHint')}
+        </Typography.Paragraph>
+      </Card>
+
+      <Card>
+        <div ref={submitErrorRef}>
+          {submitError && (
+            <Alert
+              type="error"
+              showIcon
+              role="alert"
+              title={submitError}
+              style={{ marginBottom: 16 }}
+            />
+          )}
+        </div>
 
         <Form<LandFormValues>
           form={form}
@@ -252,36 +293,22 @@ export function LandFormPage({ mode }: LandFormPageProps) {
           <Row gutter={16}>
             <Col xs={24} md={12}>
               <Form.Item
-                name="regionId"
-                label={t('lands.form.region')}
-                rules={[{ required: true, message: t('lands.form.regionRequired') }]}
+                name="governorateId"
+                label={t('lands.form.governorate')}
+                extra={mode === 'edit' ? t('lands.form.governorateEditHint') : undefined}
+                rules={
+                  mode === 'create'
+                    ? [{ required: true, message: t('lands.form.governorateRequired') }]
+                    : []
+                }
               >
                 <Select
-                  options={regionOptions}
-                  loading={regionsQuery.isLoading}
-                  placeholder={t('lands.form.regionPlaceholder')}
+                  options={governorateOptions}
+                  loading={governoratesQuery.isLoading}
+                  placeholder={t('lands.form.governoratePlaceholder')}
                   showSearch
                   optionFilterProp="label"
-                  onChange={() => form.setFieldValue('gridId', undefined)}
-                />
-              </Form.Item>
-            </Col>
-            <Col xs={24} md={12}>
-              <Form.Item
-                name="gridId"
-                label={t('lands.form.grid')}
-                rules={[{ required: true, message: t('lands.form.gridRequired') }]}
-                extra={t('lands.form.gridHint')}
-              >
-                <Select
-                  options={gridOptions}
-                  loading={gridsQuery.isLoading}
-                  placeholder={
-                    selectedRegionId ? t('lands.form.gridPlaceholder') : t('lands.form.selectRegionFirst')
-                  }
-                  disabled={!selectedRegionId}
-                  showSearch
-                  optionFilterProp="label"
+                  allowClear={mode === 'edit'}
                 />
               </Form.Item>
             </Col>
@@ -339,45 +366,34 @@ export function LandFormPage({ mode }: LandFormPageProps) {
               <Form.Item
                 name="areaDonum"
                 label={t('lands.form.areaDonum')}
-                rules={numberRule(0.0001, 99999999.99)}
+                rules={[
+                  { required: true, message: t('lands.form.required') },
+                  {
+                    type: 'number' as const,
+                    min: 0.0001,
+                    max: 99999999.99,
+                    message: t('lands.form.range', { min: 0.0001, max: 99999999.99 }),
+                  },
+                ]}
               >
                 <InputNumber min={0.0001} max={99999999.99} step={0.01} style={{ width: '100%' }} />
               </Form.Item>
             </Col>
-            <Col xs={24} md={12}>
+
+            <Col xs={24}>
               <Form.Item
-                name="slopePercentage"
-                label={t('lands.form.slopePercentage')}
-                rules={numberRule(0, 100)}
+                name="description"
+                label={t('lands.form.description')}
+                rules={[
+                  { max: DESCRIPTION_MAX, message: t('lands.form.maxLength', { max: DESCRIPTION_MAX }) },
+                ]}
               >
-                <InputNumber min={0} max={100} step={0.01} style={{ width: '100%' }} />
-              </Form.Item>
-            </Col>
-            <Col xs={24} md={12}>
-              <Form.Item
-                name="distanceToGridKm"
-                label={t('lands.form.distanceToGridKm')}
-                rules={numberRule(0, 1000000)}
-              >
-                <InputNumber min={0} max={1000000} step={0.01} style={{ width: '100%' }} />
-              </Form.Item>
-            </Col>
-            <Col xs={24} md={12}>
-              <Form.Item
-                name="solarIrradiance"
-                label={t('lands.form.solarIrradiance')}
-                rules={numberRule(0, 12)}
-              >
-                <InputNumber min={0} max={12} step={0.01} style={{ width: '100%' }} />
-              </Form.Item>
-            </Col>
-            <Col xs={24} md={12}>
-              <Form.Item
-                name="elevationM"
-                label={t('lands.form.elevationM')}
-                rules={numberRule(-1000, 10000)}
-              >
-                <InputNumber min={-1000} max={10000} step={1} style={{ width: '100%' }} />
+                <Input.TextArea
+                  rows={4}
+                  maxLength={DESCRIPTION_MAX}
+                  showCount
+                  placeholder={t('lands.form.descriptionPlaceholder')}
+                />
               </Form.Item>
             </Col>
           </Row>

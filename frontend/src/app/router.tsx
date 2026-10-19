@@ -4,11 +4,13 @@ import { RequireAuth, RequireRole } from '@/auth/guards';
 import { AppShell } from '@/layouts/AppShell';
 import { PublicLayout } from '@/layouts/PublicLayout';
 import { AdminLandQueuePage } from '@/pages/admin/AdminLandQueuePage';
+import { AdminChangeRequestsPage } from '@/pages/admin/AdminChangeRequestsPage';
 import { AdminLandReviewPage } from '@/pages/admin/AdminLandReviewPage';
 import { AdminOffersPage } from '@/pages/admin/AdminOffersPage';
 import { AdminUsersPage } from '@/pages/admin/AdminUsersPage';
 import { DashboardPlaceholder } from '@/pages/app/DashboardPlaceholder';
 import { LoginPage } from '@/pages/auth/LoginPage';
+import { RegisterPage } from '@/pages/auth/RegisterPage';
 import { ContractDetailPage } from '@/pages/contracts/ContractDetailPage';
 import { ContractsListPage } from '@/pages/contracts/ContractsListPage';
 import { DiscoverLandDetailPage } from '@/pages/investor/DiscoverLandDetailPage';
@@ -34,6 +36,7 @@ export const router = createBrowserRouter([
     element: <PublicLayout />,
     children: [
       { path: '/login', element: <LoginPage /> },
+      { path: '/register', element: <RegisterPage /> },
       { path: '/403', element: <ForbiddenPage /> },
       { path: '*', element: <NotFoundPage /> },
     ],
@@ -81,6 +84,14 @@ export const router = createBrowserRouter([
               { path: 'offers/:id', element: <OfferDetailPage /> },
               { path: 'contracts', element: <ContractsListPage /> },
               { path: 'contracts/:id', element: <ContractDetailPage /> },
+            ],
+          },
+
+          // --- SuperAdmin ---
+          {
+            element: <RequireRole roles={['SuperAdmin']} />,
+            children: [
+              { path: 'admin/change-requests', element: <AdminChangeRequestsPage /> },
             ],
           },
 

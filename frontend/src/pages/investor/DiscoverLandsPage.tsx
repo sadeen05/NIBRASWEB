@@ -36,7 +36,16 @@ export function DiscoverLandsPage() {
         key: 'landNumber',
         render: (_value, land) => <Link to={`/app/discover/${land.id}`}>{land.landNumber}</Link>,
       },
-      { title: t('lands.list.region'), dataIndex: 'regionName', key: 'regionName' },
+      {
+        title: t('lands.list.governorate'),
+        key: 'governorateName',
+        render: (_value, land) => land.governorateName ?? '—',
+      },
+      {
+        title: t('lands.list.region'),
+        key: 'regionName',
+        render: (_value, land) => land.regionName ?? '—',
+      },
       {
         title: t('lands.list.location'),
         key: 'location',

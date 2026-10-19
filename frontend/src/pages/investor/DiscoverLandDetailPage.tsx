@@ -161,7 +161,7 @@ export function DiscoverLandDetailPage() {
             {land.landNumber} <LandStatusTag status={land.status} />
           </Typography.Title>
           <Typography.Paragraph style={{ margin: '4px 0 0', color: 'var(--nb-text-secondary)' }}>
-            {land.regionName}
+            {land.governorateName ?? land.regionName ?? '—'}
           </Typography.Paragraph>
         </div>
         <Button
@@ -182,10 +182,12 @@ export function DiscoverLandDetailPage() {
           size="small"
           bordered
           items={[
-            { key: 'region', label: t('lands.form.region'), children: land.regionName },
+            { key: 'governorate', label: t('lands.form.governorate'), children: land.governorateName ?? '—' },
+            { key: 'region', label: t('lands.form.region'), children: land.regionName ?? '—' },
             { key: 'village', label: t('lands.form.village'), children: land.village ?? '—' },
             { key: 'basin', label: t('lands.form.basin'), children: land.basin ?? '—' },
-            { key: 'parcel', label: t('lands.form.parcelNumber'), children: land.parcelNumber ?? '—' },
+            { key: 'parcel', label: t('lands.form.parcelNumber'), children: land.parcelNumber ?? '-' },
+            { key: 'description', label: t('lands.form.description'), children: land.description ?? '-' },
             {
               key: 'area',
               label: t('lands.form.areaDonum'),

@@ -9,6 +9,7 @@ const STATUS_COLORS: Record<LandStatus, string> = {
   Verified: 'green',
   Rejected: 'red',
   UnderContract: 'blue',
+  PendingSuperAdminReview: 'purple',
 };
 
 /**

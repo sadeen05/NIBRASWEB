@@ -24,8 +24,22 @@ export function setUnauthorizedHandler(handler: (() => void) | null): void {
   unauthorizedHandler = handler;
 }
 
+/**
+ * Every request fails after this many milliseconds. Without a timeout a lost or
+ * stalled response leaves a pending UI action (e.g. "Save land") spinning
+ * forever, because Axios waits indefinitely by default. A timed-out request is
+ * surfaced as a `timeout` error (see `normalizeError`) so the user is told what
+ * happened instead of watching a dead spinner.
+ *
+ * 60s is deliberately above the backend's own 30s EF/SQL command timeout: a
+ * request the server is still working on must not be abandoned client-side,
+ * otherwise a slow-but-successful save would be reported as a failure.
+ */
+export const REQUEST_TIMEOUT_MS = 60_000;
+
 export const apiClient: AxiosInstance = axios.create({
   baseURL: API_BASE_URL,
+  timeout: REQUEST_TIMEOUT_MS,
   headers: { 'Content-Type': 'application/json' },
 });
 

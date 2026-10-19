@@ -1,12 +1,17 @@
 import { getJson, postJson, putJson } from '@/api/client';
 import type {
+  AssessLandRequest,
+  CreateLandChangeRequestRequest,
   CreateLandRequest,
+  LandAssessmentDto,
+  LandChangeRequestDto,
   LandDocumentDto,
   LandDto,
   LandEligibilityResponse,
   LandListResponse,
   LandStatus,
   LandStatusHistoryDto,
+  ReviewLandChangeRequestRequest,
   ReviewLandDocumentRequest,
   UpdateLandRequest,
   UploadLandDocumentRequest,
@@ -59,14 +64,34 @@ export function reviseLand(id: number): Promise<{ message: string }> {
   return postJson<{ message: string }>(`/Lands/${id}/revise`);
 }
 
-/** `POST /api/Lands/{id}/verify` — Admin/SuperAdmin only. PendingVerification -> Verified. */
+/**
+ * `POST /api/Lands/{id}/verify` — Admin/SuperAdmin. PendingVerification -> Verified.
+ * A land in PendingSuperAdminReview (resubmitted after a rejection) can only be
+ * verified by a SuperAdmin.
+ */
 export function verifyLand(id: number): Promise<{ message: string }> {
   return postJson<{ message: string }>(`/Lands/${id}/verify`);
 }
 
-/** `POST /api/Lands/{id}/reject` — Admin/SuperAdmin only. Requires a reason. */
+/**
+ * `POST /api/Lands/{id}/reject` — Admin/SuperAdmin. Requires a reason.
+ * A land in PendingSuperAdminReview can only be rejected by a SuperAdmin.
+ */
 export function rejectLand(id: number, reason: string): Promise<{ message: string }> {
   return postJson<{ message: string }>(`/Lands/${id}/reject`, { reason });
+}
+
+/**
+ * `PUT /api/Lands/{id}/assessment` — SuperAdmin only. Records the region, grid
+ * and technical measurements (land data). Omitted fields keep their stored value.
+ */
+export function assessLand(id: number, body: AssessLandRequest): Promise<LandDto> {
+  return putJson<LandDto>(`/Lands/${id}/assessment`, body);
+}
+
+/** `GET /api/Lands/{id}/assessments` — the land owner or Admin/SuperAdmin. */
+export function fetchAssessments(id: number): Promise<LandAssessmentDto[]> {
+  return getJson<LandAssessmentDto[]>(`/Lands/${id}/assessments`);
 }
 
 /** `PUT /api/Lands/{id}/documents/{documentId}/review` — Admin/SuperAdmin only. */
@@ -99,4 +124,32 @@ export function uploadDocument(
   body: UploadLandDocumentRequest,
 ): Promise<LandDocumentDto> {
   return postJson<LandDocumentDto>(`/Lands/${id}/documents`, body);
+}
+
+/**
+ * `POST /api/land-change-requests` — the land owner only. Creates a change request
+ * for an approved land; the land is hidden from investors until a SuperAdmin decides.
+ */
+export function submitChangeRequest(
+  body: CreateLandChangeRequestRequest,
+): Promise<LandChangeRequestDto> {
+  return postJson<LandChangeRequestDto>('/land-change-requests', body);
+}
+
+/** `GET /api/land-change-requests?landId=` — the land owner or Admin/SuperAdmin. */
+export function fetchChangeRequests(landId: number): Promise<LandChangeRequestDto[]> {
+  return getJson<LandChangeRequestDto[]>('/land-change-requests', { params: { landId } });
+}
+
+/** `GET /api/land-change-requests/pending` — SuperAdmin only. */
+export function fetchPendingChangeRequests(): Promise<LandChangeRequestDto[]> {
+  return getJson<LandChangeRequestDto[]>('/land-change-requests/pending');
+}
+
+/** `POST /api/land-change-requests/{id}/decision` — SuperAdmin only. */
+export function decideChangeRequest(
+  id: number,
+  body: ReviewLandChangeRequestRequest,
+): Promise<LandChangeRequestDto> {
+  return postJson<LandChangeRequestDto>(`/land-change-requests/${id}/decision`, body);
 }

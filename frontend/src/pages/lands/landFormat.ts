@@ -15,7 +15,12 @@ export function formatDateTime(value: string | null, locale: string): string {
   }
 }
 
-export function formatDecimal(value: number, locale: string, maximumFractionDigits = 2): string {
+/** Null/undefined renders as an em dash: "not assessed" must never look like 0. */
+export function formatDecimal(
+  value: number | null | undefined,
+  locale: string,
+  maximumFractionDigits = 2,
+): string {
   if (typeof value !== 'number' || !Number.isFinite(value)) {
     return '—';
   }

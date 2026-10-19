@@ -43,6 +43,50 @@ export const en = {
     pointDiscover: 'Discover verified parcels and negotiate investment offers.',
     pointContracts: 'Sign, review and manage contracts with clear audit trails.',
   },
+  register: {
+    title: 'Create a new account',
+    subtitle: 'Choose the account type that fits you, then enter your details.',
+    createAccountLink: 'Create a new account',
+    noAccount: "Don't have an account?",
+    chooseRole: 'Which account would you like to create?',
+    landlordHint: 'Register and manage your land, and respond to investment offers.',
+    investorHint: 'Browse verified lands and make investment offers.',
+    formTitle: 'Create your {{role}} account',
+    formSubtitle: 'Enter your details to register.',
+    backToRoles: 'Choose a different account type',
+    alreadyHaveAccount: 'Already have an account?',
+    signInLink: 'Sign in',
+    fullName: 'Full name',
+    fullNamePlaceholder: 'Your full name',
+    email: 'Email address',
+    emailPlaceholder: 'you@example.com',
+    phone: 'Phone number',
+    phonePlaceholder: '07XXXXXXXX',
+    password: 'Password',
+    passwordPlaceholder: 'At least 10 characters',
+    companySectionTitle: 'Company details',
+    companyName: 'Company name',
+    companyNamePlaceholder: 'Your company name',
+    companyRegistrationNumber: 'Company registration number',
+    companyRegistrationNumberPlaceholder: 'e.g. REG-001',
+    companySectionHint:
+      'Investor accounts require the company name and registration number.',
+    submit: 'Create account',
+    submitting: 'Creating account…',
+    required: 'This field is required.',
+    maxLength: 'Use at most {{max}} characters.',
+    emailInvalid: 'Please enter a valid email address.',
+    passwordMin: 'Use at least 10 characters.',
+    passwordTooLong: 'This password is too long; use at most 72 bytes (fewer non-Latin characters).',
+    successTitle: 'Account created',
+    successLandlord:
+      'Your landlord account is ready. You can sign in now and start registering land.',
+    successInvestorPending:
+      'Your investor account was created. An administrator must approve it before you can browse lands and make offers, but you can sign in now.',
+    goToSignIn: 'Go to sign in',
+    duplicate: 'This email or phone number is already registered. Try signing in instead.',
+    roleNotAllowed: 'Only Landlord and Investor accounts can be created here.',
+  },
   shell: {
     signedInAs: 'Signed in as',
     overview: 'Overview',
@@ -55,6 +99,7 @@ export const en = {
     navAdminLands: 'Land verification',
     navAdminOffers: 'Offer approvals',
     navAdminUsers: 'Users',
+    navAdminChangeRequests: 'Change requests',
     foundationTitle: 'Application foundation ready',
     foundationBody:
       'The application shell, design system, localization and authentication foundation are in place. Business workflows will be added in later phases.',
@@ -62,6 +107,9 @@ export const en = {
     roleLabel: 'Role',
     expiresLabel: 'Session expires',
     signOut: 'Sign out',
+    pendingApprovalTitle: 'Your account is pending approval',
+    pendingApprovalBody:
+      'An administrator still has to approve this investor account. You can sign in, but browsing lands and making offers stays unavailable until it is approved. Contact an administrator if this takes longer than expected.',
   },
   errors: {
     checkingSessionTitle: 'Checking your session…',
@@ -69,6 +117,9 @@ export const en = {
     sessionCheckFailed: 'We could not verify your session. Please sign in again.',
     forbiddenTitle: 'Access denied',
     forbiddenBody: 'You do not have permission to view this page.',
+    forbiddenRoleBody:
+      'This page belongs to a different account type than the one you are signed in with.',
+    goToMyArea: 'Go to my area',
     notFoundTitle: 'Page not found',
     notFoundBody: 'The page you are looking for does not exist or has been moved.',
     genericTitle: 'Something went wrong',
@@ -80,6 +131,8 @@ export const en = {
    */
   apiErrors: {
     network: 'Cannot reach the server. Make sure the backend is running and try again.',
+    timeout:
+      'The server took too long to respond. Your change may not have been saved; check the list, then try again.',
     validation: 'One or more fields are invalid.',
     rateLimited: 'Too many requests. Please wait a moment and try again.',
     server: 'The server encountered an error. Please try again later.',
@@ -100,6 +153,7 @@ export const en = {
       Verified: 'Verified',
       Rejected: 'Rejected',
       UnderContract: 'Under contract',
+      PendingSuperAdminReview: 'Awaiting super admin review',
     },
     criteria: {
       area: 'Area',
@@ -107,11 +161,24 @@ export const en = {
       gridDistance: 'Distance to grid',
       solarIrradiance: 'Solar irradiance',
       elevation: 'Elevation',
+      minimum: 'minimum required',
+      maximum: 'maximum allowed',
     },
     criteriaResult: {
+      NotAssessed: 'Not assessed',
       Passed: 'Passed',
       Failed: 'Failed',
       NotEnforced: 'Not enforced',
+    },
+    criteriaCard: {
+      title: 'Current eligibility criteria',
+      body: 'Every save is checked against these thresholds, and again when you submit the land for verification.',
+      atLeast: 'at least {{value}}',
+      atMost: 'at most {{value}}',
+      notEnforced: 'not currently enforced',
+      editableHint:
+        'You set the area in this form. The other measurements come from the technical assessment performed by an administrator, so contact an administrator if one of them fails the criteria.',
+      unavailable: 'The current criteria could not be loaded. Your save is still validated by the server.',
     },
     list: {
       landNumber: 'Land number',
@@ -123,6 +190,7 @@ export const en = {
       allStatuses: 'All statuses',
       filterStatus: 'Filter by status',
       empty: 'You have not registered any lands yet.',
+      governorate: 'Governorate',
     },
     detail: {
       loading: 'Loading land details…',
@@ -141,6 +209,11 @@ export const en = {
       notFoundTitle: 'Land not found',
       notFoundBody: 'This land does not exist or is no longer available.',
       forbiddenBody: 'You do not have permission to view this land.',
+      hiddenFromInvestors:
+        'This land is hidden from investors while its change request is under review.',
+      evidenceOutstandingTitle: 'Required evidence is incomplete',
+      evidenceOutstandingBody:
+        'This land is not shown to investors because the latest version of these required documents is not approved: {{documents}}. Add a corrected version in the documents section below; only a super administrator can approve it, and the land is shown to investors again once every required document has an approved latest version.',
     },
     form: {
       createTitle: 'Register a new land',
@@ -174,6 +247,13 @@ export const en = {
       updated: 'Land updated.',
       editNotAllowedTitle: 'This land cannot be edited',
       editNotAllowedBody: 'Only lands in Draft or Rejected status can be edited.',
+      governorate: 'Governorate',
+      governorateRequired: 'Please select a governorate.',
+      governoratePlaceholder: 'Select a governorate',
+      governorateEditHint:
+        'Optional: set this only if the land is not already assigned to a governorate.',
+      description: 'Description',
+      descriptionPlaceholder: 'Optional details about the land.',
     },
     actions: {
       submit: 'Submit for verification',
@@ -185,6 +265,39 @@ export const en = {
       reviseConfirmBody: 'You will be able to edit the land and its documents again.',
       submitted: 'Land submitted for verification.',
       revised: 'Land returned to Draft.',
+      resubmittedNotice:
+        'This correction was resubmitted and is now reviewed by a super administrator, not the regular admin queue.',
+    },
+    changeRequest: {
+      sectionTitle: 'Change request',
+      intro:
+        'This land is approved. To change its data, submit a change request with a reason and supporting documents. The land is hidden from investors until a super administrator decides it.',
+      formTitle: 'Submit a change request',
+      reason: 'Reason for the change',
+      reasonPlaceholder: 'What needs to change and why?',
+      reasonRequired: 'Please give a reason for the change.',
+      proposedTitle: 'Proposed values',
+      documentsTitle: 'Supporting documents',
+      addDocument: 'Add supporting document',
+      submitted:
+        'Change request submitted. The land is hidden from investors until a super administrator decides it.',
+      submit: 'Submit change request',
+      existingTitle: 'Change requests',
+      status: 'Status',
+      empty: 'No change requests have been made for this land.',
+      originalValues: 'Original values',
+      proposedValues: 'Proposed values',
+      snapshotUnavailable:
+        'The stored snapshot of this change request cannot be read, so its values cannot be shown. The stored data is left untouched.',
+      requestedBy: 'Requested by',
+      requestedAt: 'Requested at',
+      decision: 'Decision',
+      decisionReason: 'Decision note',
+      decidedBy: 'Decided by',
+      decidedAt: 'Decided at',
+      statusPending: 'Pending review',
+      statusApproved: 'Approved',
+      statusRejected: 'Rejected',
     },
     documents: {
       referenceNotice:
@@ -208,6 +321,14 @@ export const en = {
       statusPending: 'Pending',
       statusApproved: 'Approved',
       statusRejected: 'Rejected',
+      lastReview: 'Last review',
+      reviewer: 'Reviewer #{{id}}',
+      reReviewTag: 'Re-review required',
+      reReviewNotice:
+        'The land data changed after these documents were reviewed, so their approval no longer applies and an administrator must review them again: {{documents}}. No new upload is required.',
+      correctionTitle: 'Required documents must be corrected',
+      correctionBody:
+        'This land is hidden from investors because a required document is not approved. Upload a corrected version of it; only a super administrator can approve it, and the land is shown to investors again once every required document has an approved latest version.',
     },
     errors: {
       landNumberConflict: 'A land with this land number already exists in the selected region.',
@@ -222,11 +343,35 @@ export const en = {
       requiredDocument: 'Upload a document of a type required for verification before submitting.',
       notRevisable: 'Only rejected lands can be returned to Draft.',
       documentsFrozen: 'Documents can only be added while the land is Draft or Rejected.',
+      documentCorrectionTypeOnly:
+        'On an approved land you can only re-upload a document type whose latest version is not approved.',
       documentTypeMissing: 'The selected document type does not exist.',
+      documentNotFound: 'The document was not found for this land.',
+      noCriteria: 'No eligibility criteria are configured on the server.',
       notOwner: 'You are not the owner of this land.',
       forbidden: 'You do not have permission to perform this action.',
       notFound: 'The requested item was not found.',
       eligibilityPrefix: 'The land does not meet the eligibility criteria: ',
+      pinnedCriteriaPrefix:
+        'The land no longer meets the criteria it was approved against: ',
+      governorateMissing: 'The selected governorate does not exist.',
+      assessmentRegionMissing: 'The selected region does not exist.',
+      assessmentRequired:
+        'The land has no assigned region and grid; technical assessment is required before verification.',
+      assessmentGridRegionMismatch: 'The assigned grid does not belong to the assigned region.',
+      assessmentIncompletePrefix: 'The technical assessment is incomplete: ',
+      gridNotAssigned:
+        'The land has no assigned electrical grid; technical assessment is required before approval.',
+      changeRequestNotApproved: 'A change request can only be made for an approved land.',
+      changeRequestPending: 'This land already has a change request awaiting review.',
+      changeRequestDocumentTypeMissing: 'A supporting document type does not exist.',
+      changeRequestForbidden: "You are not allowed to view this land's change requests.",
+      changeRequestDecided: 'This change request has already been decided.',
+      changeRequestLandNotApproved: 'The land is no longer approved; the change cannot be applied.',
+      changeRequestStale:
+        'The land changed after this change request was submitted, so its stored proposal is stale and cannot be applied.',
+      changeRequestConcurrent:
+        'This change request was already decided by another reviewer. Reload it and try again.',
     },
   },
   discover: {
@@ -235,7 +380,7 @@ export const en = {
     empty: 'No verified lands are available right now.',
     notApprovedTitle: 'Your investor account is not approved yet',
     notApprovedBody:
-      'An administrator must approve your investor account before you can browse lands and make offers.',
+      'An administrator must approve your investor account before you can browse lands and make offers. You stay signed in while you wait; contact an administrator if this takes longer than expected.',
     backToList: 'Back to discover',
   },
   offers: {
@@ -358,6 +503,13 @@ export const en = {
       counterPositive: 'The counter amount must be greater than zero.',
       notFound: 'Offer not found',
       landNotFound: 'Land not found',
+      landHidden: 'This land is not available for offers while a change request is under review.',
+      landHiddenForApproval:
+        'This offer cannot be approved while the land is hidden for a change-request review.',
+      landEvidenceInvalid:
+        'This land is not available for offers while its required documents are being corrected.',
+      landEvidenceInvalidForApproval:
+        "This offer cannot be approved while the land's required documents are being corrected.",
     },
   },
   contracts: {
@@ -481,11 +633,64 @@ export const en = {
     },
   },
   admin: {
+    assessmentTitle: 'Technical assessment',
+    assessmentHint:
+      'Region, grid and the technical measurements. An omitted value keeps its stored value; a missing measurement is never treated as passing.',
+    assessmentSave: 'Save assessment',
+    assessmentSaved: 'Assessment saved.',
+    assessmentFrozen: 'A verified land cannot be reassessed.',
+    assessmentSuperAdminOnly:
+      'Only a super administrator can change the technical assessment (region, grid and measurements).',
+    assessmentNote: 'Note',
+    assessmentAt: 'Assessed at',
+    assessmentBy: 'Assessed by',
+    assessmentHistoryTitle: 'Assessment history',
+    assessmentHistoryEmpty: 'No assessment has been recorded yet.',
+    assessmentRegionPlaceholder: 'Select a region',
+    assessmentSelectRegionFirst: 'Select a region first',
+    assessmentRegionGridPair: 'A region and a grid must be provided together.',
     review: 'Review',
     backToQueue: 'Back to queue',
     landQueueTitle: 'Land verification queue',
     landQueueSubtitle: 'Lands submitted by landlords and awaiting verification.',
     landQueueEmpty: 'No lands are awaiting verification.',
+    resubmissionQueueTitle: 'Resubmissions awaiting super admin review',
+    resubmissionQueueSubtitle:
+      'Corrected lands resubmitted after a rejection. Only a super administrator can decide these.',
+    resubmissionQueueEmpty: 'No resubmissions are awaiting super admin review.',
+    resubmissionNotice:
+      'This land was corrected and resubmitted after a rejection. Only a super administrator can verify or reject it.',
+    changeRequestQueueTitle: 'Change requests awaiting decision',
+    changeRequestQueueSubtitle:
+      'Change requests on approved lands. Only a super administrator can approve or reject them.',
+    changeRequestQueueEmpty: 'No change requests are awaiting a decision.',
+    changeRequestReview: 'Review change request',
+    changeRequestDecisionTitle: 'Decide this change request',
+    changeRequestReason: 'Reason',
+    changeRequestDecisionNote: 'Decision note',
+    changeRequestDecisionNoteRequired: 'A decision note is required.',
+    changeRequestApprove: 'Approve change',
+    changeRequestReject: 'Reject change',
+    changeRequestApproved: 'Change request approved.',
+    changeRequestRejected: 'Change request rejected.',
+    changeRequestOriginal: 'Original values',
+    changeRequestProposed: 'Proposed values',
+    changeRequestSupportingDocuments: 'Supporting documents',
+    changeRequestHiddenNotice:
+      'While this request is pending the land is hidden from investors and cannot receive new offers.',
+    changeRequestQueueSuperAdminOnly: 'Only a SuperAdmin can review change requests.',
+    changeRequestDecideSuperAdminOnly:
+      'Only a SuperAdmin can approve or reject a change request.',
+    documentReReviewSuperAdminOnly:
+      'Only a SuperAdmin can re-review the documents of an approved land.',
+    changeRequestDocumentsUnavailable:
+      'The stored supporting-document references of this change request cannot be read.',
+    changeRequestSnapshotUnreadable:
+      'The stored snapshot of this change request cannot be read, so the change cannot be validated or applied. Rejecting the request is still possible; the stored data is left untouched.',
+    changeRequestPinnedCriteriaUnavailable:
+      'The criteria version this land was approved against is unavailable, so the change cannot be validated against it. Rejecting the request is still possible; the stored criteria basis must be restored before a change can be approved.',
+    pinnedCriteriaUnavailableForReview:
+      'The criteria version this land was approved against is unavailable, so its required documents cannot be approved. The land stays hidden from investors until the stored criteria basis is restored.',
     verify: 'Verify land',
     landVerified: 'Land verified.',
     reject: 'Reject land',
@@ -498,6 +703,39 @@ export const en = {
     documentReviewed: 'Document reviewed.',
     reviewNote: 'Review note',
     noteRequired: 'A note is required when rejecting a document.',
+    documentsNotApproved: 'Every document type required for verification must have an approved latest version.',
+    documentsFrozenVerified: 'Documents of a verified land cannot be reviewed again.',
+    noRequiredDocumentTypes:
+      'No document type is configured as required for verification, so no evidence could be reviewed. Verification cannot proceed until an administrator configures one.',
+    notPendingVerification: 'This land is not awaiting verification, so no decision can be recorded now.',
+    eligibilityNeverPasses:
+      'A measurement that has not been assessed is reported as not assessed; it never counts as a pass and is never read as zero.',
+    readinessTitle: 'Automated validation & evidence readiness',
+    readinessReady: 'Ready for a verification decision',
+    readinessBlocked: 'Not ready for verification — {{count}} issue(s) to resolve',
+    readinessDisclaimer:
+      'Computed from the same data the server checks, in the same order. It guides the reviewer but decides nothing: the server re-checks everything when the decision is sent, and a document is only evidence that a person has reviewed and approved.',
+    readinessSectionData: '1. Land data',
+    readinessSectionEligibility: '2. Eligibility criteria',
+    readinessSectionAssessment: '3. Technical measurements',
+    readinessSectionDocuments: '4. Required documents',
+    readinessNoBlockers: 'The registered land data is complete.',
+    readinessDataMissing: 'Missing required fields: {{fields}}.',
+    readinessEligibilityOk: 'No criterion is currently failed.',
+    readinessEligibilityFailed: '{{criterion}} failed: recorded {{actual}}, required {{requirement}}.',
+    readinessAssessmentOk: 'Every enforced criterion has a recorded measurement.',
+    readinessAssessmentMissing: 'Not assessed yet (never treated as passing): {{criteria}}.',
+    readinessRegionGridMissing: 'No region and grid have been assigned by a technical assessment.',
+    readinessDocMissing: '{{type}}: no document has been uploaded.',
+    readinessDocApproved: '{{type}}: version {{version}} is approved.',
+    readinessDocRejected: '{{type}}: the latest version (v{{version}}) was rejected.',
+    readinessDocPending: '{{type}}: the latest version (v{{version}}) is still awaiting review.',
+    readinessDocReReview:
+      '{{type}}: version {{version}} must be reviewed again because the land data changed after it was approved.',
+    readinessDocumentsUnavailable:
+      'The list of required document types could not be loaded, so the evidence cannot be checked here.',
+    readinessStatusNotPending:
+      'The land is not awaiting verification, so the decision buttons are hidden (the server refuses a decision in this state anyway).',
     offerQueueTitle: 'Offers pending approval',
     offerQueueSubtitle: 'Accepted offers awaiting administrator approval.',
     offerQueueEmpty: 'No offers are awaiting approval.',

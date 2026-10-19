@@ -38,9 +38,14 @@ export function LandListPage() {
         render: (_value, land) => <Link to={`/app/lands/${land.id}`}>{land.landNumber}</Link>,
       },
       {
+        title: t('lands.list.governorate'),
+        key: 'governorateName',
+        render: (_value, land) => land.governorateName ?? '—',
+      },
+      {
         title: t('lands.list.region'),
-        dataIndex: 'regionName',
         key: 'regionName',
+        render: (_value, land) => land.regionName ?? '—',
       },
       {
         title: t('lands.list.location'),

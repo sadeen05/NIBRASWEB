@@ -1,14 +1,15 @@
-import { Alert, Button, Form, Input } from 'antd';
-import { FileText, Lock, Mail, Search, Sprout } from 'lucide-react';
+import { Alert, Button, Form, Input, Typography } from 'antd';
+import { Lock, Mail } from 'lucide-react';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Navigate, useLocation, useNavigate } from 'react-router-dom';
+import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom';
 
 import { isApiError, type ApiError } from '@/api/errors';
+import { safeRedirectTarget } from '@/auth/routeAccess';
 import { useAuth } from '@/auth/useAuth';
-import { AppLogo } from '@/components/AppLogo';
 import { FullPageState } from '@/components/FullPageState';
 import { LanguageToggle } from '@/components/LanguageToggle';
+import { AuthAside } from '@/pages/auth/AuthAside';
 
 interface LoginFormValues {
   email: string;
@@ -19,14 +20,12 @@ interface LocationState {
   from?: string;
 }
 
-function resolveRedirectTarget(state: unknown): string {
+/** `RequireAuth` stashes the requested path in `location.state.from`. */
+function fromTarget(state: unknown): unknown {
   if (typeof state === 'object' && state !== null && 'from' in state) {
-    const from = (state as LocationState).from;
-    if (typeof from === 'string' && from.startsWith('/') && !from.startsWith('//')) {
-      return from;
-    }
+    return (state as LocationState).from;
   }
-  return '/app';
+  return undefined;
 }
 
 /**
@@ -59,14 +58,16 @@ function findKnownValidationKey(error: ApiError): string | null {
 
 export function LoginPage() {
   const { t } = useTranslation();
-  const { status, login } = useAuth();
+  const { status, user, login } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const [submitting, setSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   if (status === 'authenticated') {
-    return <Navigate to={resolveRedirectTarget(location.state)} replace />;
+    // Only honour the intended destination when this role may actually open it;
+    // otherwise land on the Overview page instead of bouncing to `/403`.
+    return <Navigate to={safeRedirectTarget(fromTarget(location.state), user?.role)} replace />;
   }
 
   if (status === 'loading') {
@@ -83,8 +84,8 @@ export function LoginPage() {
     setSubmitting(true);
     setErrorMessage(null);
     try {
-      await login(values.email.trim(), values.password);
-      navigate(resolveRedirectTarget(location.state), { replace: true });
+      const authenticated = await login(values.email.trim(), values.password);
+      navigate(safeRedirectTarget(fromTarget(location.state), authenticated.role), { replace: true });
     } catch (error) {
       if (!isApiError(error)) {
         setErrorMessage(t('login.unexpectedError'));
@@ -105,24 +106,7 @@ export function LoginPage() {
 
   return (
     <div className="login-layout">
-      <section className="login-aside">
-        <AppLogo />
-        <h1 className="aside-title">{t('login.asideTitle')}</h1>
-        <ul className="aside-points">
-          <li className="aside-point">
-            <Sprout className="aside-point__icon" size={18} aria-hidden="true" />
-            <span>{t('login.pointRegister')}</span>
-          </li>
-          <li className="aside-point">
-            <Search className="aside-point__icon" size={18} aria-hidden="true" />
-            <span>{t('login.pointDiscover')}</span>
-          </li>
-          <li className="aside-point">
-            <FileText className="aside-point__icon" size={18} aria-hidden="true" />
-            <span>{t('login.pointContracts')}</span>
-          </li>
-        </ul>
-      </section>
+      <AuthAside />
 
       <section className="login-panel">
         <div className="login-card">
@@ -196,6 +180,11 @@ export function LoginPage() {
               </Button>
             </Form.Item>
           </Form>
+
+          <p style={{ margin: '18px 0 0', textAlign: 'center' }}>
+            <Typography.Text type="secondary">{t('register.noAccount')}</Typography.Text>{' '}
+            <Link to="/register">{t('register.createAccountLink')}</Link>
+          </p>
         </div>
       </section>
     </div>

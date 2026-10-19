@@ -20,13 +20,17 @@ import { isApiError } from '@/api/errors';
 import { fetchEligibility, fetchHistory, fetchLand, reviseLand, submitLand } from '@/api/lands';
 import { FullPageState } from '@/components/FullPageState';
 import { LandStatusTag } from '@/components/LandStatusTag';
+import { criterionLabelWithUnit, criterionThresholdText } from '@/pages/lands/criteriaFormat';
+import { LandChangeRequestPanel } from '@/pages/lands/LandChangeRequestPanel';
 import { LandDocumentsPanel } from '@/pages/lands/LandDocumentsPanel';
 import { formatDateTime, formatDecimal } from '@/pages/lands/landFormat';
 import { resolveLandErrorMessage } from '@/pages/lands/landMessages';
+import { useLandEvidence } from '@/pages/lands/useLandEvidence';
 
 const RESULT_COLORS: Record<string, string> = {
   Passed: 'green',
   Failed: 'red',
+  NotAssessed: 'orange',
   NotEnforced: 'default',
 };
 
@@ -58,6 +62,10 @@ export function LandDetailPage() {
     enabled: validId,
   });
 
+  // The derived investor-visibility evidence rule, shared with the documents panel below (same
+  // query keys, one request). The server decides; this only explains the state it reports.
+  const { outstandingEvidence, outstandingTypeNames, evidenceReady } = useLandEvidence(id, validId);
+
   const refreshLand = async () => {
     await queryClient.invalidateQueries({ queryKey: ['lands'] });
     await queryClient.invalidateQueries({ queryKey: ['land', id] });
@@ -86,11 +94,7 @@ export function LandDetailPage() {
   });
 
   const criterionLabel = useMemo(
-    () => (criterion: string) => {
-      const key = `lands.criteria.${criterion}`;
-      const translated = t(key);
-      return translated === key ? criterion : translated;
-    },
+    () => (criterion: string) => criterionLabelWithUnit(t, criterion),
     [t],
   );
 
@@ -212,7 +216,7 @@ export function LandDetailPage() {
             {land.landNumber} <LandStatusTag status={land.status} />
           </Typography.Title>
           <Typography.Paragraph style={{ margin: '4px 0 0', color: 'var(--nb-text-secondary)' }}>
-            {land.regionName}
+            {land.governorateName ?? land.regionName ?? '—'}
           </Typography.Paragraph>
         </div>
         <Space wrap>
@@ -248,6 +252,43 @@ export function LandDetailPage() {
         </Space>
       </div>
 
+      {land.isHiddenFromInvestors && (
+        <Alert
+          type="warning"
+          showIcon
+          role="status"
+          title={t('lands.detail.hiddenFromInvestors')}
+        />
+      )}
+
+      {/*
+        The second, independent reason a Verified land can be invisible to investors: the latest
+        version of at least one required document type is not approved. It is derived from the
+        server's lists (the same rule the server applies), shown even when the land is not hidden
+        by a change request, and named by the server's own document-type names so the owner knows
+        exactly what to correct in the documents section below.
+      */}
+      {land.status === 'Verified' && evidenceReady && outstandingEvidence && (
+        <Alert
+          type="warning"
+          showIcon
+          role="status"
+          title={t('lands.detail.evidenceOutstandingTitle')}
+          description={t('lands.detail.evidenceOutstandingBody', {
+            documents: outstandingTypeNames.join(', '),
+          })}
+        />
+      )}
+
+      {land.status === 'PendingSuperAdminReview' && (
+        <Alert
+          type="info"
+          showIcon
+          role="status"
+          title={t('lands.actions.resubmittedNotice')}
+        />
+      )}
+
       <Card title={t('lands.detail.sectionDetails')}>
         <Descriptions
           column={{ xs: 1, sm: 1, md: 2 }}
@@ -255,14 +296,20 @@ export function LandDetailPage() {
           bordered
           items={[
             { key: 'landNumber', label: t('lands.form.landNumber'), children: land.landNumber },
-            { key: 'region', label: t('lands.form.region'), children: land.regionName },
-            { key: 'grid', label: t('lands.form.grid'), children: land.gridId },
+            { key: 'governorate', label: t('lands.form.governorate'), children: land.governorateName ?? '—' },
+            { key: 'region', label: t('lands.form.region'), children: land.regionName ?? '—' },
+            { key: 'grid', label: t('lands.form.grid'), children: land.gridId ?? '—' },
             { key: 'village', label: t('lands.form.village'), children: land.village ?? '—' },
             { key: 'basin', label: t('lands.form.basin'), children: land.basin ?? '—' },
             {
               key: 'parcelNumber',
               label: t('lands.form.parcelNumber'),
               children: land.parcelNumber ?? '—',
+            },
+            {
+              key: 'description',
+              label: t('lands.form.description'),
+              children: land.description ?? '—',
             },
             {
               key: 'areaDonum',
@@ -335,7 +382,8 @@ export function LandDetailPage() {
                     {t(`lands.criteriaResult.${result.result}`, { defaultValue: result.result })}
                   </Tag>
                   <span>
-                    {t('lands.detail.required')}: {result.required ?? '—'} ·{' '}
+                    {t('lands.detail.required')}:{' '}
+                    {criterionThresholdText(t, locale, result.criterion, result.required)} ·{' '}
                     {t('lands.detail.actual')}: {formatDecimal(result.actual, locale)}
                   </span>
                 </Space>
@@ -381,6 +429,10 @@ export function LandDetailPage() {
             }))}
           />
         )}
+      </Card>
+
+      <Card title={t('lands.changeRequest.sectionTitle')}>
+        <LandChangeRequestPanel land={land} />
       </Card>
 
       <Card title={t('lands.detail.sectionDocuments')}>

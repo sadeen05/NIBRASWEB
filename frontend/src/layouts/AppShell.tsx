@@ -1,4 +1,4 @@
-import { Button } from 'antd';
+import { Alert, Button } from 'antd';
 import { LogOut } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { NavLink, Outlet } from 'react-router-dom';
@@ -30,6 +30,9 @@ function navItemsFor(role: string | undefined): NavItem[] {
     items.push({ to: '/app/admin/lands', labelKey: 'shell.navAdminLands' });
     items.push({ to: '/app/admin/offers', labelKey: 'shell.navAdminOffers' });
     items.push({ to: '/app/admin/users', labelKey: 'shell.navAdminUsers' });
+  }
+  if (role === 'SuperAdmin') {
+    items.push({ to: '/app/admin/change-requests', labelKey: 'shell.navAdminChangeRequests' });
   }
   if (role === 'Landlord' || role === 'Investor' || role === 'Admin' || role === 'SuperAdmin') {
     items.push({ to: '/app/contracts', labelKey: 'shell.navContracts' });
@@ -83,6 +86,21 @@ export function AppShell() {
         </div>
       </header>
       <main className="shell-content">
+        {/*
+          Persistent, informational only: an unapproved investor can sign in, but
+          the backend refuses land browsing and offers until an admin approves the
+          account. No permission is granted or implied here.
+        */}
+        {user && !user.isApproved && (
+          <Alert
+            type="warning"
+            showIcon
+            role="status"
+            title={t('shell.pendingApprovalTitle')}
+            description={t('shell.pendingApprovalBody')}
+            style={{ marginBottom: 16 }}
+          />
+        )}
         <Outlet />
       </main>
     </div>

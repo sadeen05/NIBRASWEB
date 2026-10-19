@@ -14,6 +14,8 @@ export type ApiErrorKind =
   /** 502/503/504: a proxy or gateway answered because the API is unreachable. */
   | 'unavailable'
   | 'network'
+  /** The client gave up after `REQUEST_TIMEOUT_MS`; the server never answered. */
+  | 'timeout'
   | 'canceled'
   | 'unknown';
 
@@ -174,6 +176,11 @@ function fallbackMessage(kind: ApiErrorKind, status: number, hasValidationErrors
         'apiErrors.network',
         'Cannot reach the server. Make sure the backend is running and try again.',
       );
+    case 'timeout':
+      return translate(
+        'apiErrors.timeout',
+        'The server took too long to respond. Your change may not have been saved; check the list, then try again.',
+      );
     case 'rateLimited':
       return translate(
         'apiErrors.rateLimited',
@@ -203,14 +210,20 @@ export function normalizeError(error: unknown): ApiError {
 
     if (!response) {
       const canceled = code === 'ERR_CANCELED';
+      const timedOut = code === 'ECONNABORTED' || code === 'ETIMEDOUT';
       return new ApiError({
-        kind: canceled ? 'canceled' : 'network',
+        kind: canceled ? 'canceled' : timedOut ? 'timeout' : 'network',
         message: canceled
           ? translate('apiErrors.requestCanceled', 'The request was canceled.')
-          : translate(
-              'apiErrors.network',
-              'Cannot reach the server. Make sure the backend is running and try again.',
-            ),
+          : timedOut
+            ? translate(
+                'apiErrors.timeout',
+                'The server took too long to respond. Your change may not have been saved; check the list, then try again.',
+              )
+            : translate(
+                'apiErrors.network',
+                'Cannot reach the server. Make sure the backend is running and try again.',
+              ),
       });
     }
 
