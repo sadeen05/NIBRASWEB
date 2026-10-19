@@ -40,9 +40,12 @@ function Sql([string]$Query) {
   return (@($out | Where-Object { $_ }) -join "`n").Trim()
 }
 
+# Phase 1: only the governorate, the location identifiers and the area are landlord-supplied.
+# The region, the grid and the four technical measurements are admin-only and are recorded by
+# PUT /api/lands/{id}/assessment, never in the create body.
 function LandBody([string]$LandNumber, [string]$Parcel) {
-  return @{ regionId = $fx.PrimaryRegionId; gridId = $fx.PrimaryGridId; landNumber = $LandNumber; village = 'Village-R'; basin = 'Basin-R'
-    parcelNumber = $Parcel; areaDonum = 25; slopePercentage = 5; distanceToGridKm = 10; solarIrradiance = 6; elevationM = 100 }
+  return @{ governorateId = $fx.GovernorateId; landNumber = $LandNumber; village = 'Village-R'; basin = 'Basin-R'
+    parcelNumber = $Parcel; areaDonum = 25 }
 }
 
 Write-Output '== setup =='
@@ -102,7 +105,9 @@ $server = @($codes | Where-Object { $_ -ge 500 }).Count
 Check 'R-07' 'race: exactly one 201' 1 $created ("codes=" + ($codes -join ','))
 Check 'R-08' 'race: the other four return 409' 4 $conflict
 Check 'R-09' 'race: no 500 responses' 0 $server
-$rowsDb = Sql "SELECT COUNT(*) FROM LANDS WHERE LAND_NUMBER = N'$race' AND REGION_ID = $($fx.PrimaryRegionId);"
+# A landlord-created land carries no region until the admin assessment, so the raced number is
+# scoped by its governorate (UQ_LAND_NUMBER_GOV), which is what arbitrates this race.
+$rowsDb = Sql "SELECT COUNT(*) FROM LANDS WHERE LAND_NUMBER = N'$race' AND GOVERNORATE_ID = $($fx.GovernorateId);"
 Check 'R-10' 'DB: exactly one row for the raced LandNumber' 1 $rowsDb
 $client.Dispose()
 
@@ -176,7 +181,8 @@ Check 'R-29' 'parcel race: exactly one 201' 1 @($pcodes | Where-Object { $_ -eq 
 Check 'R-30' 'parcel race: the other four return 409' 4 @($pcodes | Where-Object { $_ -eq 409 }).Count
 Check 'R-31' 'parcel race: no 500 responses' 0 @($pcodes | Where-Object { $_ -ge 500 }).Count
 Check 'R-32' 'parcel race: no SQL/index text in any body' 0 @($pbodies | Where-Object { $_ -match 'UQ_|SqlException|Cannot insert|duplicate key|Microsoft\.' }).Count
-$pdb = Sql "SELECT COUNT(*) FROM LANDS WHERE REGION_ID = $($fx.PrimaryRegionId) AND VILLAGE = N'Village-R' AND BASIN = N'Basin-R' AND PARCEL_NUMBER = N'$pr' AND IS_DELETED = 0;"
+# Same as R-10: the parcel identity is governorate-scoped before any assessment (UQ_LAND_LOCATION_GOV).
+$pdb = Sql "SELECT COUNT(*) FROM LANDS WHERE GOVERNORATE_ID = $($fx.GovernorateId) AND VILLAGE = N'Village-R' AND BASIN = N'Basin-R' AND PARCEL_NUMBER = N'$pr' AND IS_DELETED = 0;"
 Check 'R-33' 'DB: exactly one live row for the raced parcel' 1 $pdb
 $client.Dispose()
 

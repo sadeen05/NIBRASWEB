@@ -77,9 +77,13 @@ function New-ApprovedHold([string]$tag, [int]$regionId, [string]$laTok, [string]
   if ($g.Status -ne 201) { throw "grid ($tag) create failed: $($g.Status)" }
   $grid = [int](($g.Body | ConvertFrom-Json).id)
 
-  $l = Call 'POST' '/api/lands' @{ regionId = $regionId; gridId = $grid; landNumber = "S7R-L-$tag-$stamp"; village = "V-$tag"; basin = "B-$tag"; parcelNumber = "S7RP-$tag-$stamp"; areaDonum = 100; slopePercentage = 3; distanceToGridKm = 5; solarIrradiance = 6; elevationM = 100 } $laTok
+  # Phase 1: the landlord supplies only governorate/location/area; region/grid/technicals are
+  # recorded by the admin assessment endpoint.
+  $l = Call 'POST' '/api/lands' @{ governorateId = $fx.GovernorateId; landNumber = "S7R-L-$tag-$stamp"; village = "V-$tag"; basin = "B-$tag"; parcelNumber = "S7RP-$tag-$stamp"; areaDonum = 100 } $laTok
   if ($l.Status -ne 201) { throw "land ($tag) create failed: $($l.Status)" }
   $landId = [int](($l.Body | ConvertFrom-Json).id)
+  $a = Call 'PUT' "/api/lands/$landId/assessment" @{ regionId = $regionId; gridId = $grid; slopePercentage = 3; distanceToGridKm = 5; solarIrradiance = 6; elevationM = 100; note = 'S7R fixture assessment' } $adminTok
+  if ($a.Status -ne 200) { throw "land ($tag) assessment failed: $($a.Status)" }
   Verify-Land $landId $laTok $adminTok
 
   $o = Call 'POST' '/api/offers' @{ landId = $landId; requiredCapacityMw = 2; connectionMechanism = 1; landlordSharePct = 30 } $ivTok
@@ -144,9 +148,13 @@ try {
   if ($r.Status -ne 201) { throw "grid create failed: $($r.Status)" }
   $grid = [int](($r.Body | ConvertFrom-Json).id)
 
-  $land = Call 'POST' '/api/lands' @{ regionId = $fx.PrimaryRegionId; gridId = $grid; landNumber = "S7R-L-$stamp"; village = 'V-S7R'; basin = 'B-S7R'; parcelNumber = "S7RP-$stamp"; areaDonum = 100; slopePercentage = 3; distanceToGridKm = 5; solarIrradiance = 6; elevationM = 100 } $laTok
+  # Phase 1: the landlord supplies only governorate/location/area; region/grid/technicals are
+  # recorded by the admin assessment endpoint.
+  $land = Call 'POST' '/api/lands' @{ governorateId = $fx.GovernorateId; landNumber = "S7R-L-$stamp"; village = 'V-S7R'; basin = 'B-S7R'; parcelNumber = "S7RP-$stamp"; areaDonum = 100 } $laTok
   if ($land.Status -ne 201) { throw "land create failed: $($land.Status)" }
   $landId = [int](($land.Body | ConvertFrom-Json).id)
+  $assess = Call 'PUT' "/api/lands/$landId/assessment" @{ regionId = $fx.PrimaryRegionId; gridId = $grid; slopePercentage = 3; distanceToGridKm = 5; solarIrradiance = 6; elevationM = 100; note = 'S7R fixture assessment' } $admin
+  if ($assess.Status -ne 200) { throw "land assessment failed: $($assess.Status)" }
   Verify-Land $landId $laTok $admin
 
   $ivEmail = "s7r-$stamp-iv@example.test"

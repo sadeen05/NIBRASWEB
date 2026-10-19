@@ -23,10 +23,18 @@ function Check([string]$Id, [string]$Desc, $Expected, $Actual) {
   Write-Output ("{0,-8} {1,-4} exp={2,-22} act={3,-22} {4}" -f $Id, $res, $Expected, $Actual, $Desc)
 }
 function Q([string]$sql) { ((sqlcmd -S $sqlServer -E -d $db -W -h -1 -Q "SET NOCOUNT ON; $sql" 2>&1) -join ' ').Trim() }
+# Phase 1: the landlord supplies only the governorate, the location identifiers and the area.
+# $slope is retained in New-Land's signature so existing call sites stay valid; the region, the
+# grid and the technical values are now recorded through PUT /api/lands/{id}/assessment.
 function New-Land([string]$ln, [string]$parcel, [decimal]$slope) {
-  @{ regionId = $fx.PrimaryRegionId; gridId = $fx.PrimaryGridId; landNumber = $ln; village = 'Village-ADM'; basin = 'Basin-ADM';
-     parcelNumber = $parcel; areaDonum = 100; slopePercentage = $slope; distanceToGridKm = 10;
-     solarIrradiance = 6; elevationM = 100 }
+  @{ governorateId = $fx.GovernorateId; landNumber = $ln; village = 'Village-ADM'; basin = 'Basin-ADM';
+     parcelNumber = $parcel; areaDonum = 100 }
+}
+function Assess-Land([int]$landId, [decimal]$slope, [string]$adminTok) {
+  $r = Call 'PUT' "/api/lands/$landId/assessment" @{ regionId = $fx.PrimaryRegionId; gridId = $fx.PrimaryGridId;
+     slopePercentage = $slope; distanceToGridKm = 10; solarIrradiance = 6; elevationM = 100;
+     note = 'S4 admin fixture assessment' } $adminTok
+  if ($r.Status -ne 200) { throw "land $landId assessment failed: $($r.Status) body=$($r.Body)" }
 }
 
 # --- seed SuperAdmin credentials: read at run time via `dotnet user-secrets list`, never printed ---
@@ -67,6 +75,7 @@ Write-Output "fixtures: primaryRegion=$($fx.PrimaryRegionId) primaryGrid=$($fx.P
 $r = Call 'POST' '/api/lands' (New-Land "ADM-L1-$stamp" "PA1-$stamp" 5) $la
 Check 'A-02' 'create L1' 201 $r.Status
 $l1 = ($r.Body | ConvertFrom-Json).id
+Assess-Land $l1 5 $admin
 $r = Call 'POST' "/api/lands/$l1/documents" @{ documentTypeId = 1; filePath = "docs/$stamp/title.pdf" } $la
 Check 'A-03' 'upload required type 1 on L1' 201 $r.Status
 $l1d1 = ($r.Body | ConvertFrom-Json).id
@@ -77,6 +86,7 @@ Check 'A-04' 'submit L1 -> PendingVerification' 200 $r.Status
 
 $r = Call 'POST' '/api/lands' (New-Land "ADM-L2-$stamp" "PA2-$stamp" 5) $la
 $l2 = ($r.Body | ConvertFrom-Json).id
+Assess-Land $l2 5 $admin
 $r = Call 'POST' "/api/lands/$l2/documents" @{ documentTypeId = 1; filePath = "docs/$stamp/l2-title.pdf" } $la
 $l2d1 = ($r.Body | ConvertFrom-Json).id
 $r = Call 'POST' "/api/lands/$l2/documents" @{ documentTypeId = 2; filePath = "docs/$stamp/l2-enc.pdf" } $la
@@ -93,6 +103,12 @@ $l3 = ($r.Body | ConvertFrom-Json).id
 Call 'POST' "/api/lands/$l3/documents" @{ documentTypeId = 1; filePath = "docs/$stamp/l3-title.pdf" } $la | Out-Null
 $r = Call 'POST' "/api/lands/$l3/submit" $null $la
 Check 'A-06' 'submit L3 -> PendingVerification' 200 $r.Status
+
+# Phase 1: an unassessed land cannot be verified — a missing measurement is never a pass.
+$r = Call 'POST' "/api/lands/$l3/verify" $null $admin
+Check 'A-06b' 'verify an unassessed land -> 409' 409 $r.Status
+Check 'A-06c' 'message names the incomplete technical assessment' 'True' ([string]($r.Body -match 'Technical assessment is incomplete'))
+Assess-Land $l3 5 $admin
 
 Write-Output ''
 Write-Output '== SEC-09 admin browse + D2/D1 + verification lifecycle =='
@@ -155,13 +171,27 @@ Check 'S4-57c' 'history contains both versions' 'True' ("$($hist.Count -ge 2)")
 
 $stillV1 = Q "SELECT CAST(VERIFIED_AGAINST_CRITERION_ID AS varchar(10)) FROM LANDS WHERE ID=$l1;"
 Check 'S4-58a' 'a Verified land keeps its original criterion id' $v1 $stillV1
+# Phase 1: the landlord creates the land (area only); the admin records the technical values.
 $r = Call 'POST' '/api/lands' (New-Land "ADM-L4-$stamp" "PA4-$stamp" 7) $la
-Check 'S4-58b' 'new land accepted under v2 (slope 7 <= 8)' 201 $r.Status
+Check 'S4-58b' 'new land accepted under v2' 201 $r.Status
 $l4 = ($r.Body | ConvertFrom-Json).id
 $elig = (Call 'GET' "/api/lands/$l4/eligibility" $null $la | ForEach-Object { $_.Body | ConvertFrom-Json })
 Check 'S4-58c' 'new land is evaluated against v2' "$v2" "$($elig.criterionId)"
+$r = Call 'GET' "/api/lands/$l4/eligibility" $null $la
+$slopeBefore = @(($r.Body | ConvertFrom-Json).results | Where-Object { $_.criterion -eq 'slope' })[0]
+Check 'S4-58c2' 'unassessed slope is NotAssessed (never a pass)' 'NotAssessed' "$($slopeBefore.result)"
+Assess-Land $l4 7 $admin
+$r = Call 'GET' "/api/lands/$l4/eligibility" $null $la
+$slopeAfter = @(($r.Body | ConvertFrom-Json).results | Where-Object { $_.criterion -eq 'slope' })[0]
+Check 'S4-58c3' 'assessed slope 7 passes under v2 (max 8)' 'Passed' "$($slopeAfter.result)"
+
 $r = Call 'POST' '/api/lands' (New-Land "ADM-L5-$stamp" "PA5-$stamp" 9) $la
-Check 'S4-58d' 'new land failing v2 (slope 9 > 8) -> 400' 400 $r.Status
+Check 'S4-58d' 'new land accepted (technical values are not landlord-supplied)' 201 $r.Status
+$l5 = ($r.Body | ConvertFrom-Json).id
+Assess-Land $l5 9 $admin
+$r = Call 'GET' "/api/lands/$l5/eligibility" $null $la
+$slopeFail = @(($r.Body | ConvertFrom-Json).results | Where-Object { $_.criterion -eq 'slope' })[0]
+Check 'S4-58e' 'assessed slope 9 fails v2 (max 8) -> Failed' 'Failed' "$($slopeFail.result)"
 
 Write-Output ''
 Write-Output '== document types: delete guard and flag change (D3/D2) =='

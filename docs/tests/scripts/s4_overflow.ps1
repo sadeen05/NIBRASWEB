@@ -24,7 +24,7 @@ try {
   $r=Probe 'POST' '/api/auth/register' @{fullName='Overflow Probe';email="ovf-$stamp@example.test";phone=('9'+('{0:D9}' -f (Get-Random -Minimum 100000000 -Maximum 999999999)));password=$pw;roleId=1}
   $r=Probe 'POST' '/api/auth/login' @{email="ovf-$stamp@example.test";password=$pw}
   $tok=($r.B|ConvertFrom-Json).token
-  function LandBody([decimal]$area,[string]$parcel){ @{regionId=$fx.PrimaryRegionId;gridId=$fx.PrimaryGridId;landNumber="OVF-$stamp-$parcel";village='Village-O';basin='Basin-O';parcelNumber=$parcel;areaDonum=$area;slopePercentage=5;distanceToGridKm=10;solarIrradiance=6;elevationM=100} }
+  function LandBody([decimal]$area,[string]$parcel){ @{governorateId=$fx.GovernorateId;landNumber="OVF-$stamp-$parcel";village='Village-O';basin='Basin-O';parcelNumber=$parcel;areaDonum=$area} }
   Write-Output '== areaDonum = 200,000,000 (passes Range, exceeds decimal(10,2)) =='
   $p=Probe 'POST' '/api/lands' (LandBody 200000000 "PO1-$stamp") $tok
   Write-Output ("status={0}" -f $p.S)

@@ -64,8 +64,11 @@ Write-Output "users: landlord A id=$laId, landlord B id=$lbId, investor unapprov
 $fx = Ensure-TestFixtures -SqlServer $sqlServer -Database $db
 Write-Output "fixtures: primaryRegion=$($fx.PrimaryRegionId) primaryGrid=$($fx.PrimaryGridId) secondaryRegion=$($fx.SecondaryRegionId)"
 
-$good = @{ regionId = $fx.PrimaryRegionId; gridId = $fx.PrimaryGridId; landNumber = "L-$stamp"; village = 'Village-A'; basin = 'Basin-A'
-  parcelNumber = "P-$stamp"; areaDonum = 25; slopePercentage = 5; distanceToGridKm = 10; solarIrradiance = 6; elevationM = 100 }
+# Phase 1: the landlord supplies only the governorate, the location identifiers and the area.
+# Region, grid and the four technical measurements are admin-only and are recorded through
+# PUT /api/lands/{id}/assessment.
+$good = @{ governorateId = $fx.GovernorateId; landNumber = "L-$stamp"; village = 'Village-A'; basin = 'Basin-A'
+  parcelNumber = "P-$stamp"; areaDonum = 25 }
 
 Write-Output ''
 Write-Output '== 4.3 create and validation (landlord A) =='
@@ -73,14 +76,17 @@ $r = Call 'POST' '/api/lands' $good $aTok
 Check 'S4-01' 'landlord A creates a valid land' 201 $r.Status
 $landId = [int]($r.Body | ConvertFrom-Json).id
 
-$x = $good.Clone(); $x.regionId = $fx.SecondaryRegionId; $x.parcelNumber = "P2-$stamp"
+# Region/grid are no longer accepted from a landlord, so region/grid consistency is asserted
+# against the admin assessment endpoint below and this slot now covers governorate validation.
+$x = $good.Clone(); $x.governorateId = 999999; $x.parcelNumber = "P2-$stamp"
 $r = Call 'POST' '/api/lands' $x $aTok
-Check 'S4-02' 'grid does not belong to the chosen (other) region' 400 $r.Status
+Check 'S4-02' 'unknown governorate id -> 400' 400 $r.Status
 
-$x = $good.Clone(); $x.slopePercentage = 15; $x.parcelNumber = "P3-$stamp"; $x.landNumber = "L3-$stamp"
+# Slope is no longer landlord-supplied (Phase 1); the landowner-enforced criterion is area.
+$x = $good.Clone(); $x.areaDonum = 5; $x.parcelNumber = "P3-$stamp"; $x.landNumber = "L3-$stamp"
 $r = Call 'POST' '/api/lands' $x $aTok
-Check 'S4-03' 'slope 15 fails max 10' 400 $r.Status
-Check 'S4-03b' 'failure message lists "slope"' 'True' ([string]($r.Body -match 'slope'))
+Check 'S4-03' 'area 5 fails min 20' 400 $r.Status
+Check 'S4-03b' 'failure message lists "area"' 'True' ([string]($r.Body -match 'area'))
 
 $x = $good.Clone(); $x.parcelNumber = "P4-$stamp"; $x.landNumber = "L4-$stamp"; $x.landlordId = 999999; $x.status = 'Verified'; $x.dataVerifiedByAdmin = $true; $x.documentStorageLocation = 'C:\evil'
 $r = Call 'POST' '/api/lands' $x $aTok
@@ -116,7 +122,7 @@ Check 'S4-12' 'submit after a required-type upload' 200 $r.Status
 
 $r = Call 'GET' "/api/lands/$landId" $null $bTok
 Check 'S4-13' 'landlord B GETs A''s land' 403 $r.Status
-$upd = @{ regionId = $fx.PrimaryRegionId; gridId = $fx.PrimaryGridId; landNumber = "L-$stamp"; village = 'Village-A'; basin = 'Basin-A'; parcelNumber = "P-$stamp"; areaDonum = 25; slopePercentage = 5; distanceToGridKm = 10; solarIrradiance = 6; elevationM = 100 }
+$upd = @{ governorateId = $fx.GovernorateId; landNumber = "L-$stamp"; village = 'Village-A'; basin = 'Basin-A'; parcelNumber = "P-$stamp"; areaDonum = 25 }
 $r = Call 'PUT' "/api/lands/$landId" $upd $bTok
 Check 'S4-14' 'landlord B PUTs A''s land' 403 $r.Status
 $r = Call 'POST' "/api/lands/$landId/submit" $null $bTok
@@ -251,6 +257,19 @@ $xDoc2 = [int]($r.Body | ConvertFrom-Json).id
 $r = Call 'POST' "/api/lands/$xId/submit" $null $aTok
 Check 'A2-07' 'submit X -> PendingVerification' 200 $r.Status
 
+# Phase 1: region/grid/technical measurements are admin-only. Assess X so the only remaining
+# blocker for verification is the pending required document.
+$r = Call 'PUT' "/api/lands/$xId/assessment" @{ regionId = $fx.PrimaryRegionId; gridId = $fx.PrimaryGridId; slopePercentage = 5; distanceToGridKm = 10; solarIrradiance = 6; elevationM = 100; note = 'S4 fixture assessment' } $saTok
+Check 'A2-07b' 'SuperAdmin assesses X (region/grid/technicals)' 200 $r.Status
+
+# Land data may not be changed by a regular Admin: the assessment endpoint is SuperAdmin-only.
+$r = Call 'PUT' "/api/lands/$xId/assessment" @{ slopePercentage = 6 } $admTok
+Check 'A2-07d' 'regular Admin assesses a land -> 403' 403 $r.Status
+
+# A grid that does not belong to the given region is refused by the assessment endpoint.
+$r = Call 'PUT' "/api/lands/$xId/assessment" @{ regionId = $fx.SecondaryRegionId; gridId = $fx.PrimaryGridId } $saTok
+Check 'A2-07c' 'assessment with a grid from another region -> 400' 400 $r.Status
+
 $r = Call 'POST' "/api/lands/$xId/verify" $null $admTok
 Check 'S4-50' 'verify while a required document is Pending -> 409' 409 $r.Status
 
@@ -307,13 +326,30 @@ Check 'S4-52f' 'owner edits the revised Y -> 204' 204 $r.Status
 $r = Call 'POST' "/api/lands/$yId/submit" $null $aTok
 Check 'S4-52g' 'owner resubmits Y -> 200' 200 $r.Status
 $dbv = Sql "SELECT CAST(LAND_STATUS_ID AS varchar(3)) FROM LANDS WHERE ID = $yId;"
-Check 'S4-52h' 'DB: Y status = PendingVerification(2)' '2' $dbv
+Check 'S4-52h' 'DB: Y status = PendingSuperAdminReview(6), not the admin queue' '6' $dbv
+
+# A resubmission after a rejection is reviewed by a SuperAdmin. The regular Admin must be
+# refused (403) for both the document review and the decision, so the resubmission can never
+# enter the regular admin queue.
 $r = Call 'PUT' "/api/lands/$yId/documents/$yDoc1/review" @{ approved = $true } $admTok
-Check 'A2-12' 'admin approves the TitleDeed on Y' 200 $r.Status
-$r = Call 'PUT' "/api/lands/$yId/documents/$yDoc2/review" @{ approved = $true } $admTok
-Check 'A2-13' 'admin approves the EncumbranceStatement on Y' 200 $r.Status
+Check 'S4-52h2' 'regular Admin reviews a resubmission document -> 403' 403 $r.Status
 $r = Call 'POST' "/api/lands/$yId/verify" $null $admTok
-Check 'S4-52i' 'admin verifies Y on the second cycle -> 200' 200 $r.Status
+Check 'S4-52h3' 'regular Admin verifies a resubmission -> 403' 403 $r.Status
+
+# The assessment writes region/grid/measurements for the first time, and an assessment that
+# changes any of them withdraws existing document approvals so the evidence is reviewed against
+# the current data (LandService.InvalidateApprovedDocumentsAsync keeps the review audit and
+# sets the version back to Pending). The approvals therefore follow the assessment, exactly as
+# in the land-X block above; approving before it would (correctly) leave the evidence Pending
+# and the verification below would return 409.
+$r = Call 'PUT' "/api/lands/$yId/assessment" @{ regionId = $fx.PrimaryRegionId; gridId = $fx.PrimaryGridId; slopePercentage = 5; distanceToGridKm = 10; solarIrradiance = 6; elevationM = 100; note = 'S4 fixture assessment' } $saTok
+Check 'A2-13b' 'SuperAdmin assesses Y' 200 $r.Status
+$r = Call 'PUT' "/api/lands/$yId/documents/$yDoc1/review" @{ approved = $true } $saTok
+Check 'A2-12' 'SuperAdmin approves the TitleDeed on Y' 200 $r.Status
+$r = Call 'PUT' "/api/lands/$yId/documents/$yDoc2/review" @{ approved = $true } $saTok
+Check 'A2-13' 'SuperAdmin approves the EncumbranceStatement on Y' 200 $r.Status
+$r = Call 'POST' "/api/lands/$yId/verify" $null $saTok
+Check 'S4-52i' 'SuperAdmin verifies Y on the second cycle -> 200' 200 $r.Status
 
 # --- S4-54: approved investor lists only Verified lands ---
 $r = Call 'POST' "/api/users/$invId/approve" $null $admTok
@@ -364,9 +400,11 @@ Check 'S4-57g' 'admin DELETE /api/criteria -> 405 (no route)' 405 $r.Status
 # --- S4-58: version pinning ---
 $dbv = Sql "SELECT CAST(VERIFIED_AGAINST_CRITERION_ID AS varchar(10)) FROM LANDS WHERE ID = $xId;"
 Check 'S4-58a' 'X keeps its original criterion id after v2' ("$v1") $dbv
-$w = $good.Clone(); $w.parcelNumber = "PW-$stamp"; $w.landNumber = "LW-$stamp"; $w.slopePercentage = 7
+# Phase 1: the landlord no longer supplies technical values, so the new land is accepted and its
+# enforced technical criteria are reported as NotAssessed until an assessment is recorded.
+$w = $good.Clone(); $w.parcelNumber = "PW-$stamp"; $w.landNumber = "LW-$stamp"
 $r = Call 'POST' '/api/lands' $w $aTok
-Check 'S4-58b' 'new land accepted under the new current criterion (slope 7)' 201 $r.Status
+Check 'S4-58b' 'new land accepted under the new current criterion' 201 $r.Status
 $wId = [int]($r.Body | ConvertFrom-Json).id
 $r = Call 'GET' "/api/lands/$wId/eligibility" $null $aTok
 Check 'S4-58c' 'new land is evaluated against v2' ("$v2") ([int](($r.Body | ConvertFrom-Json).criterionId))
@@ -384,6 +422,8 @@ try {
   Check 'S4-62b' 'existing Verified snapshot unchanged by the flag change' $snapBefore $snapAfter
   $r = Call 'PUT' '/api/document-types/1' @{ name = 'TitleDeed'; isRequiredForVerification = $false } $admTok
   Check 'S4-61a' 'admin clears the last required flag -> 200' 200 $r.Status
+  $r = Call 'PUT' "/api/lands/$zId/assessment" @{ regionId = $fx.PrimaryRegionId; gridId = $fx.PrimaryGridId; slopePercentage = 5; distanceToGridKm = 10; solarIrradiance = 6; elevationM = 100 } $saTok
+  Check 'A2-16b' 'SuperAdmin assesses Z' 200 $r.Status
   $r = Call 'POST' "/api/lands/$zId/verify" $null $admTok
   Check 'S4-61b' 'verify with no required document type -> 409 (no vacuous pass)' 409 $r.Status
 }

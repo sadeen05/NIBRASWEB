@@ -43,6 +43,14 @@ function Ensure-TestFixtures {
 
   if ($primaryGridId -le 0) { throw "test fixture grid could not be resolved" }
 
+  # Governorate: the twelve rows are seeded reference data (Phase 1 migration), so this is a
+  # pure lookup by stable CODE and never inserts. Lands are registered against a governorate;
+  # the region and grid are assigned later by the admin assessment endpoint.
+  $governorateCode = 'AM'
+  $governorateId = [int](Invoke-FixtureSql "SELECT CAST(ID AS varchar(10)) FROM GOVERNORATES WHERE CODE = N'$governorateCode';")
+
+  if ($governorateId -le 0) { throw "test fixture governorate '$governorateCode' could not be resolved" }
+
   return [pscustomobject]@{
     PrimaryRegionId     = $primaryRegionId
     SecondaryRegionId   = $secondaryRegionId
@@ -50,5 +58,7 @@ function Ensure-TestFixtures {
     PrimaryRegionName   = $primaryRegionName
     SecondaryRegionName = $secondaryRegionName
     PrimaryGridName     = $primaryGridName
+    GovernorateId       = $governorateId
+    GovernorateCode     = $governorateCode
   }
 }

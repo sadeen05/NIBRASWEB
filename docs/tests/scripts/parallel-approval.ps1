@@ -120,9 +120,13 @@ function Verify-Land([int]$landId, [string]$laTok, [string]$adminTok) {
 }
 $landIds = @()
 foreach ($n in 1..2) {
-  $r = Call 'POST' '/api/lands' @{ regionId = $fx.PrimaryRegionId; gridId = $gridId; landNumber = "S5P-L$n-$stamp"; village = 'V-S5P'; basin = 'B-S5P'; parcelNumber = "S5PP-L$n-$stamp"; areaDonum = 25; slopePercentage = 5; distanceToGridKm = 10; solarIrradiance = 6; elevationM = 100 } $laTok
+  # Phase 1: the landlord supplies only governorate/location/area.
+  $r = Call 'POST' '/api/lands' @{ governorateId = $fx.GovernorateId; landNumber = "S5P-L$n-$stamp"; village = 'V-S5P'; basin = 'B-S5P'; parcelNumber = "S5PP-L$n-$stamp"; areaDonum = 25 } $laTok
   if ($r.Status -ne 201) { Write-Output 'BLOCKED: land create failed'; exit 3 }
   $landId = [int](($r.Body | ConvertFrom-Json).id)
+  # Region, grid and the technical measurements are admin-only.
+  $a = Call 'PUT' "/api/lands/$landId/assessment" @{ regionId = $fx.PrimaryRegionId; gridId = $gridId; slopePercentage = 5; distanceToGridKm = 10; solarIrradiance = 6; elevationM = 100; note = 'S5P fixture assessment' } $admin
+  if ($a.Status -ne 200) { Write-Output 'BLOCKED: land assessment failed'; exit 3 }
   Verify-Land $landId $laTok $admin
   $landIds += $landId
 }

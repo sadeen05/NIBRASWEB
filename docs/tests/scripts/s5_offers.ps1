@@ -65,15 +65,25 @@ function Verify-Land([int]$landId, [string]$laTok, [string]$adminTok) {
   $r = Call 'POST' "/api/lands/$landId/verify" $null $adminTok
   if ($r.Status -ne 200) { throw "land $landId verify failed: $($r.Status) body=$($r.Body)" }
 }
+# Phase 1: a landlord registers only the governorate, the location identifiers and the area.
+# The region, the grid and the four technical measurements are admin-only and are recorded
+# through PUT /api/lands/{id}/assessment. $gid is kept in New-Land-Body's signature so the
+# existing call sites stay valid; it is applied by Assess-Land instead of the create body.
 function New-Land-Body([string]$ln, [string]$parcel, [int]$gid) {
-  @{ regionId = $fx.PrimaryRegionId; gridId = $gid; landNumber = $ln; village = 'Village-S5'; basin = 'Basin-S5';
-     parcelNumber = $parcel; areaDonum = 25; slopePercentage = 5; distanceToGridKm = 10;
-     solarIrradiance = 6; elevationM = 100 }
+  @{ governorateId = $fx.GovernorateId; landNumber = $ln; village = 'Village-S5'; basin = 'Basin-S5';
+     parcelNumber = $parcel; areaDonum = 25 }
+}
+function Assess-Land([int]$landId, [int]$gid, [string]$adminTok) {
+  $r = Call 'PUT' "/api/lands/$landId/assessment" @{ regionId = $fx.PrimaryRegionId; gridId = $gid;
+     slopePercentage = 5; distanceToGridKm = 10; solarIrradiance = 6; elevationM = 100;
+     note = 'S5 fixture assessment' } $adminTok
+  if ($r.Status -ne 200) { throw "land $landId assessment failed: $($r.Status) body=$($r.Body)" }
 }
 function Create-Land([string]$ln, [string]$parcel, [int]$gid, [string]$laTok, [string]$adminTok) {
   $r = Call 'POST' '/api/lands' (New-Land-Body $ln $parcel $gid) $laTok
   if ($r.Status -ne 201) { throw "land create failed: $($r.Status) body=$($r.Body)" }
   $landId = [int](($r.Body | ConvertFrom-Json).id)
+  Assess-Land $landId $gid $adminTok
   Verify-Land $landId $laTok $adminTok
   return $landId
 }

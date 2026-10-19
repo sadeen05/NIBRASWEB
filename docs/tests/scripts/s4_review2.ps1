@@ -37,8 +37,8 @@ function Sql([string]$Query) {
 }
 
 function LandBody([string]$LandNumber, [string]$Parcel) {
-  return @{ regionId = $fx.PrimaryRegionId; gridId = $fx.PrimaryGridId; landNumber = $LandNumber; village = 'Village-X'; basin = 'Basin-X'
-    parcelNumber = $Parcel; areaDonum = 25; slopePercentage = 5; distanceToGridKm = 10; solarIrradiance = 6; elevationM = 100 }
+  return @{ governorateId = $fx.GovernorateId; landNumber = $LandNumber; village = 'Village-X'; basin = 'Basin-X'
+    parcelNumber = $Parcel; areaDonum = 25 }
 }
 
 $email = "s4x-$stamp-la@example.test"

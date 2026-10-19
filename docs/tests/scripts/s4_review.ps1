@@ -37,8 +37,8 @@ function Sql([string]$Query) {
 }
 
 function LandBody([string]$LandNumber, [string]$Parcel) {
-  return @{ regionId = $fx.PrimaryRegionId; gridId = $fx.PrimaryGridId; landNumber = $LandNumber; village = 'Village-V'; basin = 'Basin-V'
-    parcelNumber = $Parcel; areaDonum = 25; slopePercentage = 5; distanceToGridKm = 10; solarIrradiance = 6; elevationM = 100 }
+  return @{ governorateId = $fx.GovernorateId; landNumber = $LandNumber; village = 'Village-V'; basin = 'Basin-V'
+    parcelNumber = $Parcel; areaDonum = 25 }
 }
 
 function Send-Parallel([string]$Method, [string]$Path, $Bodies, [string]$Token) {
@@ -109,7 +109,8 @@ Check 'V-08' 'parcel race: the other four are 409' 4 @($codes | Where-Object { $
 Check 'V-09' 'parcel race: no 500 responses' 0 @($codes | Where-Object { $_ -ge 500 }).Count
 $leakBodies = @($res | Where-Object { $_.Body -match 'UQ_|SqlException|Cannot insert' }).Count
 Check 'V-10' 'parcel race: no SQL/index text in any response body' 0 $leakBodies
-$dbParcel = Sql "SELECT COUNT(*) FROM LANDS WHERE REGION_ID = $($fx.PrimaryRegionId) AND VILLAGE = N'Village-V' AND BASIN = N'Basin-V' AND PARCEL_NUMBER = N'PRACE-$stamp' AND IS_DELETED = 0;"
+# Landlord-created lands have no region before the admin assessment; the unique scope is the governorate.
+$dbParcel = Sql "SELECT COUNT(*) FROM LANDS WHERE GOVERNORATE_ID = $($fx.GovernorateId) AND VILLAGE = N'Village-V' AND BASIN = N'Basin-V' AND PARCEL_NUMBER = N'PRACE-$stamp' AND IS_DELETED = 0;"
 Check 'V-11' 'DB: exactly one live row for the raced parcel' 1 $dbParcel
 
 Write-Output ''

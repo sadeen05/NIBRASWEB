@@ -130,7 +130,10 @@ Every suite script exits non-zero when any case fails, so a wrapper can check
 | `s6_contracts.ps1` | Step-6 contracts suite: create from an Accepted offer, signatures, review (approve/reject), termination, reservation release, and Step-7 competing-offer closure when a contract becomes Active. Starts/stops its own app. | 0/1 |
 | `s7_status_filter.ps1` | Step-7 status-filter regression: undefined numeric (`?status=99`), unknown and injection status values return 400 (previously 200 / 500) for both lands and offers. Starts/stops its own app. | 0/1 |
 | `s7_reservations.ps1` | Step-7 reservation surface: the Admin `POST /api/GridCapacityReservations/{id}/release` route (authz, not-found, idempotent repeated release, capacity returned to the grid) and the removal of the direct reservation POST/PUT/DELETE routes (405). Also covers Decision C: manual release is refused with 409 while the linked contract is `PendingSignatures` or `Active`, and allowed when there is no contract or the contract has ended. Reservations are created only by workflow code. F1/F2 concurrency: overlapping releases keep the first release's audit trail, and a release racing a contract creation never leaves a hold both released and linked to a live contract. Does not exercise expiry. Starts/stops its own app. | 0/1 |
-| `test_fixtures.ps1` | Shared idempotent fixtures: ensures the two `TEST Region …` regions and the `TEST Grid - Primary 100MW` grid exist (insert-only, matched by name) and resolves their IDs. Dot-sourced by the suites; never assumes numeric IDs. | n/a |
+| `p2_change_requests.ps1` | **Phase-2 suite (Phase D only — requires the Phase-2 migration to be applied; the routes do not exist before it).** Change-request submit/decide (validation, ownership, SuperAdmin-only decisions, malformed stored snapshots, dangling pinned criteria), the immediate investor visibility restriction, evidence invalidation + SuperAdmin re-review, the correction-upload restriction, the hidden/outstanding offer gates, change-request submit/decision races, and the regression invariants. Performs explicitly-marked FIXTURE-LOCAL `UPDATE`s on rows it created in the same run only (malformed-snapshot and dangling-pin fault injection). Cases and expectations: `docs/tests/PHASE2_MATRIX.md`. | 0/1 |
+| `test_fixtures.ps1` | Shared idempotent fixtures: ensures the two `TEST Region …` regions and the `TEST Grid - Primary 100MW` grid exist (insert-only, matched by name) and resolves their IDs. Dot-sourced by the suites; never assumes numeric IDs. It also resolves the governorate used by
+  the land fixtures (`SELECT ID FROM GOVERNORATES WHERE CODE = ...`, a pure lookup: the twelve
+  rows are seeded reference data and are never inserted by the fixtures). | n/a |
 | `s4_checkpoint_a.ps1` | Step-4 checkpoint evidence script (supplementary). | 0/1 |
 | `s4_probe.ps1`, `s4_page.ps1`, `s4_overflow.ps1` | Supplementary Step-4 probes (each starts/stops its own app via `s4_app.ps1`). | 0/1 |
 | `s4_review.ps1`, `s4_review2.ps1` | Supplementary Step-4 review-workflow evidence. | 0/1 |
@@ -138,6 +141,21 @@ Every suite script exits non-zero when any case fails, so a wrapper can check
 
 ## Notes
 
+- **Phase 1 land fixtures:** a landlord create body now carries only `governorateId`, the location
+  identifiers and `areaDonum`. The region, the grid and the four technical measurements are
+  recorded by `PUT /api/lands/{id}/assessment`, which is **SuperAdmin-only** (a regular Admin now
+  receives 403, including during a rejection resubmission). Every suite
+  that verifies a land therefore calls the assessment endpoint first; suites that only create
+  lands just send `governorateId`. Verification of an unassessed land returns 409
+  (`Technical assessment is incomplete`).
+
+- **Phase 2 change requests:** `p2_change_requests.ps1` and the case matrix in
+  `docs/tests/PHASE2_MATRIX.md` cover the approved-land change-request workflow,
+  the `IS_HIDDEN_FROM_INVESTORS` flag and the derived evidence/visibility rules
+  (offers and contracts are refused while a land is hidden or its required
+  documents are being corrected). Run them only after
+  `20261018090000_Phase2_LandCorrectionAndChangeRequests` is applied; nothing in
+  the suite touches pre-existing business rows.
 - `step3_suite.ps1` originally contained a Phase C rate-limit window test and
   two 62-second sleeps; both moved to `step3_ratelimit.ps1` (single fresh
   window, no long sleeps in the functional suite).

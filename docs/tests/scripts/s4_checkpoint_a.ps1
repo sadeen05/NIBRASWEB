@@ -68,9 +68,8 @@ Write-Output "fixtures: primaryRegion=$($fx.PrimaryRegionId) primaryGrid=$($fx.P
 Write-Output ''
 Write-Output '== CHECKPOINT A =='
 $create = @{
-  regionId = $fx.PrimaryRegionId; gridId = $fx.PrimaryGridId; landNumber = "CP-$stamp"; village = 'Village-One'; basin = 'Basin-One'
-  parcelNumber = "P-$stamp"; areaDonum = 25; slopePercentage = 5; distanceToGridKm = 10
-  solarIrradiance = 6; elevationM = 100
+  governorateId = $fx.GovernorateId; landNumber = "CP-$stamp"; village = 'Village-One'; basin = 'Basin-One'
+  parcelNumber = "P-$stamp"; areaDonum = 25
 }
 $r = Call 'POST' '/api/lands' $create $aToken
 Write-Output ("C1 landlord A creates a land -> expected 201, actual {0}" -f $r.Status)
