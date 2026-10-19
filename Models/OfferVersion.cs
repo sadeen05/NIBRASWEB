@@ -27,6 +27,10 @@ public partial class OfferVersion
 
     public decimal? PaybackPeriodMonths { get; set; }
 
+    public string? Message { get; set; }
+
+    public bool IsCurrent { get; set; }
+
     public int CreatedById { get; set; }
 
     public string? RejectionReason { get; set; }

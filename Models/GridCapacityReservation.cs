@@ -9,13 +9,25 @@ public partial class GridCapacityReservation
 
     public int GridId { get; set; }
 
-    public int ContractId { get; set; }
+    public int? ContractId { get; set; }
+
+    public int OfferId { get; set; }
 
     public decimal ReservedMw { get; set; }
 
+    public string? ReservationType { get; set; }
+
     public DateTime? CreatedAt { get; set; }
 
-    public virtual Contract Contract { get; set; } = null!;
+    public DateTime? ReleasedAt { get; set; }
+
+    public string? ReleaseReason { get; set; }
+
+    public DateTime? ExpiresAt { get; set; }
+
+    public virtual Contract? Contract { get; set; }
 
     public virtual Grid Grid { get; set; } = null!;
+
+    public virtual Offer Offer { get; set; } = null!;
 }

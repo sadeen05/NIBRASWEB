@@ -1,24 +1,41 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using NIBRAS.API.DTOs;
 using NIBRAS.API.Services;
+using NIBRAS.Models;
 
 namespace NIBRAS.API.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
+[Authorize(Roles = RoleNames.Admin + "," + RoleNames.SuperAdmin)]
 public class UsersController : ControllerBase
 {
     private readonly IUserService _userService;
+    private readonly ICurrentUser _currentUser;
+    private readonly IAdminInvitationService _adminInvitation;
+    private readonly IRegistrationVerificationService _registrationVerification;
 
-    public UsersController(IUserService userService)
+    public UsersController(
+        IUserService userService,
+        ICurrentUser currentUser,
+        IAdminInvitationService adminInvitation,
+        IRegistrationVerificationService registrationVerification)
     {
         _userService = userService;
+        _currentUser = currentUser;
+        _adminInvitation = adminInvitation;
+        _registrationVerification = registrationVerification;
     }
 
     [HttpGet]
-    public async Task<ActionResult<List<UserDto>>> GetAll()
+    public async Task<ActionResult<UserListResponse>> GetAll(
+        [FromQuery] int pageNumber = 1,
+        [FromQuery] int pageSize = 20,
+        [FromQuery] string? role = null,
+        [FromQuery] bool? isApproved = null)
     {
-        return await _userService.GetAllAsync();
+        return Ok(await _userService.GetAllAsync(pageNumber, pageSize, role, isApproved));
     }
 
     [HttpGet("{id}")]
@@ -32,8 +49,49 @@ public class UsersController : ControllerBase
     [HttpPost]
     public async Task<ActionResult<UserDto>> Create(CreateUserRequest request)
     {
-        var user = await _userService.CreateAsync(request);
-        return CreatedAtAction(nameof(GetById), new { id = user.Id }, user);
+        if (request.RoleId is < 1 or > 3 ||
+            (_currentUser.Role == RoleNames.Admin && request.RoleId == 3))
+        {
+            throw new ForbiddenException("You are not authorized to create this user role.");
+        }
+
+        var created = await _userService.CreateAsync(request);
+        var user = created.User;
+
+        // The body keeps the flat user shape that every existing consumer of
+        // POST /api/users already reads, and adds what happened to the activation
+        // invitation of a new administrator account. The account exists; the invitation
+        // status only reports what happened at the mailer and never claims that a message was
+        // received.
+        return CreatedAtAction(
+            nameof(GetById),
+            new { id = user.Id },
+            new
+            {
+                user.Id,
+                user.FullName,
+                user.Email,
+                user.Phone,
+                user.Role,
+                user.CreatedAt,
+                user.IsApproved,
+                user.CompanyName,
+                user.CompanyRegistrationNumber,
+                created.Invitation,
+                created.InvitationMessage,
+            });
+    }
+
+    [HttpPost("{id}/approve")]
+    public async Task<IActionResult> Approve(int id)
+    {
+        if (_currentUser.Id is not int approvedById)
+        {
+            return Unauthorized();
+        }
+
+        var result = await _userService.ApproveAsync(id, approvedById);
+        return result ? NoContent() : NotFound();
     }
 
     [HttpPut("{id}")]
@@ -48,7 +106,74 @@ public class UsersController : ControllerBase
     public async Task<IActionResult> Delete(int id)
     {
         var result = await _userService.DeleteAsync(id);
-        if (!result) return NotFound();
-        return NoContent();
+        return result ? NoContent() : NotFound();
+    }
+
+    /// <summary>
+    /// (Re)sends the activation invitation of a new administrator account. Only a SuperAdmin
+    /// may trigger it. The token is delivered to the account by mail and is never returned in
+    /// the response; a new invitation retires the previous one, so only the newest link works.
+    /// </summary>
+    [HttpPost("{id}/admin-invitation")]
+    [Authorize(Roles = RoleNames.SuperAdmin)]
+    public async Task<IActionResult> SendAdminInvitation(int id)
+    {
+        var result = await _adminInvitation.SendAsync(
+            id,
+            _currentUser.Id,
+            HttpContext.Connection.RemoteIpAddress?.ToString());
+
+        return result.Outcome switch
+        {
+            AdminInvitationOutcome.Sent => Accepted(new
+            {
+                message = "The activation invitation was sent to the account.",
+            }),
+            AdminInvitationOutcome.DeliveryFailed => StatusCode(
+                StatusCodes.Status503ServiceUnavailable,
+                new
+                {
+                    message = "The invitation could not be delivered. The account stays inactive; the invitation can be sent again.",
+                }),
+            _ => Conflict(new
+            {
+                message = "The account cannot receive an activation invitation.",
+            }),
+        };
+    }
+
+    /// <summary>
+    /// (Re)sends the verification mail of an unverified Landlord or Investor account. Only a
+    /// SuperAdmin may trigger it. The token is delivered to the account by mail and is never
+    /// returned in the response; a new verification retires the previous one, so only the
+    /// newest link works. The endpoint never verifies an account by itself, and it can never
+    /// activate an administrator account - that flow has its own invitation.
+    /// </summary>
+    [HttpPost("{id}/verification")]
+    [Authorize(Roles = RoleNames.SuperAdmin)]
+    public async Task<IActionResult> SendVerification(int id)
+    {
+        var result = await _registrationVerification.SendAsync(
+            id,
+            _currentUser.Id,
+            HttpContext.Connection.RemoteIpAddress?.ToString());
+
+        return result.Outcome switch
+        {
+            RegistrationVerificationOutcome.Sent => Accepted(new
+            {
+                message = "The verification mail was handed over for delivery.",
+            }),
+            RegistrationVerificationOutcome.DeliveryFailed => StatusCode(
+                StatusCodes.Status503ServiceUnavailable,
+                new
+                {
+                    message = "The verification mail could not be delivered. The account stays unverified; the verification can be sent again.",
+                }),
+            _ => Conflict(new
+            {
+                message = "The account cannot receive a verification mail.",
+            }),
+        };
     }
 }

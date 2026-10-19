@@ -19,6 +19,34 @@ public partial class User
 
     public bool IsDeleted { get; set; }
 
+    public bool IsApproved { get; set; }
+
+    public int? ApprovedById { get; set; }
+
+    public DateTime? ApprovedAt { get; set; }
+
+    /// <summary>
+    /// Email-ownership state. <c>NULL</c> means "pre-existing account, verified under the
+    /// rules in force before the verification feature existed" and is treated as verified, so
+    /// no existing account is locked out and no value is fabricated for it. <c>false</c> means
+    /// the account has to prove its address before it can be used; <c>true</c> means the active
+    /// address is proven.
+    /// </summary>
+    public bool? EmailVerified { get; set; }
+
+    /// <summary>When the active address was verified. NULL for a legacy or unverified account.</summary>
+    public DateTime? EmailVerifiedAt { get; set; }
+
+    /// <summary>
+    /// A requested new address that has not been verified yet. The active <see cref="Email"/>
+    /// is only ever replaced by a successful verification of the pending address.
+    /// </summary>
+    public string? PendingEmail { get; set; }
+
+    public string? CompanyName { get; set; }
+
+    public string? CompanyRegistrationNumber { get; set; }
+
     public virtual ICollection<Contract> ContractInvestors { get; set; } = new List<Contract>();
 
     public virtual ICollection<Contract> ContractLandlords { get; set; } = new List<Contract>();
@@ -31,11 +59,19 @@ public partial class User
 
     public virtual ICollection<LandStatusHistory> LandStatusHistories { get; set; } = new List<LandStatusHistory>();
 
+    /// <summary>The single-use email-ownership tokens issued for this account.</summary>
+    public virtual ICollection<EmailVerificationToken> EmailVerificationTokens { get; set; } = new List<EmailVerificationToken>();
+
+    /// <summary>The append-only security audit trail of this account.</summary>
+    public virtual ICollection<UserSecurityEvent> UserSecurityEvents { get; set; } = new List<UserSecurityEvent>();
+
     public virtual ICollection<Land> Lands { get; set; } = new List<Land>();
 
     public virtual ICollection<OfferVersion> OfferVersions { get; set; } = new List<OfferVersion>();
 
     public virtual ICollection<Offer> Offers { get; set; } = new List<Offer>();
+
+    public virtual ICollection<OfferNegotiationHistory> OfferNegotiationHistories { get; set; } = new List<OfferNegotiationHistory>();
 
     public virtual Role Role { get; set; } = null!;
 

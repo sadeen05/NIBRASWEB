@@ -1,0 +1,457 @@
+@baseUrl = http://localhost:5181
+@landlordEmail = <disposable-landlord-a-email>
+@landlordPassword = <set-a-local-test-password>
+@landlordBEmail = <disposable-landlord-b-email>
+@investorEmail = <disposable-unapproved-investor-email>
+@landlordToken = <capture-locally-do-not-commit>
+@landlordBToken = <capture-locally-do-not-commit>
+@investorToken = <capture-locally-do-not-commit>
+@approvedInvestorToken = <capture-locally-do-not-commit>
+@adminToken = <capture-locally-do-not-commit>
+@landId = <land-id-from-create>
+@draftLandId = <a-second-draft-land-id>
+@documentId = <document-id-from-upload>
+
+# How these results were produced (read this before trusting a PASS):
+# - The requests below were NOT sent through this file in an HTTP client. Each case
+#   was executed as an equivalent request by a PowerShell driver
+#   (%TEMP%\opencode\s4_tests.ps1 and s4_regression.ps1) against the running app.
+#   The method, path, body and expected status are the same; the driver is the evidence.
+# - Result legend, on the line under each case title:
+#   PASS     executed by the driver; the actual status matched the expectation
+#   FAIL     executed; the actual status did not match (none in the last full run,
+#            including the post-remediation rerun; see docs/tests/security-step4.http)
+#   BLOCKED  not executed here. The S4-50..S4-62 admin cases in this file were BLOCKED
+#            until the approved C1 admin recovery: NEBRASDB_Step1's only SuperAdmin was the
+#            model-seed placeholder (id -1, PASSWORD_HASH = 'N/A', not a BCrypt hash), so
+#            it could never log in and the Development SuperAdminSeeder stayed a no-op while
+#            any RoleId=4 row existed. After the approved recovery (placeholder removed;
+#            the app's own SuperAdminSeeder created a working SuperAdmin from Seed:*), the
+#            driver %TEMP%\opencode\s4_admin.ps1 executed them all: 39 PASS / 0 FAIL.
+#            The result on each case is recorded as PASS with its driver ID.
+# - Run against NEBRASDB_Step1 in Development, http://localhost:5181 (the HTTPS
+#   certificate is not trusted here). Disposable users only; tokens are never printed.
+
+### 4.3 Landlord creates a land — EXPECTED: 201
+# Result: PASS (201)
+POST {{baseUrl}}/api/lands
+Authorization: Bearer {{landlordToken}}
+Content-Type: application/json
+
+{
+  "governorateId": 1,
+  "landNumber": "L-<stamp>",
+  "village": "Village-A",
+  "basin": "Basin-A",
+  "parcelNumber": "P-<stamp>",
+  "areaDonum": 25
+}
+
+### Duplicate parcel (same governorate, village, basin, parcel) - EXPECTED: 409
+# Result: PASS (409)
+POST {{baseUrl}}/api/lands
+Authorization: Bearer {{landlordToken}}
+Content-Type: application/json
+
+{
+  "governorateId": 1,
+  "landNumber": "L-<other-stamp>",
+  "village": "Village-A",
+  "basin": "Basin-A",
+  "parcelNumber": "P-<stamp>",
+  "areaDonum": 25
+}
+
+### Duplicate LandNumber in the same governorate (different parcel) - EXPECTED: 409, no SQL detail in body
+# Result: PASS (409; regression R-02, body checked for UQ_/SqlException text: none)
+POST {{baseUrl}}/api/lands
+Authorization: Bearer {{landlordToken}}
+Content-Type: application/json
+
+{
+  "governorateId": 1,
+  "landNumber": "L-<stamp>",
+  "village": "Village-A",
+  "basin": "Basin-A",
+  "parcelNumber": "P-<stamp>-new",
+  "areaDonum": 25
+}
+
+### Update to a LandNumber taken in the same governorate - EXPECTED: 409
+# Result: PASS (409; regression R-05)
+PUT {{baseUrl}}/api/lands/{{landId}}
+Authorization: Bearer {{landlordToken}}
+Content-Type: application/json
+
+{
+  "governorateId": 1, "landNumber": "L-<stamp>", "village": "Village-A", "basin": "Basin-A",
+  "parcelNumber": "P-<stamp>-other", "areaDonum": 25
+}
+
+### Update keeping its own LandNumber — EXPECTED: 204 (self excluded)
+# Result: PASS (204; regression R-06)
+PUT {{baseUrl}}/api/lands/{{landId}}
+Authorization: Bearer {{landlordToken}}
+Content-Type: application/json
+
+{
+  "governorateId": 1, "landNumber": "L3-<stamp>", "village": "Village-A", "basin": "Basin-A",
+  "parcelNumber": "P-<stamp>-other", "areaDonum": 25
+}
+
+### Race: five parallel creates with the same LandNumber — EXPECTED: one 201, four 409, no 500
+# Result: PASS (codes 201,409,409,409,409; DB holds one row). Parallel requests cannot be
+# sent from this file; the driver sends them concurrently (regression R-07..R-10).
+
+### Unknown governorate — EXPECTED: 400
+# Result: PASS (400). Phase 1: region/grid are no longer accepted from a landlord, so the
+# region/grid consistency negative now belongs to PUT /api/lands/{id}/assessment
+# (region and grid are still refused together/individually and when the grid is not in the region).
+POST {{baseUrl}}/api/lands
+Authorization: Bearer {{landlordToken}}
+Content-Type: application/json
+
+{
+  "governorateId": 999999,
+  "landNumber": "L-<stamp>-b",
+  "village": "Village-A",
+  "basin": "Basin-A",
+  "parcelNumber": "P-<stamp>-b",
+  "areaDonum": 25
+}
+
+### Area 5 fails the criterion (min 20) — EXPECTED: 400, message lists "area"
+# Result: PASS (400; message contains "area"). Phase 1: the landowner no longer supplies
+# slope/elevation/solar/grid-distance, so the landowner-enforced criterion is area.
+POST {{baseUrl}}/api/lands
+Authorization: Bearer {{landlordToken}}
+Content-Type: application/json
+
+{
+  "governorateId": 1,
+  "landNumber": "L-<stamp>-c",
+  "village": "Village-A",
+  "basin": "Basin-A",
+  "parcelNumber": "P-<stamp>-c",
+  "areaDonum": 5
+}
+
+### Extra fields are ignored — EXPECTED: 201; DB row: owner = token user, status Draft(1), dataVerified 0
+# Result: PASS (201; DB LANDLORD_ID = token user, LAND_STATUS_ID = 1, DATA_VERIFIED_BY_ADMIN = 0)
+POST {{baseUrl}}/api/lands
+Authorization: Bearer {{landlordToken}}
+Content-Type: application/json
+
+{
+  "governorateId": 1,
+  "landNumber": "L4-<stamp>",
+  "village": "Village-A",
+  "basin": "Basin-A",
+  "parcelNumber": "P4-<stamp>",
+  "areaDonum": 25,
+  "landlordId": 999999,
+  "status": "Verified",
+  "dataVerifiedByAdmin": true,
+  "documentStorageLocation": "C:\\evil"
+}
+
+### 10,000-character Village — EXPECTED: 400
+# Result: PASS (400)
+POST {{baseUrl}}/api/lands
+Authorization: Bearer {{landlordToken}}
+Content-Type: application/json
+
+{
+  "governorateId": 1,
+  "landNumber": "L-<stamp>-d",
+  "village": "<10000 characters generated locally>",
+  "basin": "Basin-A",
+  "parcelNumber": "P-<stamp>-d",
+  "areaDonum": 25
+}
+
+### Control character in Village — EXPECTED: 400
+# Result: PASS (400). Send the JSON escape \u0001 inside the Village value.
+POST {{baseUrl}}/api/lands
+Authorization: Bearer {{landlordToken}}
+Content-Type: application/json
+
+{
+  "governorateId": 1,
+  "landNumber": "L-<stamp>-e",
+  "village": "Vil\u0001lage",
+  "basin": "Basin-A",
+  "parcelNumber": "P-<stamp>-e",
+  "areaDonum": 25
+}
+
+### Submit with no required-type document — EXPECTED: 409
+# Result: PASS (409)
+POST {{baseUrl}}/api/lands/{{landId}}/submit
+Authorization: Bearer {{landlordToken}}
+
+### Upload TitleDeed (documentTypeId 1, required) — EXPECTED: 201, Version 1
+# Result: PASS (201)
+POST {{baseUrl}}/api/lands/{{landId}}/documents
+Authorization: Bearer {{landlordToken}}
+Content-Type: application/json
+
+{ "documentTypeId": 1, "filePath": "docs/titledeed-001.pdf" }
+
+### Upload a second TitleDeed — EXPECTED: 201, Version 2
+# Result: PASS (201, version 2)
+POST {{baseUrl}}/api/lands/{{landId}}/documents
+Authorization: Bearer {{landlordToken}}
+Content-Type: application/json
+
+{ "documentTypeId": 1, "filePath": "docs/titledeed-002.pdf" }
+
+### Submit after a required-type upload — EXPECTED: 200
+# Result: PASS (200)
+POST {{baseUrl}}/api/lands/{{landId}}/submit
+Authorization: Bearer {{landlordToken}}
+
+### Valid relative filePath while the land is Draft (second required type) — EXPECTED: 201
+# Result: PASS (201; regression R-21/R-22 also accept relative paths on a Draft land)
+POST {{baseUrl}}/api/lands/{{draftLandId}}/documents
+Authorization: Bearer {{landlordToken}}
+Content-Type: application/json
+
+{ "documentTypeId": 2, "filePath": "docs/encumbrance-001.pdf" }
+
+### Upload while PendingVerification — EXPECTED: 409 (submitted evidence is frozen)
+# Result: PASS (409; driver S4-23). Decision D4: uploads are allowed only in Draft or
+# Rejected. After submit there is no re-open transition, so allowing an upload would
+# silently change the evidence an Admin is asked to verify.
+POST {{baseUrl}}/api/lands/{{landId}}/documents
+Authorization: Bearer {{landlordToken}}
+Content-Type: application/json
+
+{ "documentTypeId": 2, "filePath": "docs/encumbrance-001.pdf" }
+
+### Landlord calls verify — EXPECTED: 403
+# Result: PASS (403)
+POST {{baseUrl}}/api/lands/{{landId}}/verify
+Authorization: Bearer {{landlordToken}}
+
+### Review by a landlord — EXPECTED: 403
+# Result: PASS (403)
+PUT {{baseUrl}}/api/lands/{{landId}}/documents/{{documentId}}/review
+Authorization: Bearer {{landlordToken}}
+Content-Type: application/json
+
+{ "approved": true, "note": "ok" }
+
+### Reject with empty reason — EXPECTED: 400
+# Result: PASS (400). Validation runs before the role check. The Admin variant is BLOCKED.
+POST {{baseUrl}}/api/lands/{{landId}}/reject
+Authorization: Bearer {{landlordToken}}
+Content-Type: application/json
+
+{ "reason": "" }
+
+### Landlord calls reject with a reason — EXPECTED: 403
+# Result: PASS (403)
+POST {{baseUrl}}/api/lands/{{landId}}/reject
+Authorization: Bearer {{landlordToken}}
+Content-Type: application/json
+
+{ "reason": "Landlord attempt" }
+
+### Another landlord reads A's land — EXPECTED: 403
+# Result: PASS (403)
+GET {{baseUrl}}/api/lands/{{landId}}
+Authorization: Bearer {{landlordBToken}}
+
+### Eligibility shows MinElevation as NotEnforced — EXPECTED: 200
+# Result: PASS (200; elevation NotEnforced; area Passed)
+GET {{baseUrl}}/api/lands/{{landId}}/eligibility
+Authorization: Bearer {{landlordToken}}
+
+### History as owner — EXPECTED: 200 with reasons
+# Result: PASS (200)
+GET {{baseUrl}}/api/lands/{{landId}}/history
+Authorization: Bearer {{landlordToken}}
+
+### Landlord list shows only own lands — EXPECTED: 200 envelope
+# Result: PASS (200)
+GET {{baseUrl}}/api/lands?pageNumber=1&pageSize=20
+Authorization: Bearer {{landlordToken}}
+
+### Landlord ?status=PendingVerification — EXPECTED: 200
+# Result: PASS (200)
+GET {{baseUrl}}/api/lands?status=PendingVerification
+Authorization: Bearer {{landlordToken}}
+
+### Unapproved investor lists lands — EXPECTED: 403
+# Result: PASS (403)
+GET {{baseUrl}}/api/lands
+Authorization: Bearer {{investorToken}}
+
+### Approved investor lists lands (Verified only) — EXPECTED: 200, only Verified
+# Result: PASS (200, only Verified; driver S4-54b after POST /api/users/{id}/approve -> 204)
+GET {{baseUrl}}/api/lands
+Authorization: Bearer {{approvedInvestorToken}}
+
+### Admin verify with a Pending required document — EXPECTED: 409
+# Result: PASS (409; driver S4-50)
+POST {{baseUrl}}/api/lands/{{landId}}/verify
+Authorization: Bearer {{adminToken}}
+
+### Admin approves required documents, then verify — EXPECTED: 200, Verified, VerifiedAgainstCriterionId set
+# Result: PASS (200; driver S4-56b for the review and S4-51 for the verify; DB LAND_STATUS_ID=3,
+#        DATA_VERIFIED_BY_ADMIN=1, VERIFIED_AGAINST_CRITERION_ID set; reject-without-note 400 in S4-56a)
+PUT {{baseUrl}}/api/lands/{{landId}}/documents/{{documentId}}/review
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{ "approved": true }
+
+### Admin reject with reason — EXPECTED: 200, status Rejected
+# Result: PASS (200; driver S4-52a; DB LAND_STATUS_ID=4, reason recorded in history)
+POST {{baseUrl}}/api/lands/{{landId}}/reject
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{ "reason": "Parcel boundary unclear." }
+
+### Landlord revises a Rejected land — EXPECTED: 200, status Draft
+# Result: PASS (200; driver S4-52b; DB LAND_STATUS_ID=1)
+POST {{baseUrl}}/api/lands/{{landId}}/revise
+Authorization: Bearer {{landlordToken}}
+
+### Landlord edits own Verified land — EXPECTED: 409
+# Result: PASS (409; driver S4-53)
+PUT {{baseUrl}}/api/lands/{{landId}}
+Authorization: Bearer {{landlordToken}}
+Content-Type: application/json
+
+{
+  "governorateId": 1,
+  "landNumber": "L-<stamp>",
+  "village": "Village-A",
+  "basin": "Basin-A",
+  "parcelNumber": "P-<stamp>",
+  "areaDonum": 25
+}
+
+### Criteria: current version (any authenticated) — EXPECTED: 200
+# Result: PASS (200)
+GET {{baseUrl}}/api/criteria/current
+Authorization: Bearer {{landlordToken}}
+
+### Criteria: Admin creates version 2 (stricter) — EXPECTED: 201
+# Result: PASS (201; driver S4-57a, executed with maxSlopePct 8)
+POST {{baseUrl}}/api/criteria
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{ "maxSlopePct": 5, "reason": "Stricter slope for the 2026 programme." }
+
+### Criteria: history (Admin) — EXPECTED: 200 with both versions
+# Result: PASS (200, >= 2 versions; driver S4-57b/c)
+GET {{baseUrl}}/api/criteria/history
+Authorization: Bearer {{adminToken}}
+
+### Criteria: PUT and DELETE have no route — EXPECTED: 405
+# Result: PASS (405 for both)
+PUT {{baseUrl}}/api/criteria
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{ "reason": "x" }
+
+###
+DELETE {{baseUrl}}/api/criteria
+Authorization: Bearer {{adminToken}}
+
+### Document types list (any authenticated) — EXPECTED: 200
+# Result: PASS (200)
+GET {{baseUrl}}/api/document-types
+Authorization: Bearer {{landlordToken}}
+
+### Document type create by a landlord — EXPECTED: 403
+# Result: PASS (403)
+POST {{baseUrl}}/api/document-types
+Authorization: Bearer {{landlordToken}}
+Content-Type: application/json
+
+{ "name": "Landlord-created", "isRequiredForVerification": false }
+
+### Admin browses ?status=PendingVerification — EXPECTED: 200 (blocked admin case S4-55)
+# Result: PASS (200; driver S4-55)
+GET {{baseUrl}}/api/lands?status=PendingVerification
+Authorization: Bearer {{adminToken}}
+
+### A v1-verified land keeps its VerifiedAgainstCriterionId after a new criterion — EXPECTED: unchanged (S4-58)
+# Result: PASS (DB unchanged; driver S4-58a, and S4-58b/c/d prove new lands evaluate against the new version)
+# Business rule: verification stores the criterion id on the land; a later criterion
+# version must not rewrite an existing snapshot. VerifyAsync also only runs for
+# PendingVerification lands, so a Verified land is never re-evaluated.
+GET {{baseUrl}}/api/lands/{{landId}}
+Authorization: Bearer {{adminToken}}
+
+### Document type delete of a type used by documents — EXPECTED: 409 (S4-59)
+# Result: PASS (409; driver S4-59b. An unused type is deleted 204 first — driver S4-59a)
+DELETE {{baseUrl}}/api/document-types/1
+Authorization: Bearer {{adminToken}}
+
+### Review a document on a Verified land — EXPECTED: 409 (no re-review workflow; decision D1)
+# Result: PASS (409; driver S4-60)
+PUT {{baseUrl}}/api/lands/{{landId}}/documents/{{documentId}}/review
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{ "approved": false, "note": "Re-review attempt." }
+
+### Verify when no document type is required — EXPECTED: 409 (no vacuous verification; decision D2)
+# Result: PASS (409; driver S4-61; both required flags were toggled off and restored by the
+# driver's try/finally, independently confirmed: SUM(required) = 2 afterwards)
+# Decision D2: if no document type has IsRequiredForVerification = true, verification
+# would succeed without any evidence reviewed, so it is rejected as a business rule.
+POST {{baseUrl}}/api/lands/{{landId}}/verify
+Authorization: Bearer {{adminToken}}
+
+### Change IsRequiredForVerification must not rewrite an existing Verified snapshot — EXPECTED: 200 (S4-62)
+# Result: PASS (200; driver S4-62; DB DATA_VERIFIED_BY_ADMIN / VERIFIED_AGAINST_CRITERION_ID
+# snapshot unchanged, flags restored). Code review: UpdateAsync changes only the document type
+# row; it does not touch LANDS, so a Verified land keeps its recorded snapshot (decision D3).
+PUT {{baseUrl}}/api/document-types/2
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{ "name": "EncumbranceStatement", "isRequiredForVerification": false }
+
+### Numeric input that used to overflow the DB area column — EXPECTED: 400 (SEC-14, R-43)
+# Result: PASS (400, driver R-43). The AreaDonum/UpdateLandRequest bound was 1,000,000,000
+# while LANDS.AREA_DONUM is decimal(10,2) (max 99,999,999.99). A value in between passed
+# DTO validation and then failed at the database as an arithmetic overflow (generic 500).
+# The bound now matches the column; areaDonum at the column maximum 99,999,999.99 -> 201
+# (driver R-44).
+POST {{baseUrl}}/api/lands
+Authorization: Bearer {{landlordToken}}
+Content-Type: application/json
+
+{
+  "governorateId": 1, "landNumber": "OVF-<stamp>", "village": "Village-A", "basin": "Basin-A",
+  "parcelNumber": "POVF-<stamp>", "areaDonum": 200000000
+}
+
+### pageNumber near Int32.Max — EXPECTED: 200 with an empty page (SEC-14, R-45)
+# Result: PASS (200, driver R-45). (pageNumber-1)*pageSize used to overflow Int32, producing
+# a negative SQL OFFSET that SQL Server rejects -> generic 500. The offset is now computed in
+# 64-bit and an out-of-range page is returned as empty instead of erroring.
+GET {{baseUrl}}/api/lands?pageNumber=2147483647&pageSize=50
+Authorization: Bearer {{landlordToken}}
+
+# --- Post-remediation regression coverage (driver %TEMP%\opencode\s4_regression.ps1) ---
+# R-24..R-28 visibility convention: missing land/documents -> 404; another owner's
+#          land/documents/eligibility -> 403. PASS.
+# R-29..R-33 race: five parallel creates with the same parcel -> one 201, four 409,
+#          no 500, no SQL/index text; DB holds one live row. PASS (UQ_LAND_LOCATION).
+# R-34.1..3/R-35..R-37 race: three rounds of five parallel uploads on one land and
+#          document type -> 15 persisted rows, 15 distinct versions, sequential 1-15. PASS.
+# R-38..R-42 SEC-17 free text: a reject reason and a review note with a newline or tab
+#          pass validation and then return 403 for a landlord; U+0001 is rejected 400. PASS.
+# R-43..R-45 SEC-14 numeric bounds (see the two cases above). PASS.
+# Latest full remediation rerun: regression 47 PASS / 0 FAIL.

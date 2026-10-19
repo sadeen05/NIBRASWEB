@@ -1,11 +1,20 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.ModelBinding;
 using NIBRAS.API.DTOs;
 using NIBRAS.API.Services;
+using NIBRAS.Models;
 
 namespace NIBRAS.API.Controllers;
 
+/// <summary>
+/// Admin read access plus the Admin release operation (BR-G3).
+/// Reservations are created only by workflow code, so there is deliberately no
+/// public create/update/delete route here.
+/// </summary>
 [ApiController]
 [Route("api/[controller]")]
+[Authorize(Roles = RoleNames.Admin + "," + RoleNames.SuperAdmin)]
 public class GridCapacityReservationsController : ControllerBase
 {
     private readonly IGridCapacityReservationService _reservationService;
@@ -18,8 +27,7 @@ public class GridCapacityReservationsController : ControllerBase
     [HttpGet]
     public async Task<ActionResult<List<GridCapacityReservationDto>>> GetAll()
     {
-        var reservations = await _reservationService.GetAllAsync();
-        return Ok(reservations);
+        return Ok(await _reservationService.GetAllAsync());
     }
 
     [HttpGet("{id}")]
@@ -35,36 +43,23 @@ public class GridCapacityReservationsController : ControllerBase
         return Ok(reservation);
     }
 
-    [HttpPost]
-    public async Task<ActionResult<GridCapacityReservationDto>> Create(CreateGridCapacityReservationRequest request)
+    /// <summary>
+    /// Releases a reservation without deleting it. The body is optional
+    /// (<c>{ "reason": "..." }</c>); repeating the call is idempotent and never
+    /// overwrites the original release.
+    /// </summary>
+    [HttpPost("{id}/release")]
+    public async Task<ActionResult<GridCapacityReservationDto>> Release(
+        int id,
+        [FromBody(EmptyBodyBehavior = EmptyBodyBehavior.Allow)] ReleaseGridCapacityReservationRequest? request)
     {
-        var reservation = await _reservationService.CreateAsync(request);
-        return CreatedAtAction(nameof(GetById), new { id = reservation.Id }, reservation);
-    }
+        var reservation = await _reservationService.ReleaseAsync(id, request?.Reason);
 
-    [HttpPut("{id}")]
-    public async Task<IActionResult> Update(int id, UpdateGridCapacityReservationRequest request)
-    {
-        var result = await _reservationService.UpdateAsync(id, request);
-
-        if (result == false)
+        if (reservation == null)
         {
             return NotFound();
         }
 
-        return NoContent();
-    }
-
-    [HttpDelete("{id}")]
-    public async Task<IActionResult> Delete(int id)
-    {
-        var result = await _reservationService.DeleteAsync(id);
-
-        if (result == false)
-        {
-            return NotFound();
-        }
-
-        return NoContent();
+        return Ok(reservation);
     }
 }

@@ -17,5 +17,7 @@ public partial class Grid
 
     public virtual ICollection<GridCapacityReservation> GridCapacityReservations { get; set; } = new List<GridCapacityReservation>();
 
+    public virtual ICollection<Land> Lands { get; set; } = new List<Land>();
+
     public virtual Region Region { get; set; } = null!;
 }

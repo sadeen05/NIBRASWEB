@@ -4,28 +4,49 @@ namespace NIBRAS.API.Services;
 
 public interface ILandService
 {
-	Task<List<LandDto>> GetAllAsync();
+    Task<LandListResponse> GetAllAsync(int pageNumber, int pageSize, string? status);
 
-	Task<LandDto?> GetByIdAsync(int id);
+    Task<LandDto> GetByIdAsync(int id);
 
-	Task<LandDto> CreateAsync(CreateLandRequest request);
+    Task<LandDto> CreateAsync(CreateLandRequest request);
 
-	Task<bool> UpdateAsync(int id, UpdateLandRequest request);
+    Task UpdateAsync(int id, UpdateLandRequest request);
 
-	Task<bool> DeleteAsync(int id);
+    Task SubmitAsync(int id);
 
+    Task ReviseAsync(int id);
 
-	Task<bool> SubmitAsync(int landId);
+    /// <param name="note">
+    /// Optional administrator approval note. It is appended to the recorded status-history
+    /// reason; <c>null</c> or blank leaves the recorded reason exactly as before.
+    /// </param>
+    Task VerifyAsync(int id, string? note = null);
 
-	Task<bool> VerifyAsync(int landId, int adminId);
+    Task RejectAsync(int id, string reason);
 
-	Task<bool> RejectAsync(int landId, int adminId, string reason);
+    Task<LandEligibilityResponse> GetEligibilityAsync(int id);
 
+    Task<List<LandStatusHistoryDto>> GetAllStatusHistoryAsync(int landId);
 
-	Task<bool> AddDocumentAsync(int landId, CreateLandDocumentRequest request);
+    Task<LandDocumentDto> UploadDocumentAsync(int landId, UploadLandDocumentRequest request);
 
-	Task<List<LandDocumentDto>> GetDocumentsAsync(int landId);
+    Task<List<LandDocumentDto>> GetDocumentsAsync(int landId);
 
+    Task<LandDocumentDto> ReviewDocumentAsync(int landId, int documentId, ReviewLandDocumentRequest request);
 
-	Task<bool> CheckEligibilityAsync(int landId);
+    Task<LandDto> AssessAsync(int landId, AssessLandRequest request);
+
+    Task<List<LandAssessmentDto>> GetAssessmentsAsync(int landId);
+
+    /// <summary>Landlord change request for an approved land; hides the land until reviewed.</summary>
+    Task<LandChangeRequestDto> SubmitChangeRequestAsync(CreateLandChangeRequestRequest request);
+
+    /// <summary>Change requests of one land (owner or Admin/SuperAdmin).</summary>
+    Task<List<LandChangeRequestDto>> GetChangeRequestsAsync(int landId);
+
+    /// <summary>The SuperAdmin queue of change requests still awaiting a decision.</summary>
+    Task<List<LandChangeRequestDto>> GetPendingChangeRequestsAsync();
+
+    /// <summary>SuperAdmin decision; approval applies the change, rejection preserves the original.</summary>
+    Task<LandChangeRequestDto> DecideChangeRequestAsync(int changeRequestId, ReviewLandChangeRequestRequest request);
 }

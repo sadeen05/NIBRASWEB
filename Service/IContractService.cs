@@ -4,21 +4,17 @@ namespace NIBRAS.API.Services;
 
 public interface IContractService
 {
-    Task<List<ContractDto>> GetAllAsync();
-    Task<ContractDto?> GetByIdAsync(int id);
+    Task<ContractListResponse> GetAllAsync(int pageNumber, int pageSize, string? status);
+
+    Task<ContractDto> GetByIdAsync(int id);
+
     Task<ContractDto> CreateAsync(CreateContractRequest request);
-    Task<bool> UpdateAsync(int id, UpdateContractRequest request);
-    Task<bool> DeleteAsync(int id);
 
-    Task<bool> SignAsInvestorAsync(int contractId, int userId);
-    Task<bool> SignAsLandlordAsync(int contractId, int userId);
-    Task<ContractReviewDto> AdminReviewAsync(int contractId, int adminId, string decision, string? reason);
-    Task<bool> TerminateAsync(int contractId, int adminId, string reason);
+    Task<ContractDto> SignAsync(int id);
 
-    // Cancellation flow
-    Task<bool> RequestCancellationAsync(int contractId, int userId, string reason, decimal? investorPenaltyAmount);
-    Task<bool> RespondToCancellationAsync(int contractId, int userId, bool agree);
+    Task<ContractDto> ReviewAsync(int id, ReviewContractRequest request);
 
-    // Admin force termination (bypasses dispute guard, requires SuperAdmin)
-    Task<bool> AdminForceTerminateAsync(int contractId, int adminId, string justification, decimal? compensationOverride);
+    Task<ContractDto> TerminateAsync(int id, TerminateContractRequest request);
+
+    Task<List<ContractReviewDto>> GetReviewsAsync(int id);
 }
