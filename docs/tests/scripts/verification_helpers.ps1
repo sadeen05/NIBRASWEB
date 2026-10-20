@@ -88,6 +88,32 @@ function Get-VerificationBaseUrl {
   return $identity.BaseUrl
 }
 
+function Get-VerificationApiUri {
+  <#
+    .SYNOPSIS
+      The absolute URI of an API path on the harness-owned instance.
+    .DESCRIPTION
+      The base URL is evaluated in its own statement and the path is normalized, so the path
+      is concatenated and never passed as an argument to the command.
+
+      This is deliberate: in PowerShell, "[Uri](Get-VerificationBaseUrl + $Path)" is a
+      COMMAND invocation with the two arguments "+" and $Path - not a concatenation. It
+      silently returns the bare base URL, so the request goes to the site root, matches no
+      endpoint and is answered by the fallback authorization policy with 401.
+  #>
+  param([Parameter(Mandatory)][string]$Path)
+
+  $baseUrl = [string](Get-VerificationBaseUrl)
+  if ([string]::IsNullOrWhiteSpace($baseUrl)) {
+    throw 'the harness identity has no base URL; the suite refuses to build a request.'
+  }
+  $baseUrl = $baseUrl.Trim().TrimEnd('/')
+
+  # Exactly one leading slash, whatever the caller passed.
+  $relative = '/' + $Path.Trim().TrimStart('/')
+  return [Uri]($baseUrl + $relative)
+}
+
 function Start-TestApiInstance {
   <#
     .SYNOPSIS
@@ -113,6 +139,22 @@ function Initialize-TestApi {  <#
   . (Join-Path $PSScriptRoot 'test_harness.ps1')
   $identity = Assert-TestApiOwned
   return $identity.BaseUrl
+}
+
+function Stop-TestApiInstance {
+  <#
+    .SYNOPSIS
+      Stops the instance this suite started, from the suite's own scope.
+    .DESCRIPTION
+      A suite cannot call Stop-TestApi directly: the harness is dot-sourced inside the helper
+      functions, so its functions never reach the suite's scope. This wrapper keeps the same
+      ownership guarantee - only the recorded PID is stopped, and only while it still owns
+      the recorded port - so a stale or reused PID can never kill a foreign process.
+  #>
+  param([object]$Identity)
+
+  . (Join-Path $PSScriptRoot 'test_harness.ps1')
+  Stop-TestApi -Identity $Identity
 }
 
 function Get-VerificationOutboxPath {
@@ -229,16 +271,30 @@ function Get-VerificationTokenFromOutbox {
 }
 
 function Invoke-VerificationApi {
+  <#
+    .SYNOPSIS
+      One HTTP request to the harness-owned instance.
+    .DESCRIPTION
+      The optional BearerToken is an IN-MEMORY credential: it is attached to this request's
+      Authorization header only. It is never printed, logged, serialised, persisted or passed
+      to a child process. The returned object carries the status and the response body only,
+      and callers must not log the body of an authenticated answer either (a sign-in body
+      carries the token). Anonymous requests pass no token, so their behaviour is unchanged.
+  #>
   param(
     [Parameter(Mandatory)][string]$Method,
     [Parameter(Mandatory)][string]$Path,
-    [string]$Json
+    [string]$Json,
+    [string]$BearerToken
   )
 
   $req = New-Object System.Net.Http.HttpRequestMessage
   $req.Method = New-Object System.Net.Http.HttpMethod($Method)
-  $req.RequestUri = [Uri](Get-VerificationBaseUrl + $Path)
+  $req.RequestUri = (Get-VerificationApiUri -Path $Path)
   if ($Json) { $req.Content = New-Object System.Net.Http.StringContent($Json, [System.Text.Encoding]::UTF8, 'application/json') }
+  if ($BearerToken) {
+    $req.Headers.Authorization = New-Object System.Net.Http.Headers.AuthenticationHeaderValue('Bearer', $BearerToken)
+  }
   try {
     $resp = $script:VerificationHttp.SendAsync($req).Result
     $body = $resp.Content.ReadAsStringAsync().Result

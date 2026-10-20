@@ -39,6 +39,11 @@ $sqlServer = $testTarget.Server
 # disposable connection string, and proves that it owns the port. The gate below re-proves it
 # before anything is written.
 $harness = Start-TestApiInstance
+# The suite owns its instance until the very end: the finally block stops ONLY the process
+# the harness started (its PID must still own the recorded port), even when an assertion
+# throws or the outbox check exits early. A cleanup error is reported, never thrown over the
+# original test result.
+try {
 $base = Initialize-TestApi
 
 $pw        = if ($env:NIBRAS_TEST_PASSWORD) { $env:NIBRAS_TEST_PASSWORD } else { 'T5t!N1' + [guid]::NewGuid().ToString('N').Substring(0,10) }
@@ -115,7 +120,7 @@ function Invoke-ConcurrentVerifications {
     foreach ($i in 1..$Count) {
       $req = New-Object System.Net.Http.HttpRequestMessage
       $req.Method = [System.Net.Http.HttpMethod]::Post
-      $req.RequestUri = [Uri](Get-VerificationBaseUrl + '/api/auth/verify-email')
+      $req.RequestUri = (Get-VerificationApiUri -Path '/api/auth/verify-email')
       $req.Content = New-Object System.Net.Http.StringContent($payload, [System.Text.Encoding]::UTF8, 'application/json')
       $tasks += $client.SendAsync($req)
     }
@@ -123,6 +128,20 @@ function Invoke-ConcurrentVerifications {
     foreach ($t in $tasks) { $statuses += [int]$t.Result.StatusCode }
     return $statuses
   } finally { $client.Dispose() }
+}
+
+# The audit trail is cumulative across runs. This baseline (read-only, taken before the first
+# mutation) lets section F prove what THIS run wrote instead of finding a record left by an
+# earlier run.
+function Get-AuditCount([string]$EventType) {
+  return [int](Sql "SELECT COUNT(*) FROM USER_SECURITY_EVENTS WHERE EVENT_TYPE = '$EventType';")
+}
+
+$auditBaseline = @{}
+foreach ($eventType in @(
+    'RegistrationCreated', 'AdminAccountCreated', 'EmailVerified', 'LoginBlockedUnverified',
+    'AdminActivated', 'AdminPasswordSet')) {
+  $auditBaseline[$eventType] = Get-AuditCount $eventType
 }
 
 Log '==================== F1 email verification acceptance ===================='
@@ -217,10 +236,23 @@ $saPass = $env:NIBRAS_TEST_SUPERADMIN_PASSWORD
 if ($saEmail -and $saPass) {
   $saLogin = Invoke-VerificationApi -Method 'POST' -Path '/api/auth/login' -Json (@{ email = $saEmail; password = $saPass } | ConvertTo-Json -Compress)
   Assert 'the seeded SuperAdmin signs in (a legacy NULL account keeps its access)' 200 $saLogin | Out-Null
+  # The JWT stays in memory: it is attached to the requests that need it and never printed.
+  $saToken = JsonField $saLogin.Body 'token'
+  if (-not $saToken) { throw 'the SuperAdmin sign-in returned no token: the privileged section cannot continue.' }
+
+  # The privileged creation is refused before the controller: no token (401) and a signed-in
+  # Landlord (403). Neither request can write an account.
+  $refusedAdmEmail = "f1-$stamp-refused-adm@example.test"
+  $refusedAdmBody = @{ fullName = 'F1 Refused Admin'; email = $refusedAdmEmail; phone = (New-Phone); password = $pw; roleId = 3 } | ConvertTo-Json -Compress
+  $anonCreate = Invoke-VerificationApi -Method 'POST' -Path '/api/users' -Json $refusedAdmBody
+  Assert 'an anonymous Admin creation is refused (401)' 401 $anonCreate | Out-Null
+  $landlordToken = JsonField $loginVerified.Body 'token'
+  $landlordCreate = Invoke-VerificationApi -Method 'POST' -Path '/api/users' -Json $refusedAdmBody -BearerToken $landlordToken
+  Assert 'a Landlord cannot create an Admin (403)' 403 $landlordCreate | Out-Null
 
   $admEmail = "f1-$stamp-adm@example.test"
   $baseline = New-OutboxBaseline
-  $create = Invoke-VerificationApi -Method 'POST' -Path '/api/users' -Json (@{ fullName = 'F1 Disposable Admin'; email = $admEmail; phone = (New-Phone); password = $pw; roleId = 3 } | ConvertTo-Json -Compress)
+  $create = Invoke-VerificationApi -Method 'POST' -Path '/api/users' -BearerToken $saToken -Json (@{ fullName = 'F1 Disposable Admin'; email = $admEmail; phone = (New-Phone); password = $pw; roleId = 3 } | ConvertTo-Json -Compress)
   Assert 'a SuperAdmin creates an Admin (201)' 201 $create | Out-Null
 
   $admToken = Get-VerificationTokenFromOutbox -Email $admEmail -Baseline $baseline -SubjectLike '*activation*'
@@ -230,21 +262,43 @@ if ($saEmail -and $saPass) {
   $admLogin = Invoke-VerificationApi -Method 'POST' -Path '/api/auth/login' -Json (@{ email = $admEmail; password = $pw } | ConvertTo-Json -Compress)
   Assert 'the activated Admin signs in with that password (200)' 200 $admLogin | Out-Null
 
+  # Role restriction: an Admin is not a SuperAdmin, so it cannot create another Admin.
+  $admAuthToken = JsonField $admLogin.Body 'token'
+  $adminCreate = Invoke-VerificationApi -Method 'POST' -Path '/api/users' -Json $refusedAdmBody -BearerToken $admAuthToken
+  Assert 'an Admin cannot create another Admin (403)' 403 $adminCreate | Out-Null
+
   $reuse = Complete-AdminActivation -Token $admToken -Password $pw
   Assert 'the activation token cannot be used twice (400)' 400 $reuse | Out-Null
+
+  $refused = Sql ("SELECT COUNT(*) FROM USERS WHERE EMAIL = N'" + $refusedAdmEmail + "';")
+  if ([int]$refused -eq 0) { $script:pass++; Log ("{0,-62} PASS" -f 'the refused Admin creations leave no account') }
+  else { $script:fail++; Log ("{0,-62} FAIL" -f 'the refused Admin creations leave no account') }
 } else {
   Skip 'the administrator activation flow' 'the disposable test credentials (NIBRAS_TEST_SUPERADMIN_EMAIL / NIBRAS_TEST_SUPERADMIN_PASSWORD) are not set'
 }
 
 # ---------------------------------------------------------------------------------------------
-Log '--- F. the audit trail (read-only) ---'
-$audit = Sql "SELECT COUNT(*) FROM USER_SECURITY_EVENTS WHERE EVENT_TYPE = 'RegistrationCreated';"
-if ([int]$audit -ge 1) { $script:pass++; Log ("{0,-62} PASS" -f 'the registration is recorded in the audit trail') }
-else { $script:fail++; Log ("{0,-62} FAIL" -f 'the registration is recorded in the audit trail') }
-
-$failed = Sql "SELECT COUNT(*) FROM USER_SECURITY_EVENTS WHERE EVENT_TYPE = 'LoginBlockedUnverified';"
-if ([int]$failed -ge 1) { $script:pass++; Log ("{0,-62} PASS" -f 'the refused sign-in is recorded in the audit trail') }
-else { $script:fail++; Log ("{0,-62} FAIL" -f 'the refused sign-in is recorded in the audit trail') }
+Log '--- F. the audit trail (read-only; only what THIS run added counts) ---'
+$expectedAudit = [ordered]@{
+  RegistrationCreated    = 2
+  AdminAccountCreated    = 1
+  EmailVerified          = 2
+  LoginBlockedUnverified = 1
+  AdminActivated         = 1
+  AdminPasswordSet       = 1
+}
+foreach ($eventType in $expectedAudit.Keys) {
+  $now = Get-AuditCount $eventType
+  $delta = $now - [int]$auditBaseline[$eventType]
+  $expected = [int]$expectedAudit[$eventType]
+  if ($delta -eq $expected) {
+    $script:pass++
+    Log ("{0,-62} PASS (+{1})" -f ("the audit trail records this run: " + $eventType), $delta)
+  } else {
+    $script:fail++
+    Log ("{0,-62} FAIL (expected +{1}, got +{2})" -f ("the audit trail records this run: " + $eventType), $expected, $delta)
+  }
+}
 
 $nulls = Sql "SELECT COUNT(*) FROM USERS WHERE EMAIL_VERIFIED IS NULL;"
 Log ("  (the legacy accounts with a NULL verification flag: {0})" -f $nulls)
@@ -254,3 +308,24 @@ Log '==================== summary ===================='
 Log ("PASS={0} FAIL={1} SKIP={2}" -f $script:pass, $script:fail, $script:skip)
 if ($script:fail -gt 0) { exit 1 }
 exit 0
+}
+finally {
+  # The API is stopped through the harness, so only the process this suite started can be
+  # stopped, and only while it still owns the port recorded in the identity file. The
+  # protected run credentials are never rotated or removed here.
+  try {
+    Stop-TestApiInstance -Identity $harness
+    $deadline = (Get-Date).AddSeconds(10)
+    while ((Get-Date) -lt $deadline -and
+           @(Get-NetTCPConnection -LocalPort ([int]$harness.Port) -State Listen -ErrorAction SilentlyContinue).Count -gt 0) {
+      Start-Sleep -Milliseconds 250
+    }
+    $left = @(Get-NetTCPConnection -LocalPort ([int]$harness.Port) -State Listen -ErrorAction SilentlyContinue).Count
+    Write-Host ("--- cleanup: harness-owned PID {0} stopped; port {1} listeners={2} ---" -f $harness.Pid, $harness.Port, $left)
+    if ($left -ne 0) {
+      Write-Host ("WARNING: port {0} still has a listener after the cleanup; the run result is kept." -f $harness.Port)
+    }
+  } catch {
+    Write-Host ("WARNING: the harness-owned API cleanup reported an error (the test result is kept): {0}" -f $_.Exception.Message)
+  }
+}

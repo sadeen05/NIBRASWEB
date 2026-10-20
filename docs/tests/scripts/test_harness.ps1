@@ -20,7 +20,151 @@
 # The harness writes only inside its own per-run outbox directory and its own identity file.
 
 $script:TestApiIdentityFile = Join-Path ([IO.Path]::GetTempPath()) 'nibras-f1-api-identity.json'
+$script:TestRunCredentialFile = Join-Path ([IO.Path]::GetTempPath()) 'nibras-f1-run-credentials.json'
 $script:TestApiDefaultPort = 5199
+
+Add-Type -AssemblyName System.Security | Out-Null
+
+function Protect-TestFileToOwner {
+  <#
+    .SYNOPSIS
+      Restricts a file to the current user, dropping every inherited permission.
+    .DESCRIPTION
+      The run credentials must not be readable by another local account. When the restriction
+      cannot be applied, the caller fails closed instead of leaving the file unprotected.
+  #>
+  param([Parameter(Mandatory)][string]$Path)
+
+  try {
+    $acl = Get-Acl -LiteralPath $Path
+    $acl.SetAccessRuleProtection($true, $false)
+    foreach ($rule in @($acl.Access)) { [void]$acl.RemoveAccessRule($rule) }
+    $me = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+    $rule = New-Object System.Security.AccessControl.FileSystemAccessRule($me, 'FullControl', 'Allow')
+    $acl.AddAccessRule($rule)
+    Set-Acl -LiteralPath $Path -AclObject $acl
+  } catch {
+    throw "the credential file '$Path' could not be restricted to the current user: $($_.Exception.Message)"
+  }
+}
+
+function ConvertTo-ProtectedString {
+  <#
+    .SYNOPSIS
+      Encrypts a value with DPAPI, scoped to the current Windows user.
+  #>
+  param([Parameter(Mandatory)][string]$Plain)
+
+  $bytes = [System.Text.Encoding]::UTF8.GetBytes($Plain)
+  $blob = [System.Security.Cryptography.ProtectedData]::Protect(
+    $bytes, $null, [System.Security.Cryptography.DataProtectionScope]::CurrentUser)
+  return [Convert]::ToBase64String($blob)
+}
+
+function ConvertFrom-ProtectedString {
+  <#
+    .SYNOPSIS
+      Decrypts a DPAPI value that was encrypted for the current Windows user.
+  #>
+  param([Parameter(Mandatory)][string]$Protected)
+
+  $blob = [Convert]::FromBase64String($Protected)
+  $bytes = [System.Security.Cryptography.ProtectedData]::Unprotect(
+    $blob, $null, [System.Security.Cryptography.DataProtectionScope]::CurrentUser)
+  return [System.Text.Encoding]::UTF8.GetString($bytes)
+}
+
+function Get-TestRunCredentials {
+  <#
+    .SYNOPSIS
+      The disposable SuperAdmin identity of THIS approved run.
+    .DESCRIPTION
+      The identity and the password are generated once and then reused by every start of the
+      run - the Phase B probe and the Phase C acceptance run use the same account, so the
+      seeding stays idempotent across repeated starts of the same disposable database.
+
+      The secret is stored DPAPI-encrypted for the current Windows user, in a file that is
+      restricted to that user, outside the repository. It is never printed, never committed and
+      never rotated silently:
+
+      * a file that cannot be decrypted fails closed (it is never treated as a plaintext secret);
+      * a file that belongs to another database fails closed (it is never reused across runs);
+      * -NewRun deliberately discards the previous identity and generates a new one.
+  #>
+  param([switch]$NewRun)
+
+  $target = Get-TestTarget
+
+  if ($NewRun) { Clear-TestRunCredentials }
+
+  if (Test-Path -LiteralPath $script:TestRunCredentialFile) {
+    $raw = Get-Content -LiteralPath $script:TestRunCredentialFile -Raw
+    try { $envelope = $raw | ConvertFrom-Json } catch { $envelope = $null }
+
+    if (-not $envelope -or -not $envelope.Protected -or -not $envelope.Database) {
+      throw ("the run credential file '{0}' is not in the protected format (a plaintext or unknown store is refused). " +
+        "End the run with Clear-TestRunCredentials and start it again." -f $script:TestRunCredentialFile)
+    }
+    if ($envelope.Database -ine $target.Database) {
+      throw ("the run credential file '{0}' belongs to another database ('{1}'). It is never reused across runs: " +
+        "end the run with Clear-TestRunCredentials or start a new one with -NewRun." -f $script:TestRunCredentialFile, $envelope.Database)
+    }
+
+    try { $secret = ConvertFrom-ProtectedString -Protected $envelope.Protected } catch {
+      throw ("the run credential file '{0}' cannot be decrypted by this Windows user. It is refused: " +
+        "end the run with Clear-TestRunCredentials and start a new one." -f $script:TestRunCredentialFile)
+    }
+
+    try { $credentials = $secret | ConvertFrom-Json } catch { $credentials = $null }
+    if (-not $credentials -or -not $credentials.Email -or -not $credentials.Password) {
+      throw "the decrypted run credentials are incomplete; the run must be restarted."
+    }
+
+    return [pscustomobject]@{
+      Email    = $credentials.Email
+      Password = $credentials.Password
+      RunId    = $envelope.RunId
+      Database = $envelope.Database
+      Created  = $envelope.Created
+    }
+  }
+
+  $stamp = (Get-Date).ToUniversalTime().ToString('yyyyMMddHHmmss')
+  $fresh = [pscustomobject]@{
+    Email    = "f1-superadmin-$stamp@example.test"
+    Password = 'T5t!N1' + [guid]::NewGuid().ToString('N').Substring(0,14) + 'Aa9'
+  }
+  $envelope = [pscustomobject]@{
+    Version   = 2
+    RunId     = [guid]::NewGuid().ToString('N')
+    Database  = $target.Database
+    Created   = (Get-Date).ToUniversalTime().ToString('o')
+    Protected = (ConvertTo-ProtectedString -Plain ($fresh | ConvertTo-Json -Compress))
+  }
+  $envelope | ConvertTo-Json | Set-Content -LiteralPath $script:TestRunCredentialFile -Encoding UTF8
+  Protect-TestFileToOwner -Path $script:TestRunCredentialFile
+
+  return [pscustomobject]@{
+    Email    = $fresh.Email
+    Password = $fresh.Password
+    RunId    = $envelope.RunId
+    Database = $envelope.Database
+    Created  = $envelope.Created
+  }
+}
+
+function Clear-TestRunCredentials {
+  <#
+    .SYNOPSIS
+      Ends the approved run: the disposable identity is discarded.
+    .DESCRIPTION
+      The NEXT approved run then seeds its own disposable SuperAdmin. The credentials are never
+      rotated while a run is in progress, and nothing but this file is removed.
+  #>
+  Remove-Item -LiteralPath $script:TestRunCredentialFile -Force -ErrorAction SilentlyContinue
+}
+
+function Get-TestRunCredentialFile { return $script:TestRunCredentialFile }
 
 function Get-TestApiPort {
   $port = if ($env:NIBRAS_TEST_API_PORT) { [int]$env:NIBRAS_TEST_API_PORT } else { $script:TestApiDefaultPort }
@@ -101,8 +245,17 @@ function Start-TestApi {
   if (-not $env:RateLimit__VerificationPerMinute) { $env:RateLimit__VerificationPerMinute = '1000' }
   if (-not $env:RateLimit__VerificationResendPerMinute) { $env:RateLimit__VerificationResendPerMinute = '1000' }
   Remove-Item Env:Seed__DemoData -ErrorAction SilentlyContinue
-  if ($env:NIBRAS_TEST_SUPERADMIN_EMAIL) { $env:Seed__SuperAdminEmail = $env:NIBRAS_TEST_SUPERADMIN_EMAIL }
-  if ($env:NIBRAS_TEST_SUPERADMIN_PASSWORD) { $env:Seed__SuperAdminPassword = $env:NIBRAS_TEST_SUPERADMIN_PASSWORD }
+  # Belt and braces: the demo/business seeder only runs when this key is exactly "true", and the
+  # harness pins it to "false", so no demo user, land, document or history can ever be created.
+  $env:Seed__DemoData = 'false'
+  # The disposable SuperAdmin identity of this run: generated once and reused by every start, so
+  # the seeding is idempotent across the starts of one approved run. The harness owns the value,
+  # so a stale value in the caller's shell cannot rotate it silently.
+  $runCredentials = Get-TestRunCredentials
+  $env:NIBRAS_TEST_SUPERADMIN_EMAIL = $runCredentials.Email
+  $env:NIBRAS_TEST_SUPERADMIN_PASSWORD = $runCredentials.Password
+  $env:Seed__SuperAdminEmail = $runCredentials.Email
+  $env:Seed__SuperAdminPassword = $runCredentials.Password
 
   $repoRoot = $PSScriptRoot
   while ($repoRoot -and -not (Test-Path (Join-Path $repoRoot 'NibrasWeb.csproj'))) { $repoRoot = Split-Path $repoRoot -Parent }
@@ -138,24 +291,54 @@ function Start-TestApi {
     Remove-Item -LiteralPath $identityFile -Force -ErrorAction SilentlyContinue
   } | Out-Null
 
+  # Readiness is proved by the anonymous registration endpoint itself, never by a protected
+  # path. An empty JSON body fails the [ApiController] model validation inside the MVC
+  # pipeline, before RegisterAsync runs - so the probe cannot create an account or touch the
+  # database. A protected path answers 401 both while the endpoint routing is still being
+  # built and afterwards, so it cannot tell the two states apart: 401, 404, 429, 5xx and
+  # connection errors never count as ready. Only the exact validation problem document does.
+  Add-Type -AssemblyName System.Net.Http | Out-Null
+  $probeClient = New-Object System.Net.Http.HttpClient
+  $probeClient.Timeout = [TimeSpan]::FromSeconds(5)
   $deadline = (Get-Date).AddSeconds(60)
   $ready = $false
-  while ((Get-Date) -lt $deadline) {
-    Start-Sleep -Milliseconds 500
-    if ($process.HasExited) {
-      throw "the API process exited immediately (code $($process.ExitCode)); see '$out' and '$err'."
+  $lastProbe = 'no answer yet'
+  try {
+    while ((Get-Date) -lt $deadline) {
+      Start-Sleep -Milliseconds 500
+      if ($process.HasExited) {
+        throw "the API process exited immediately (code $($process.ExitCode)); see '$out' and '$err'."
+      }
+      $probeRequest = New-Object System.Net.Http.HttpRequestMessage
+      try {
+        $probeRequest.Method = [System.Net.Http.HttpMethod]::Post
+        $probeRequest.RequestUri = [Uri]("http://127.0.0.1:$port/api/auth/register")
+        $probeRequest.Content = New-Object System.Net.Http.StringContent('{}', [System.Text.Encoding]::UTF8, 'application/json')
+        $probeResponse = $probeClient.SendAsync($probeRequest).Result
+        try {
+          $probeBody = $probeResponse.Content.ReadAsStringAsync().Result
+          $lastProbe = ("status {0}" -f [int]$probeResponse.StatusCode)
+          if ([int]$probeResponse.StatusCode -eq 400) {
+            $problem = $null
+            try { $problem = $probeBody | ConvertFrom-Json } catch { }
+            if ($problem -and $problem.status -eq 400 -and
+                $problem.title -eq 'One or more validation errors occurred.' -and
+                $problem.errors.Email -and $problem.errors.Phone -and
+                $problem.errors.FullName -and $problem.errors.Password) {
+              $ready = $true
+              break
+            }
+            $lastProbe = 'a 400 that is not the registration validation problem document'
+          }
+        } finally { $probeResponse.Dispose() }
+      } catch {
+        $lastProbe = ("no HTTP answer ({0})" -f $_.Exception.GetBaseException().Message)
+      } finally { $probeRequest.Dispose() }
     }
-    try {
-      $response = Invoke-WebRequest -Uri "http://127.0.0.1:$port/api/lands" -UseBasicParsing -TimeoutSec 5 -ErrorAction Stop
-      $ready = $true
-      break
-    } catch {
-      if ($_.Exception.Response -and [int]$_.Exception.Response.StatusCode -lt 500) { $ready = $true; break }
-    }
-  }
+  } finally { $probeClient.Dispose() }
   if (-not $ready) {
     Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
-    throw "the API did not answer on 127.0.0.1:$port within the start period; see '$out' and '$err'."
+    throw ("the API did not prove a live anonymous pipeline on 127.0.0.1:{0} within the start period (last probe: {1}); see '{2}' and '{3}'." -f $port, $lastProbe, $out, $err)
   }
 
   # The identity of what was launched: the process the harness started must be the one that
@@ -223,13 +406,27 @@ function Stop-TestApi {
     .SYNOPSIS
       Stops the instance the harness started, and removes only what it created.
     .DESCRIPTION
-      Only the recorded PID is stopped, and only the per-run outbox directory is removed - and
-      only when it still holds nothing but the mail files of this run.
+      Only the recorded PID is stopped, and only while that PID still owns the recorded port:
+      a stale or reused PID can never kill a foreign process. Only the per-run outbox
+      directory is removed - and only when it still holds nothing but the mail files of this
+      run. The protected run credentials are never touched.
   #>
   param([object]$Identity)
 
-  if (-not $Identity) { $Identity = Get-TestApiIdentity }
-  Stop-Process -Id $Identity.Pid -Force -ErrorAction SilentlyContinue
+  if (-not $Identity) {
+    if (-not (Test-Path -LiteralPath $script:TestApiIdentityFile)) { return }
+    $Identity = Get-TestApiIdentity
+  }
+
+  $process = Get-Process -Id $Identity.Pid -ErrorAction SilentlyContinue
+  if ($process) {
+    $listeners = @(Get-NetTCPConnection -LocalPort ([int]$Identity.Port) -State Listen -ErrorAction SilentlyContinue)
+    $owners = @($listeners | ForEach-Object { $_.OwningProcess } | Sort-Object -Unique)
+    if ($owners.Count -ne 1 -or $owners[0] -ne $Identity.Pid) {
+      throw ("refusing to stop the process {0}: it does not own the port {1} recorded in the identity file. A foreign process is never killed." -f $Identity.Pid, $Identity.Port)
+    }
+    Stop-Process -Id $Identity.Pid -Force -ErrorAction SilentlyContinue
+  }
 
   if ($Identity.Outbox -and (Test-Path -LiteralPath $Identity.Outbox)) {
     $foreign = @(Get-ChildItem -LiteralPath $Identity.Outbox -File -ErrorAction SilentlyContinue |

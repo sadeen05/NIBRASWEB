@@ -14,6 +14,10 @@
       1. Every controller action declares an HTTP verb attribute (it is routable).
       2. `[AllowAnonymous]` is used only by the two public auth endpoints
          (POST /api/auth/register, POST /api/auth/login).
+      6. The test helpers never build an API URI by concatenating a command invocation
+         (in PowerShell, "[Uri](Get-Base + $Path)" is a command call with "+" and $Path as
+         arguments, so it targets the site root), and the five auth endpoints resolve to the
+         exact absolute URLs when the base URL is a fake one (no HTTP, no database).
 
     Informational checks (never change the exit code):
       3. Actions that rely on the global fallback authorization policy instead of a
@@ -143,6 +147,79 @@ if ($missingFromExport.Count -eq 0) { Write-Output '  (none)' } else { $missingF
 Write-Output 'Check 5 (informational) in the export but not declared by a controller:'
 if ($notInControllers.Count -eq 0) { Write-Output '  (none)' } else { $notInControllers | ForEach-Object { '  ' + $_ } }
 
+# ---------------------------------------------------------------------------------------------
+# Check 6 (hard): API URI construction in the test scripts. A command invocation followed by
+# "+" is not a concatenation: in PowerShell it passes "+" and the path as ARGUMENTS, so the
+# helper silently targets the site root (no endpoint -> the fallback policy answers 401).
+# The AST is inspected, so a comment that quotes the bad pattern is not a false positive.
+$testScriptFiles = @(Get-ChildItem -LiteralPath $PSScriptRoot -Filter '*.ps1' |
+        Where-Object { $_.Name -ne 'static_contract_checks.ps1' })
+$badCommandInvocations = New-Object System.Collections.Generic.List[string]
+foreach ($scriptFile in $testScriptFiles) {
+    $tokens = $null
+    $parseErrors = $null
+    $scriptAst = [System.Management.Automation.Language.Parser]::ParseFile($scriptFile.FullName, [ref]$tokens, [ref]$parseErrors)
+    foreach ($parseError in @($parseErrors)) {
+        $failures.Add("PowerShell parse error: $($scriptFile.Name) -> $($parseError.Message)")
+    }
+    $commands = $scriptAst.FindAll({
+            param($node)
+            if ($node -isnot [System.Management.Automation.Language.CommandAst]) { return $false }
+            $elements = $node.CommandElements
+            if ($elements.Count -lt 2) { return $false }
+            if ($elements[0] -isnot [System.Management.Automation.Language.StringConstantExpressionAst]) { return $false }
+            if ($elements[0].Value -notmatch '^(Get|Invoke)-[A-Za-z0-9]+$') { return $false }
+            return ($elements[1] -is [System.Management.Automation.Language.StringConstantExpressionAst] -and
+                $elements[1].Value -eq '+')
+        }, $true)
+    foreach ($command in $commands) {
+        $badCommandInvocations.Add(("{0}:{1} -> {2}" -f $scriptFile.Name, $command.Extent.StartLineNumber, $command.Extent.Text))
+    }
+}
+foreach ($bad in $badCommandInvocations) {
+    $failures.Add("a command is invoked with '+' as an argument (broken URI concatenation; use a separately evaluated base URL): $bad")
+}
+
+# The same pattern is proved wrong in this PowerShell, so the check itself is trustworthy.
+function Get-StaticProbeBaseUrl { 'http://127.0.0.1:5199' }
+$probePath = '/api/auth/register'
+$probeResult = (Get-StaticProbeBaseUrl + $probePath)
+if ($probeResult -ne 'http://127.0.0.1:5199') {
+    $failures.Add('the PowerShell command-invocation reference check did not behave as expected (the URI check cannot be trusted)')
+}
+Remove-Item Function:\Get-StaticProbeBaseUrl -ErrorAction SilentlyContinue
+
+# With a fake base URL (no HTTP, no database), the helper must produce the exact absolute URLs.
+. (Join-Path $PSScriptRoot 'verification_helpers.ps1')
+function Get-VerificationBaseUrl { 'http://127.0.0.1:5199' }
+$expectedUrls = [ordered]@{
+    '/api/auth/register'            = 'http://127.0.0.1:5199/api/auth/register'
+    '/api/auth/login'               = 'http://127.0.0.1:5199/api/auth/login'
+    '/api/auth/verify-email'        = 'http://127.0.0.1:5199/api/auth/verify-email'
+    '/api/auth/resend-verification' = 'http://127.0.0.1:5199/api/auth/resend-verification'
+    '/api/auth/activate-admin'      = 'http://127.0.0.1:5199/api/auth/activate-admin'
+}
+foreach ($path in $expectedUrls.Keys) {
+    $uri = Get-VerificationApiUri -Path $path
+    if ($uri.AbsoluteUri -ne $expectedUrls[$path]) {
+        $failures.Add("API URI construction: '$path' -> '$($uri.AbsoluteUri)' (expected '$($expectedUrls[$path])')")
+    }
+}
+function Get-VerificationBaseUrl { 'http://127.0.0.1:5199/' }
+$trailing = Get-VerificationApiUri -Path '/api/auth/register'
+if ($trailing.AbsoluteUri -ne 'http://127.0.0.1:5199/api/auth/register') {
+    $failures.Add("API URI construction: a base URL with a trailing slash produced '$($trailing.AbsoluteUri)'")
+}
+function Get-VerificationBaseUrl { 'http://127.0.0.1:5199' }
+$noSlash = Get-VerificationApiUri -Path 'api/auth/login'
+if ($noSlash.AbsoluteUri -ne 'http://127.0.0.1:5199/api/auth/login') {
+    $failures.Add("API URI construction: a path without a leading slash produced '$($noSlash.AbsoluteUri)'")
+}
+
+Write-Output "Check 6 (hard) API URI construction (fake base URL, no HTTP/database):"
+Write-Output "  command-call concatenations: $($badCommandInvocations.Count)"
+Write-Output "  auth endpoint URLs checked : $($expectedUrls.Count) (+2 normalization cases)"
+
 Write-Output ''
 if ($failures.Count -gt 0) {
     Write-Output "RESULT: FAIL ($($failures.Count) hard violation(s))"
@@ -150,5 +227,5 @@ if ($failures.Count -gt 0) {
     exit 1
 }
 
-Write-Output 'RESULT: PASS (hard checks 1-2; see the informational lists above)'
+Write-Output 'RESULT: PASS (hard checks 1-2 and 6; see the informational lists above)'
 exit 0

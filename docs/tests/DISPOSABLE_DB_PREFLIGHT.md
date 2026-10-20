@@ -131,6 +131,55 @@ touches the PID the harness started and the per-run outbox directory it created.
 
 None of them may be written into a file in the repository, a script or a log line.
 
+## 3c. The disposable SuperAdmin identity — one stable account per approved run
+
+The harness owns the seeded SuperAdmin identity, and it keeps **one** identity and password for
+the whole run:
+
+- `Get-TestRunCredentials` generates the pair **once** (a `f1-superadmin-<stamp>@example.test`
+  address and a random password) and stores it **DPAPI-encrypted for the current Windows user**
+  in `%TEMP%\nibras-f1-run-credentials.json` — outside the repository, never printed and never
+  committed. The file is additionally restricted to that user (inheritance dropped, a single
+  FullControl rule for the owner); when the restriction cannot be applied, the harness fails
+  closed instead of leaving the secret readable;
+- the envelope records the `RunId` and the **database** it belongs to, so it is never reused
+  across unrelated runs: a file that belongs to another database, that cannot be decrypted, or
+  that is not in the protected format (a plaintext store) is **refused** with an explicit
+  message. `-NewRun` deliberately discards the previous identity and generates a new one;
+- every start of the run (the Phase B identity probe and the Phase C acceptance run) passes the
+  **same** pair to the instance as `Seed__SuperAdminEmail` / `Seed__SuperAdminPassword`, so the
+  seeding is **idempotent across repeated starts of the same disposable database**;
+- the credentials are **never rotated while a run is in progress**: the caller's shell cannot
+  change them, and `Clear-TestRunCredentials` is the explicit end-of-run action that discards
+  them so the *next* approved run seeds its own identity.
+
+**The seeding fails closed.** `SuperAdminSeeder` is idempotent by the configured email and
+**never** changes an email, a password, a role, a phone number or an approval state. It refuses
+to continue, and stops the host, when
+
+- the configured identity already belongs to an account that is **not** an approved, active
+  SuperAdmin; or
+- the reserved seed phone number (`9999999999`) is already owned by **another** account — the
+  case that previously aborted the host with a raw unique-constraint violation.
+
+The insert itself is one `SaveChangesAsync`, so the seeded account exists completely or not at
+all.
+
+## 3d. Recovery options for a disposable database whose seed identity is stale
+
+A run that was interrupted **before** the credential lifecycle existed can leave a disposable
+SuperAdmin whose password was generated and never kept. It is **never** reset, replaced or
+overwritten automatically. The safe options, each needing explicit approval, are:
+
+| Option | Effect | Notes |
+|---|---|---|
+| **A. Remove the stale seed row** (a single, scoped `DELETE` on `USERS` for that one disposable account, in the disposable database only) | The next approved run seeds its own identity and the full acceptance run, including the privileged cases, can execute | The only option that restores a complete run; the row is a disposable test account, never a shared or legacy one |
+| **B. Keep the row and skip the privileged cases** | The non-privileged acceptance cases can run; the administrator activation, the SuperAdmin-only creation and the legacy-account checks stay **SKIP** | The stored password hash cannot be recovered, and the seeding refuses to touch the account |
+| **C. Drop and recreate the disposable database** | A clean seed identity | **Forbidden by the standing rules** (no drop, no reset, no remigrate) |
+
+The row is identified read-only before any action, and the statement is scoped to that exact
+disposable account — never a shared, legacy or production account.
+
 ## 4. The operations that are allowed (each one separately approved)
 
 | # | Operation | Target | Reversible |
