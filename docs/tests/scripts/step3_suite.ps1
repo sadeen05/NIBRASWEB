@@ -1,14 +1,28 @@
 #requires -Version 5.1
 # Step 3 non-privileged test suite (temporary artifact; never prints tokens/secrets)
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'verification_helpers.ps1')
+# The email verification helpers: the token is read from the development outbox and
+# redeemed through the real endpoints - no bypass, no direct state update.
 Add-Type -AssemblyName System.Net.Http | Out-Null
 
-$base    = 'http://localhost:5181'
+# The suite owns its instance: the harness starts it on the dedicated port, with the
+# explicit disposable connection string, and proves that it owns the port.
+$harness = Start-TestApiInstance
+$base = Initialize-TestApi
 $stamp   = (Get-Date).ToUniversalTime().ToString('yyyyMMddHHmmss')
 $pw = if ($env:NIBRAS_TEST_PASSWORD) { $env:NIBRAS_TEST_PASSWORD } else { 'T5t!N1' + [guid]::NewGuid().ToString('N').Substring(0,10) } # runtime-generated credential, never a literal
 $sqlcmd  = 'sqlcmd'   # resolved from PATH
-$server  = if ($env:NIBRAS_SQL_SERVER) { $env:NIBRAS_SQL_SERVER } else { "$env:COMPUTERNAME\SQLEXPRESS" }
-$db      = 'NEBRASDB_Step1'   # approved target database (addendum)
+$server  = (Get-TestTarget).Server
+. (Join-Path $PSScriptRoot 'test_target.ps1')
+# only the disposable database on the approved instance is accepted.
+# The target is resolved from the effective connection string and is fail-closed:
+$sqlServer = (Get-TestTarget).Server
+# The target is resolved from the effective connection string and is fail-closed:
+# only the disposable database is accepted, and a mismatch stops the run.
+$db      = (Get-TestTarget).Database
+# The running instance is proved to write into the disposable database before anything is written.
+Assert-TestInstanceIdentity | Out-Null
 
 $client = New-Object System.Net.Http.HttpClient
 $client.Timeout = [TimeSpan]::FromSeconds(60)
@@ -89,7 +103,12 @@ Assert 'login unknown email (401)' 401 (Call POST '/api/auth/login' $null ("{""e
 
 $landlordEmail = "step3-landlord-$stamp@example.test"
 $landlordPhone = "073$stamp"
+$baseline = New-OutboxBaseline
 $reg = Call POST '/api/auth/register' $null (RegBody 'Step3 Landlord' $landlordEmail $landlordPhone 1 $pw $null $null $null)
+
+# The account can only sign in after its address was confirmed.
+$v = Confirm-VerifiedAccount -Email $landlordEmail -Baseline $baseline
+Assert 'confirm the registered Landlord (204)' 204 $v | Out-Null
 Assert 'register Landlord fixture (200)' 200 $reg | Out-Null
 $landlordId = ($reg.Body | ConvertFrom-Json).id
 Assert 'duplicate register same email/phone (409)' 409 (Call POST '/api/auth/register' $null (RegBody 'Dup Landlord' $landlordEmail $landlordPhone 1 $pw $null $null $null)) | Out-Null
@@ -104,7 +123,12 @@ Assert 'login Landlord wrong password (401)' 401 (Call POST '/api/auth/login' $n
 $invEmail = "step3-inv-extra-$stamp@example.test"
 $invPhone = "072$stamp"
 $invExtra = '"isApproved":true,"isDeleted":true,"approvedById":3,"approvedAt":"2030-01-01T00:00:00Z","passwordHash":"not-a-hash"'
+$baseline = New-OutboxBaseline
 $invReg = Call POST '/api/auth/register' $null (RegBody 'Step3 Extra Investor' $invEmail $invPhone 2 $pw 'Step3 Co' 'STEP3-CO-01' $invExtra)
+
+# The account can only sign in after its address was confirmed.
+$v = Confirm-VerifiedAccount -Email $invEmail -Baseline $baseline
+Assert 'confirm the registered Investor (204)' 204 $v | Out-Null
 Assert 'register Investor + extra protected fields (200)' 200 $invReg | Out-Null
 $invLogin = Call POST '/api/auth/login' $null ("{""email"":""$invEmail"",""password"":""$pw""}")
 Assert 'login Investor (proves not soft-deleted) (200)' 200 $invLogin | Out-Null
@@ -120,7 +144,12 @@ Log ("  no-elevation check: role={0} isApproved={1} -> {2}" -f $invRole,$invAppr
 
 $rcEmail = "step3-rolechange-$stamp@example.test"
 $rcPhone = "071$stamp"
+$baseline = New-OutboxBaseline
 $rcReg = Call POST '/api/auth/register' $null (RegBody 'Step3 RoleChange' $rcEmail $rcPhone 1 $pw $null $null $null)
+
+# The account can only sign in after its address was confirmed.
+$v = Confirm-VerifiedAccount -Email $rcEmail -Baseline $baseline
+Assert 'confirm the registered RoleChange Landlord (204)' 204 $v | Out-Null
 Assert 'register RoleChange landlord fixture (200)' 200 $rcReg | Out-Null
 $rcLogin = Call POST '/api/auth/login' $null ("{""email"":""$rcEmail"",""password"":""$pw""}")
 Assert 'login RoleChange landlord (200)' 200 $rcLogin | Out-Null

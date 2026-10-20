@@ -1,7 +1,16 @@
 $ErrorActionPreference = 'Stop'
-$sqlServer = if ($env:NIBRAS_SQL_SERVER) { $env:NIBRAS_SQL_SERVER } else { "$env:COMPUTERNAME\SQLEXPRESS" }
-$dbName = 'NEBRASDB_Step1'
-$base = 'http://localhost:5181'
+. (Join-Path $PSScriptRoot 'verification_helpers.ps1')
+# The email verification helpers: the token is read from the development outbox and
+# redeemed through the real endpoints - no bypass, no direct state update.
+. (Join-Path $PSScriptRoot 'test_target.ps1')
+# The target is resolved from the effective connection string and is fail-closed:
+# only the disposable database is accepted, and a mismatch stops the run.
+$sqlServer = (Get-TestTarget).Server
+$dbName = (Get-TestTarget).Database
+# The suite owns its instance: the harness starts it on the dedicated port, with the
+# explicit disposable connection string, and proves that it owns the port.
+$harness = Start-TestApiInstance
+$base = Initialize-TestApi
 $pw = if ($env:NIBRAS_TEST_PASSWORD) { $env:NIBRAS_TEST_PASSWORD } else { 'T5t!N1' + [guid]::NewGuid().ToString('N').Substring(0,10) } # runtime-generated credential, never a literal
 $stamp = (Get-Date).ToString('HHmmss') + (Get-Random -Minimum 100 -Maximum 999)
 
@@ -35,7 +44,13 @@ function Mask([string]$s) {
 function Register($Name, $Email, $RoleId, $Company = $null) {
   $b = @{ fullName = $Name; email = $Email; phone = (New-Phone); password = $pw; roleId = $RoleId }
   if ($Company) { $b.companyName = $Company; $b.companyRegistrationNumber = ('REG-' + $stamp + '-' + $RoleId) }
-  return Call 'POST' '/api/auth/register' $b
+  $baseline = New-OutboxBaseline
+  $r = Call 'POST' '/api/auth/register' $b
+  if ($r.Status -ne 200) { throw "register failed ($($r.Status))" }
+  # The account can only sign in after its address was confirmed.
+  $v = Confirm-VerifiedAccount -Email $Email -Baseline $baseline
+  if ($v.Status -ne 204) { throw "the verification of $Email failed ($($v.Status))" }
+  return $r
 }
 
 function Login($Email) {

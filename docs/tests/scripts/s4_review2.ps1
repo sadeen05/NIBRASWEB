@@ -1,10 +1,21 @@
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'verification_helpers.ps1')
+# The email verification helpers: the token is read from the development outbox and
+# redeemed through the real endpoints - no bypass, no direct state update.
 Add-Type -AssemblyName System.Net.Http
-$base = 'http://localhost:5181'
+# The suite owns its instance: the harness starts it on the dedicated port, with the
+# explicit disposable connection string, and proves that it owns the port.
+$harness = Start-TestApiInstance
+$base = Initialize-TestApi
 $pw = if ($env:NIBRAS_TEST_PASSWORD) { $env:NIBRAS_TEST_PASSWORD } else { 'T5t!N1' + [guid]::NewGuid().ToString('N').Substring(0,10) } # runtime-generated credential, never a literal
 $stamp = (Get-Date).ToString('HHmmss') + (Get-Random -Minimum 100 -Maximum 999)
-$sqlServer = if ($env:NIBRAS_SQL_SERVER) { $env:NIBRAS_SQL_SERVER } else { "$env:COMPUTERNAME\SQLEXPRESS" }
-$dbName = 'NEBRASDB_Step1'
+. (Join-Path $PSScriptRoot 'test_target.ps1')
+# The target is resolved from the effective connection string and is fail-closed:
+# only the disposable database is accepted, and a mismatch stops the run.
+$sqlServer = (Get-TestTarget).Server
+$dbName = (Get-TestTarget).Database
+# The running instance is proved to write into the disposable database before anything is written.
+Assert-TestInstanceIdentity | Out-Null
 $rows = New-Object System.Collections.ArrayList
 
 function New-Phone { '9' + ('{0:D9}' -f (Get-Random -Minimum 100000000 -Maximum 999999999)) }
@@ -42,7 +53,11 @@ function LandBody([string]$LandNumber, [string]$Parcel) {
 }
 
 $email = "s4x-$stamp-la@example.test"
+$baseline = New-OutboxBaseline
 $r = Call 'POST' '/api/auth/register' @{ fullName = 'S4X Landlord'; email = $email; phone = (New-Phone); password = $pw; roleId = 1 }
+
+  $v = Confirm-VerifiedAccount -Email $email -Baseline $baseline
+if ($v.Status -ne 204) { throw "the verification of $email failed ($($v.Status))" }
 $r = Call 'POST' '/api/auth/login' @{ email = $email; password = $pw }
 $tok = ($r.Body | ConvertFrom-Json).token
 Write-Output 'landlord created and logged in (token in memory only)'

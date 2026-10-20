@@ -16,6 +16,17 @@ function Ensure-TestFixtures {
     [Parameter(Mandatory)][string]$Database
   )
 
+  # The fixtures are WRITES: they may only be created in the disposable database. The
+  # resolver is fail-closed, so a mismatched target stops the run before the first insert.
+  . (Join-Path $PSScriptRoot 'test_target.ps1')
+  $target = Get-TestTarget
+  if ($Database -ine $target.Database) {
+    throw "The fixtures may only be created in the disposable database '$($target.Database)' (got '$Database')."
+  }
+  if ($SqlServer -ine $target.Server) {
+    throw "The fixtures may only be created on '$($target.Server)' (got '$SqlServer')."
+  }
+
   $primaryRegionName   = 'TEST Region - Primary'
   $secondaryRegionName = 'TEST Region - Secondary'
   $primaryGridName     = 'TEST Grid - Primary 100MW'

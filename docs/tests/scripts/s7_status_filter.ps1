@@ -9,9 +9,12 @@
 #
 # Starts its own app once on the authorized test database, like s6_contracts.ps1.
 $ErrorActionPreference = 'Stop'
-$base = 'http://localhost:5181'
-$db = 'NEBRASDB_Step1'
-$sqlServer = if ($env:NIBRAS_SQL_SERVER) { $env:NIBRAS_SQL_SERVER } else { "$env:COMPUTERNAME\SQLEXPRESS" }
+. (Join-Path $PSScriptRoot 'test_target.ps1')
+. (Join-Path $PSScriptRoot 'verification_helpers.ps1')
+# The target is resolved from the effective connection string and is fail-closed:
+# only the disposable database is accepted, and a mismatch stops the run.
+$db = (Get-TestTarget).Database
+$sqlServer = (Get-TestTarget).Server
 $rows = New-Object System.Collections.ArrayList
 
 function Call([string]$Method, [string]$Path, [string]$Token = $null) {
@@ -29,21 +32,25 @@ function Check([string]$Id, [string]$Desc, $Expected, $Actual) {
 # --- target verification BEFORE any database access ---
 $target = (@(& sqlcmd -S $sqlServer -E -d $db -W -h -1 -Q "SET NOCOUNT ON; SELECT DB_NAME();" 2>&1) | Where-Object { $_ }).Trim()
 if ($target -ne $db) { Write-Output "BLOCKED: expected $db but connected to '$target'"; exit 2 }
-Check 'SF-00' 'database target is NEBRASDB_Step1' $db $target
+Check 'SF-00' 'database target is the configured disposable database' $db $target
 
 . (Join-Path $PSScriptRoot 's4_app.ps1')
-$app = Start-S4App -Port 5181 -AuthPerMinute 1000
+$app = Start-S4App  -AuthPerMinute 1000
+# The base URL comes from the harness-owned instance, and the gate proves that
+# the instance is the one the harness started - before anything is written.
+$base = Initialize-TestApi
+# The instance that was just started is proved to write into the disposable database.
+Assert-TestInstanceIdentity | Out-Null
 try {
-  $repoRoot = $PSScriptRoot
-  while ($repoRoot -and -not (Test-Path (Join-Path $repoRoot 'NibrasWeb.csproj'))) { $repoRoot = Split-Path $repoRoot -Parent }
-  $sec = @{}
-  foreach ($line in @(& dotnet user-secrets list --project (Join-Path $repoRoot 'NibrasWeb.csproj') 2>$null)) {
-    if ($line -match '^\s*([^=]+?)\s*=\s*(.*)$') { $sec[$Matches[1].Trim()] = $Matches[2] }
+  # The SuperAdmin credentials come from the dedicated disposable-environment variables. The
+  # user secrets are never enumerated and the values are never printed.
+  $body = @{ email = $env:NIBRAS_TEST_SUPERADMIN_EMAIL; password = $env:NIBRAS_TEST_SUPERADMIN_PASSWORD } | ConvertTo-Json -Compress
+  if (-not $env:NIBRAS_TEST_SUPERADMIN_EMAIL -or -not $env:NIBRAS_TEST_SUPERADMIN_PASSWORD) {
+    Write-Output 'BLOCKED: NIBRAS_TEST_SUPERADMIN_EMAIL / NIBRAS_TEST_SUPERADMIN_PASSWORD are not set'
+    exit 2
   }
-  $body = @{ email = $sec['Seed:SuperAdminEmail']; password = $sec['Seed:SuperAdminPassword'] } | ConvertTo-Json -Compress
   $login = Invoke-WebRequest -Uri ($base + '/api/auth/login') -Method POST -UseBasicParsing -ContentType 'application/json' -Body $body
   $admin = ($login.Content | ConvertFrom-Json).token
-  $sec = $null
   Check 'SF-01' 'seeded SuperAdmin login' 200 ([int]$login.StatusCode)
 
   Check 'SF-02' 'lands ?status=99 -> 400 (undefined numeric rejected)' 400 (Call 'GET' '/api/lands?status=99' $admin)

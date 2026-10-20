@@ -1,9 +1,20 @@
 $ErrorActionPreference = 'Stop'
-$base = 'http://localhost:5181'
+. (Join-Path $PSScriptRoot 'verification_helpers.ps1')
+# The email verification helpers: the token is read from the development outbox and
+# redeemed through the real endpoints - no bypass, no direct state update.
+# The suite owns its instance: the harness starts it on the dedicated port, with the
+# explicit disposable connection string, and proves that it owns the port.
+$harness = Start-TestApiInstance
+$base = Initialize-TestApi
 $pw = if ($env:NIBRAS_TEST_PASSWORD) { $env:NIBRAS_TEST_PASSWORD } else { 'T5t!N1' + [guid]::NewGuid().ToString('N').Substring(0,10) } # runtime-generated credential, never a literal
 $stamp = (Get-Date).ToString('HHmmss') + (Get-Random -Minimum 100 -Maximum 999)
-$sqlServer = if ($env:NIBRAS_SQL_SERVER) { $env:NIBRAS_SQL_SERVER } else { "$env:COMPUTERNAME\SQLEXPRESS" }
-$db = 'NEBRASDB_Step1'
+. (Join-Path $PSScriptRoot 'test_target.ps1')
+# The target is resolved from the effective connection string and is fail-closed:
+# only the disposable database is accepted, and a mismatch stops the run.
+$sqlServer = (Get-TestTarget).Server
+$db = (Get-TestTarget).Database
+# The running instance is proved to write into the disposable database before anything is written.
+Assert-TestInstanceIdentity | Out-Null
 $rows = New-Object System.Collections.ArrayList
 
 function New-Phone { '9' + ('{0:D9}' -f (Get-Random -Minimum 100000000 -Maximum 999999999)) }
@@ -47,11 +58,23 @@ function Login([string]$Email) {
 
 Write-Output '== setup (tokens and passwords never printed) =='
 $laEmail = "s4-$stamp-la@example.test"; $lbEmail = "s4-$stamp-lb@example.test"; $inEmail = "s4-$stamp-in@example.test"
+$baseline = New-OutboxBaseline
 $r = Call 'POST' '/api/auth/register' @{ fullName = 'S4 Landlord A'; email = $laEmail; phone = (New-Phone); password = $pw; roleId = 1 }
+
+  $v = Confirm-VerifiedAccount -Email $laEmail -Baseline $baseline
+if ($v.Status -ne 204) { throw "the verification of $laEmail failed ($($v.Status))" }
 $laId = [int]($r.Body | ConvertFrom-Json).id
+$baseline = New-OutboxBaseline
 $r = Call 'POST' '/api/auth/register' @{ fullName = 'S4 Landlord B'; email = $lbEmail; phone = (New-Phone); password = $pw; roleId = 1 }
+
+  $v = Confirm-VerifiedAccount -Email $lbEmail -Baseline $baseline
+if ($v.Status -ne 204) { throw "the verification of $lbEmail failed ($($v.Status))" }
 $lbId = [int]($r.Body | ConvertFrom-Json).id
+$baseline = New-OutboxBaseline
 $r = Call 'POST' '/api/auth/register' @{ fullName = 'S4 Investor'; email = $inEmail; phone = (New-Phone); password = $pw; roleId = 2; companyName = 'S4 Co'; companyRegistrationNumber = "S4-REG-$stamp" }
+
+  $v = Confirm-VerifiedAccount -Email $inEmail -Baseline $baseline
+if ($v.Status -ne 204) { throw "the verification of $inEmail failed ($($v.Status))" }
 $invId = [int]($r.Body | ConvertFrom-Json).id
 $aTok = Login $laEmail
 $bTok = Login $lbEmail
@@ -218,17 +241,17 @@ Check 'S4-49' 'landlord DELETE /api/document-types/1' 403 $r.Status
 
 Write-Output ''
 Write-Output '== A2: admin verification paths via a disposable Admin (SuperAdmin-provisioned) =='
-# SuperAdmin credentials: read at run time via `dotnet user-secrets list`, never printed.
+# SuperAdmin credentials: dedicated disposable-environment variables, never printed.
 $repoRoot = $PSScriptRoot
 while ($repoRoot -and -not (Test-Path (Join-Path $repoRoot 'NibrasWeb.csproj'))) { $repoRoot = Split-Path $repoRoot -Parent }
 if (-not $repoRoot) { Write-Output 'FATAL: NibrasWeb.csproj not found above the script directory'; exit 2 }
 $sec = @{}
-foreach ($line in @(& dotnet user-secrets list --project (Join-Path $repoRoot 'NibrasWeb.csproj') 2>$null)) {
-  if ($line -match '^\s*([^=]+?)\s*=\s*(.*)$') { $sec[$Matches[1].Trim()] = $Matches[2] }
-}
-$saEmail = $sec['Seed:SuperAdminEmail']; $saPass = $sec['Seed:SuperAdminPassword']
-$sec = $null
-if (-not $saEmail -or -not $saPass) { Write-Output 'FATAL: Seed:SuperAdmin* not configured in user-secrets'; exit 2 }
+# The SuperAdmin credentials come from the dedicated disposable-environment variables.
+# The user secrets are never enumerated: the suite reads exactly the two values it needs,
+# and it never prints them.
+$saEmail = $env:NIBRAS_TEST_SUPERADMIN_EMAIL
+$saPass = $env:NIBRAS_TEST_SUPERADMIN_PASSWORD
+if (-not $saEmail -or -not $saPass) { Write-Output 'BLOCKED: NIBRAS_TEST_SUPERADMIN_EMAIL / NIBRAS_TEST_SUPERADMIN_PASSWORD are not set'; exit 2 }
 
 $r = Call 'POST' '/api/auth/login' @{ email = $saEmail; password = $saPass }
 Check 'A2-01' 'seeded SuperAdmin logs in (credentials never printed)' 200 $r.Status
@@ -239,6 +262,9 @@ $admEmail = "s4-adm-$stamp@example.test"
 $r = Call 'POST' '/api/users' @{ fullName = 'S4 Disposable Admin'; email = $admEmail; phone = (New-Phone); password = $pw; roleId = 3 } $saTok
 Check 'A2-02' 'SuperAdmin creates a disposable Admin (auto-approved)' 201 $r.Status
 $admId = [int]($r.Body | ConvertFrom-Json).id
+# A new administrator account has no usable password: it is activated with the activation
+# link and a password of this suite's choosing.
+  Activate-AdminAccount -Email $admEmail -Password $pw -Baseline $baseline | Out-Null
 $r = Call 'POST' '/api/auth/login' @{ email = $admEmail; password = $pw }
 Check 'A2-03' 'disposable Admin logs in' 200 $r.Status
 $admTok = ($r.Body | ConvertFrom-Json).token

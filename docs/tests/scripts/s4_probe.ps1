@@ -1,9 +1,12 @@
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 's4_app.ps1')
+. (Join-Path $PSScriptRoot 'verification_helpers.ps1')
 $app = $null
 try {
-  $app = Start-S4App -Port 5181
-  $base = 'http://localhost:5181'
+  $app = Start-S4App
+  # The base URL comes from the harness-owned instance, and the gate proves that
+  # the instance is the one the harness started - before anything is written.
+  $base = Initialize-TestApi
   function Probe([string]$Method,[string]$Path,$Body=$null,[string]$Token=$null){
     $req = @{ Uri=($base+$Path); Method=$Method; UseBasicParsing=$true; ErrorAction='Stop'; Headers=@{} }
     if ($Token) { $req.Headers['Authorization']='Bearer '+$Token }

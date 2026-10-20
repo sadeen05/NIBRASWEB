@@ -2,21 +2,32 @@
 #
 # Run ONLY after 20261018090000_Phase2_LandCorrectionAndChangeRequests has been applied and
 # explicitly approved (see docs/tests/PHASE2_MATRIX.md), against the confirmed target
-# NEBRASDB_Step1 on SADEEN\SQLEXPRESS, with the app started via s4_app.ps1
+# the disposable database on SADEEN\SQLEXPRESS, with the app started via s4_app.ps1
 # (-AuthPerMinute 1000). Never run against NEBRAS or NEBRASDB. Never executed during
 # preparation; this file is a plan artifact until Phase D is authorized.
 #
 # - Disposable fixtures only: stamped emails/land numbers/parcels/file paths, returned ids.
 # - FIXTURE-LOCAL UPDATEs touch only rows this run created (ids read from its own API
 #   responses); no pre-existing business row is ever modified or deleted.
-# - SuperAdmin credentials are read at run time from user-secrets and never printed.
+# - SuperAdmin credentials come from the disposable-environment variables and are never printed.
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'verification_helpers.ps1')
+# The email verification helpers: the token is read from the development outbox and
+# redeemed through the real endpoints - no bypass, no direct state update.
 Add-Type -AssemblyName System.Net.Http | Out-Null   # Send-ParallelPost (concurrency section)
-$base = 'http://localhost:5181'
+# The suite owns its instance: the harness starts it on the dedicated port, with the
+# explicit disposable connection string, and proves that it owns the port.
+$harness = Start-TestApiInstance
+$base = Initialize-TestApi
 $pw = if ($env:NIBRAS_TEST_PASSWORD) { $env:NIBRAS_TEST_PASSWORD } else { 'T5t!N1' + [guid]::NewGuid().ToString('N').Substring(0,10) } # runtime-generated credential, never a literal
 $stamp = (Get-Date).ToString('HHmmss') + (Get-Random -Minimum 100 -Maximum 999)
-$sqlServer = if ($env:NIBRAS_SQL_SERVER) { $env:NIBRAS_SQL_SERVER } else { "$env:COMPUTERNAME\SQLEXPRESS" }
-$db = 'NEBRASDB_Step1'
+. (Join-Path $PSScriptRoot 'test_target.ps1')
+# The target is resolved from the effective connection string and is fail-closed:
+# only the disposable database is accepted, and a mismatch stops the run.
+$sqlServer = (Get-TestTarget).Server
+$db = (Get-TestTarget).Database
+# The running instance is proved to write into the disposable database before anything is written.
+Assert-TestInstanceIdentity | Out-Null
 $rows = New-Object System.Collections.ArrayList
 
 function New-Phone { '9' + ('{0:D9}' -f (Get-Random -Minimum 100000000 -Maximum 999999999)) }
@@ -161,22 +172,34 @@ $repoRoot = $PSScriptRoot
 while ($repoRoot -and -not (Test-Path (Join-Path $repoRoot 'NibrasWeb.csproj'))) { $repoRoot = Split-Path $repoRoot -Parent }
 if (-not $repoRoot) { Write-Output 'FATAL: NibrasWeb.csproj not found above the script directory'; exit 2 }
 $sec = @{}
-foreach ($line in @(& dotnet user-secrets list --project (Join-Path $repoRoot 'NibrasWeb.csproj') 2>$null)) {
-  if ($line -match '^\s*([^=]+?)\s*=\s*(.*)$') { $sec[$Matches[1].Trim()] = $Matches[2] }
-}
-$saEmail = $sec['Seed:SuperAdminEmail']; $saPass = $sec['Seed:SuperAdminPassword']
-$sec = $null
-if (-not $saEmail -or -not $saPass) { Write-Output 'FATAL: Seed:SuperAdmin* not configured in user-secrets'; exit 2 }
+# The SuperAdmin credentials come from the dedicated disposable-environment variables.
+# The user secrets are never enumerated: the suite reads exactly the two values it needs,
+# and it never prints them.
+$saEmail = $env:NIBRAS_TEST_SUPERADMIN_EMAIL
+$saPass = $env:NIBRAS_TEST_SUPERADMIN_PASSWORD
+if (-not $saEmail -or -not $saPass) { Write-Output 'BLOCKED: NIBRAS_TEST_SUPERADMIN_EMAIL / NIBRAS_TEST_SUPERADMIN_PASSWORD are not set'; exit 2 }
 $saTok = Login $saEmail $saPass
 
 $laEmail = "p2-$stamp-la@example.test"; $lbEmail = "p2-$stamp-lb@example.test"; $invEmail = "p2-$stamp-in@example.test"
+$baseline = New-OutboxBaseline
 $r = Call 'POST' '/api/auth/register' @{ fullName = 'P2 Landlord A'; email = $laEmail; phone = (New-Phone); password = $pw; roleId = 1 }
+
+  $v = Confirm-VerifiedAccount -Email $laEmail -Baseline $baseline
+if ($v.Status -ne 204) { throw "the verification of $laEmail failed ($($v.Status))" }
 if ($r.Status -ne 200) { throw "landlord A register failed: $($r.Status)" }
 $laId = [int](($r.Body | ConvertFrom-Json).id)
+$baseline = New-OutboxBaseline
 $r = Call 'POST' '/api/auth/register' @{ fullName = 'P2 Landlord B'; email = $lbEmail; phone = (New-Phone); password = $pw; roleId = 1 }
+
+  $v = Confirm-VerifiedAccount -Email $lbEmail -Baseline $baseline
+if ($v.Status -ne 204) { throw "the verification of $lbEmail failed ($($v.Status))" }
 if ($r.Status -ne 200) { throw "landlord B register failed: $($r.Status)" }
 $lbId = [int](($r.Body | ConvertFrom-Json).id)
+$baseline = New-OutboxBaseline
 $r = Call 'POST' '/api/auth/register' @{ fullName = 'P2 Investor'; email = $invEmail; phone = (New-Phone); password = $pw; roleId = 2; companyName = 'P2 Co'; companyRegistrationNumber = "P2-REG-$stamp" }
+
+  $v = Confirm-VerifiedAccount -Email $invEmail -Baseline $baseline
+if ($v.Status -ne 204) { throw "the verification of $invEmail failed ($($v.Status))" }
 if ($r.Status -ne 200) { throw "investor register failed: $($r.Status)" }
 $invId = [int](($r.Body | ConvertFrom-Json).id)
 $r = Call 'POST' "/api/users/$invId/approve" $null $saTok
@@ -330,6 +353,9 @@ $admEmail = "p2-$stamp-adm@example.test"
 $r = Call 'POST' '/api/users' @{ fullName = 'P2 Disposable Admin'; email = $admEmail; phone = (New-Phone); password = $pw; roleId = 3 } $saTok
 if ($r.Status -ne 201) { throw "disposable admin create failed: $($r.Status)" }
 $admId = [int](($r.Body | ConvertFrom-Json).id)
+# A new administrator account has no usable password: it is activated with the activation
+# link and a password of this suite's choosing.
+  Activate-AdminAccount -Email $admEmail -Password $pw -Baseline $baseline | Out-Null
 $admTok = Login $admEmail
 $bDoc2v1 = [int](Sql "SELECT CAST(ID AS varchar(10)) FROM LAND_DOCUMENTS WHERE LAND_ID = $bId AND DOCUMENT_TYPE_ID = 2 AND VERSION = 1;")
 $r = Call 'PUT' "/api/lands/$bId/documents/$bDoc2v1/review" @{ approved = $true } $admTok

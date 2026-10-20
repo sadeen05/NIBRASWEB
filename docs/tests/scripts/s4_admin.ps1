@@ -1,10 +1,21 @@
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'verification_helpers.ps1')
+# The email verification helpers: the token is read from the development outbox and
+# redeemed through the real endpoints - no bypass, no direct state update.
 Add-Type -AssemblyName System.Net.Http
-$base = 'http://localhost:5181'
+# The suite owns its instance: the harness starts it on the dedicated port, with the
+# explicit disposable connection string, and proves that it owns the port.
+$harness = Start-TestApiInstance
+$base = Initialize-TestApi
 $pw = if ($env:NIBRAS_TEST_PASSWORD) { $env:NIBRAS_TEST_PASSWORD } else { 'T5t!N1' + [guid]::NewGuid().ToString('N').Substring(0,10) } # runtime-generated credential, never a literal
 $stamp = (Get-Date).ToString('HHmmss') + (Get-Random -Minimum 100 -Maximum 999)
-$sqlServer = if ($env:NIBRAS_SQL_SERVER) { $env:NIBRAS_SQL_SERVER } else { "$env:COMPUTERNAME\SQLEXPRESS" }
-$db = 'NEBRASDB_Step1'
+. (Join-Path $PSScriptRoot 'test_target.ps1')
+# The target is resolved from the effective connection string and is fail-closed:
+# only the disposable database is accepted, and a mismatch stops the run.
+$sqlServer = (Get-TestTarget).Server
+$db = (Get-TestTarget).Database
+# The running instance is proved to write into the disposable database before anything is written.
+Assert-TestInstanceIdentity | Out-Null
 $rows = New-Object System.Collections.ArrayList
 
 function New-Phone { '9' + ('{0:D9}' -f (Get-Random -Minimum 100000000 -Maximum 999999999)) }
@@ -37,17 +48,17 @@ function Assess-Land([int]$landId, [decimal]$slope, [string]$adminTok) {
   if ($r.Status -ne 200) { throw "land $landId assessment failed: $($r.Status) body=$($r.Body)" }
 }
 
-# --- seed SuperAdmin credentials: read at run time via `dotnet user-secrets list`, never printed ---
+# --- seed SuperAdmin credentials: dedicated disposable-environment variables, never printed ---
 $repoRoot = $PSScriptRoot
 while ($repoRoot -and -not (Test-Path (Join-Path $repoRoot 'NibrasWeb.csproj'))) { $repoRoot = Split-Path $repoRoot -Parent }
 if (-not $repoRoot) { Write-Output 'BLOCKED: NibrasWeb.csproj not found above the script directory'; exit 2 }
 $sec = @{}
-foreach ($line in @(& dotnet user-secrets list --project (Join-Path $repoRoot 'NibrasWeb.csproj') 2>$null)) {
-  if ($line -match '^\s*([^=]+?)\s*=\s*(.*)$') { $sec[$Matches[1].Trim()] = $Matches[2] }
-}
-$adminEmail = $sec['Seed:SuperAdminEmail']; $adminPass = $sec['Seed:SuperAdminPassword']
-$sec = $null
-if (-not $adminEmail -or -not $adminPass) { Write-Output 'BLOCKED: Seed:SuperAdmin* not configured in user-secrets'; exit 2 }
+# The SuperAdmin credentials come from the dedicated disposable-environment variables.
+# The user secrets are never enumerated: the suite reads exactly the two values it needs,
+# and it never prints them.
+$adminEmail = $env:NIBRAS_TEST_SUPERADMIN_EMAIL
+$adminPass = $env:NIBRAS_TEST_SUPERADMIN_PASSWORD
+if (-not $adminEmail -or -not $adminPass) { Write-Output 'BLOCKED: NIBRAS_TEST_SUPERADMIN_EMAIL / NIBRAS_TEST_SUPERADMIN_PASSWORD are not set'; exit 2 }
 
 Write-Output '== setup (credentials never printed) =='
 $r = Call 'POST' '/api/auth/login' @{ email = $adminEmail; password = $adminPass }
@@ -56,11 +67,19 @@ if ($r.Status -ne 200) { Write-Output ('admin login body (no secret): ' + $r.Bod
 $admin = ($r.Body | ConvertFrom-Json).token
 
 $laEmail = "s4adm-la-$stamp@example.test"
+$baseline = New-OutboxBaseline
 Call 'POST' '/api/auth/register' @{ fullName = 'Admin-Test Landlord A'; email = $laEmail; phone = (New-Phone); password = $pw; roleId = 1 } | Out-Null
+
+  $v = Confirm-VerifiedAccount -Email $laEmail -Baseline $baseline
+if ($v.Status -ne 204) { throw "the verification of $laEmail failed ($($v.Status))" }
 $la = (Call 'POST' '/api/auth/login' @{ email = $laEmail; password = $pw } | ForEach-Object { ($_.Body | ConvertFrom-Json).token })
 
 $invEmail = "s4adm-inv-$stamp@example.test"
+$baseline = New-OutboxBaseline
 $r = Call 'POST' '/api/auth/register' @{ fullName = 'Admin-Test Investor'; email = $invEmail; phone = (New-Phone); password = $pw; roleId = 2; companyName = 'Solar Co'; companyRegistrationNumber = 'REG-ADM-001' }
+
+  $v = Confirm-VerifiedAccount -Email $invEmail -Baseline $baseline
+if ($v.Status -ne 204) { throw "the verification of $invEmail failed ($($v.Status))" }
 Check 'A-01' 'register investor (unapproved)' 200 $r.Status
 $invId = ($r.Body | ConvertFrom-Json).id
 $inv = (Call 'POST' '/api/auth/login' @{ email = $invEmail; password = $pw } | ForEach-Object { ($_.Body | ConvertFrom-Json).token })

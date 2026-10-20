@@ -1,0 +1,242 @@
+#requires -Version 5.1
+# The harness-owned API instance for the F1 tests.
+#
+# The suites never talk to an instance they did not start. The harness starts its own
+# process on a DEDICATED port, sets the explicit disposable connection string, and proves the
+# identity of what it launched: the PID it started is the one that owns the port, and the
+# effective configuration is the disposable one. A port that is already occupied is a FAILURE:
+# the harness never connects to a process it did not start.
+#
+# The identity is written to a small file so that a suite can verify it BEFORE its first
+# write. The suites therefore never need a probe registration to protect themselves - the
+# probe is optional additional evidence, never the primary protection.
+#
+# Usage:
+#   . (Join-Path $PSScriptRoot 'test_harness.ps1')
+#   $h = Start-TestApi                       # starts and proves the instance
+#   ...                                      # the suites run against $h.BaseUrl
+#   Stop-TestApi -Harness $h                 # stops only the process it started
+#
+# The harness writes only inside its own per-run outbox directory and its own identity file.
+
+$script:TestApiIdentityFile = Join-Path ([IO.Path]::GetTempPath()) 'nibras-f1-api-identity.json'
+$script:TestApiDefaultPort = 5199
+
+function Get-TestApiPort {
+  $port = if ($env:NIBRAS_TEST_API_PORT) { [int]$env:NIBRAS_TEST_API_PORT } else { $script:TestApiDefaultPort }
+  if ($port -lt 1024 -or $port -gt 65535) { throw "the API port must be between 1024 and 65535 (got $port)" }
+  return $port
+}
+
+function Get-TestApiIdentityFile { return $script:TestApiIdentityFile }
+
+function Assert-TestApiPortFree {
+  <#
+    .SYNOPSIS
+      Refuses a port that is already in use.
+    .DESCRIPTION
+      A busy port means that somebody else is listening: the harness would then be talking
+      to a process it does not own, so the run stops.
+  #>
+  param([int]$Port)
+
+  $listeners = @(Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue)
+  if ($listeners.Count -gt 0) {
+    $owners = ($listeners | ForEach-Object { $_.OwningProcess } | Sort-Object -Unique) -join ','
+    throw "the port $Port is already in use (process $owners). The harness never connects to a process it did not start: choose another port with NIBRAS_TEST_API_PORT."
+  }
+}
+
+function Get-TestApiOutboxPath {
+  <#
+    .SYNOPSIS
+      A fresh, private per-run outbox directory outside the repository.
+    .DESCRIPTION
+      The directory holds the live verification links, so it is created per run, outside any
+      Git working tree, and it is the only directory the harness ever removes.
+  #>
+  $root = Join-Path ([IO.Path]::GetTempPath()) ("nibras-f1-outbox-" + [guid]::NewGuid().ToString('N').Substring(0,12))
+  New-Item -ItemType Directory -Path $root -Force | Out-Null
+  return (Resolve-Path -LiteralPath $root).Path
+}
+
+function Start-TestApi {
+  <#
+    .SYNOPSIS
+      Starts the API instance the suites use, and proves that it is the right one.
+    .DESCRIPTION
+      The instance is started by this harness, on a dedicated port, with the explicit
+      disposable connection string. After the start the harness verifies that the process it
+      started is the one that owns the port, and it records the identity so that a suite can
+      verify it before its first write.
+  #>
+  param(
+    [int]$Port = 0,
+    [int]$AuthPerMinute = 1000
+  )
+
+  . (Join-Path $PSScriptRoot 'test_target.ps1')
+  $target = Get-TestTarget
+  $port = if ($Port -gt 0) { $Port } else { Get-TestApiPort }
+  Assert-TestApiPortFree -Port $port
+
+  $outbox = Get-TestApiOutboxPath
+  $env:NIBRAS_EMAIL_OUTBOX = $outbox
+
+  # The effective configuration of the instance: the disposable database, the per-run outbox,
+  # the raised rate limits, and the disposable seed credentials when they are provided.
+  # DOTNET_ENVIRONMENT is set as well: it takes precedence over ASPNETCORE_ENVIRONMENT, so
+  # leaving it to the caller's shell would change how the instance starts.
+  $env:DOTNET_ENVIRONMENT = 'Development'
+  $env:ASPNETCORE_ENVIRONMENT = 'Development'
+  $env:ASPNETCORE_URLS = "http://127.0.0.1:$port"
+  $env:ConnectionStrings__DefaultConnection = $target.ConnectionString
+  # The application's own guard stays at its strictest: an empty list approves nothing.
+  $env:Database__ApprovedProductionLikeTargets = ''
+  $env:Email__DeliveryMode = 'FileOutbox'
+  $env:Email__OutboxPath = $outbox
+  $env:Email__FrontendBaseUrl = "http://127.0.0.1:$port"
+  $env:RateLimit__AuthPerMinute = if ($env:NIBRAS_TEST_AUTH_PER_MINUTE) { $env:NIBRAS_TEST_AUTH_PER_MINUTE } else { [string]$AuthPerMinute }
+  if (-not $env:RateLimit__ActivationPerMinute) { $env:RateLimit__ActivationPerMinute = '1000' }
+  if (-not $env:RateLimit__VerificationPerMinute) { $env:RateLimit__VerificationPerMinute = '1000' }
+  if (-not $env:RateLimit__VerificationResendPerMinute) { $env:RateLimit__VerificationResendPerMinute = '1000' }
+  Remove-Item Env:Seed__DemoData -ErrorAction SilentlyContinue
+  if ($env:NIBRAS_TEST_SUPERADMIN_EMAIL) { $env:Seed__SuperAdminEmail = $env:NIBRAS_TEST_SUPERADMIN_EMAIL }
+  if ($env:NIBRAS_TEST_SUPERADMIN_PASSWORD) { $env:Seed__SuperAdminPassword = $env:NIBRAS_TEST_SUPERADMIN_PASSWORD }
+
+  $repoRoot = $PSScriptRoot
+  while ($repoRoot -and -not (Test-Path (Join-Path $repoRoot 'NibrasWeb.csproj'))) { $repoRoot = Split-Path $repoRoot -Parent }
+  if (-not $repoRoot) { throw 'NibrasWeb.csproj not found above the script directory' }
+  $project = Join-Path $repoRoot 'NibrasWeb.csproj'
+
+  # A FRESH build from the current (approved) commit. An existing DLL is never trusted just
+  # because it is there: it could be stale, or built from another commit, and it is the binary
+  # that would talk to the database.
+  Write-Output "  building the application (Debug) from $project"
+  $build = & dotnet build $project --configuration Debug --nologo 2>&1
+  if ($LASTEXITCODE -ne 0) {
+    throw "the application could not be built, so the harness refuses to start an instance:`n$build"
+  }
+
+  $dll = Join-Path $repoRoot 'bin\Debug\net10.0\NibrasWeb.dll'
+  if (-not (Test-Path -LiteralPath $dll)) {
+    throw "the application build '$dll' is missing after the build."
+  }
+
+  $out = Join-Path ([IO.Path]::GetTempPath()) "nibras-f1-api-$port.out.log"
+  $err = Join-Path ([IO.Path]::GetTempPath()) "nibras-f1-api-$port.err.log"
+  $process = Start-Process -FilePath 'dotnet' -ArgumentList $dll -WorkingDirectory $repoRoot -PassThru -NoNewWindow `
+    -RedirectStandardOutput $out -RedirectStandardError $err
+
+  # The instance is stopped when the shell ends, even when the start failed half way: the
+  # harness only ever stops the process it started. The handler is registered immediately,
+  # before any later step that could fail.
+  $startedPid = $process.Id
+  $identityFile = $script:TestApiIdentityFile
+  Register-EngineEvent -SourceIdentifier PowerShell.Exiting -Action {
+    Stop-Process -Id $startedPid -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $identityFile -Force -ErrorAction SilentlyContinue
+  } | Out-Null
+
+  $deadline = (Get-Date).AddSeconds(60)
+  $ready = $false
+  while ((Get-Date) -lt $deadline) {
+    Start-Sleep -Milliseconds 500
+    if ($process.HasExited) {
+      throw "the API process exited immediately (code $($process.ExitCode)); see '$out' and '$err'."
+    }
+    try {
+      $response = Invoke-WebRequest -Uri "http://127.0.0.1:$port/api/lands" -UseBasicParsing -TimeoutSec 5 -ErrorAction Stop
+      $ready = $true
+      break
+    } catch {
+      if ($_.Exception.Response -and [int]$_.Exception.Response.StatusCode -lt 500) { $ready = $true; break }
+    }
+  }
+  if (-not $ready) {
+    Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+    throw "the API did not answer on 127.0.0.1:$port within the start period; see '$out' and '$err'."
+  }
+
+  # The identity of what was launched: the process the harness started must be the one that
+  # owns the port. A foreign listener would fail this check.
+  $listeners = @(Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue)
+  $owner = @($listeners | ForEach-Object { $_.OwningProcess } | Sort-Object -Unique)
+  if ($owner.Count -ne 1 -or $owner[0] -ne $process.Id) {
+    Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+    throw ("the port {0} is owned by {1} and not by the process {2} the harness started; the run stops." -f $port, ($owner -join ','), $process.Id)
+  }
+
+  $identity = [pscustomobject]@{
+    Pid       = $process.Id
+    Port      = $port
+    BaseUrl   = "http://127.0.0.1:$port"
+    Database  = $target.Database
+    Server    = $target.Server
+    Outbox    = $outbox
+    StartedAt = (Get-Date).ToUniversalTime().ToString('o')
+  }
+  $identity | ConvertTo-Json | Set-Content -LiteralPath $script:TestApiIdentityFile -Encoding UTF8
+
+  return $identity
+}
+
+function Get-TestApiIdentity {
+  <#
+    .SYNOPSIS
+      The identity of the harness-owned instance, read from the identity file.
+  #>
+  if (-not (Test-Path -LiteralPath $script:TestApiIdentityFile)) {
+    throw "no API identity file ('$script:TestApiIdentityFile'): the harness-owned instance was not started. The suites refuse to talk to an instance they do not own."
+  }
+  $raw = Get-Content -LiteralPath $script:TestApiIdentityFile -Raw
+  try { return ($raw | ConvertFrom-Json) } catch { throw "the API identity file is unreadable: $raw" }
+}
+
+function Assert-TestApiOwned {
+  <#
+    .SYNOPSIS
+      Proves that the harness-owned instance is still the one that owns the dedicated port.
+    .DESCRIPTION
+      This is the pre-write safety gate: it needs no write of its own. A suite calls it
+      BEFORE its first mutation, so a foreign or restarted instance is refused before
+      anything is written.
+  #>
+  param([object]$Identity)
+
+  if (-not $Identity) { $Identity = Get-TestApiIdentity }
+
+  $process = Get-Process -Id $Identity.Pid -ErrorAction SilentlyContinue
+  if (-not $process) {
+    throw "the harness-owned API process $($Identity.Pid) is gone: the instance is not the one the harness started, so the run stops."
+  }
+  $listeners = @(Get-NetTCPConnection -LocalPort ([int]$Identity.Port) -State Listen -ErrorAction SilentlyContinue)
+  $owner = @($listeners | ForEach-Object { $_.OwningProcess } | Sort-Object -Unique)
+  if ($owner.Count -ne 1 -or $owner[0] -ne $Identity.Pid) {
+    throw ("the port {0} is owned by {1} and not by the harness process {2}: something else is listening, so the run stops." -f $Identity.Port, ($owner -join ','), $Identity.Pid)
+  }
+  return $Identity
+}
+
+function Stop-TestApi {
+  <#
+    .SYNOPSIS
+      Stops the instance the harness started, and removes only what it created.
+    .DESCRIPTION
+      Only the recorded PID is stopped, and only the per-run outbox directory is removed - and
+      only when it still holds nothing but the mail files of this run.
+  #>
+  param([object]$Identity)
+
+  if (-not $Identity) { $Identity = Get-TestApiIdentity }
+  Stop-Process -Id $Identity.Pid -Force -ErrorAction SilentlyContinue
+
+  if ($Identity.Outbox -and (Test-Path -LiteralPath $Identity.Outbox)) {
+    $foreign = @(Get-ChildItem -LiteralPath $Identity.Outbox -File -ErrorAction SilentlyContinue |
+                    Where-Object { $_.Name -notlike 'mail-*.json' })
+    if ($foreign.Count -eq 0) {
+      Remove-Item -LiteralPath $Identity.Outbox -Recurse -Force -ErrorAction SilentlyContinue
+    }
+  }
+  Remove-Item -LiteralPath $script:TestApiIdentityFile -Force -ErrorAction SilentlyContinue
+}

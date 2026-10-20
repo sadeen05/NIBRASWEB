@@ -1,14 +1,25 @@
 # Step 6 - Contracts MVP acceptance suite (never prints credentials or tokens).
 # Starts the app once with RateLimit__AuthPerMinute=1000, then drives the contract lifecycle
-# through the public API and asserts database state. Target database: NEBRASDB_Step1 only.
+# through the public API and asserts database state. Target database: the disposable one, resolved from the connection string.
+# BLOCKED (F1 isolation): this suite hands a session JWT to a PowerShell job, and Windows
+# PowerShell 5.1 serialises the job state - the argument included - into a temporary file.
+# The suite stays blocked until the token is handed to the child process through the
+# environment (which is inherited, not serialised) instead of through the argument list.
+# See docs/tests/DISPOSABLE_DB_PREFLIGHT.md, section 11.
+throw 'BLOCKED: the session JWT is still passed to a PowerShell job; the safe concurrency handling is not implemented yet.'
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'verification_helpers.ps1')
+# The email verification helpers: the token is read from the development outbox and
+# redeemed through the real endpoints - no bypass, no direct state update.
 Add-Type -AssemblyName System.Net.Http
 
-$base = 'http://localhost:5181'
 $pw = if ($env:NIBRAS_TEST_PASSWORD) { $env:NIBRAS_TEST_PASSWORD } else { 'T5t!N1' + [guid]::NewGuid().ToString('N').Substring(0,10) } # runtime-generated credential, never a literal
 $stamp = (Get-Date).ToString('HHmmss') + (Get-Random -Minimum 100 -Maximum 999)
-$sqlServer = if ($env:NIBRAS_SQL_SERVER) { $env:NIBRAS_SQL_SERVER } else { "$env:COMPUTERNAME\SQLEXPRESS" }
-$db = 'NEBRASDB_Step1'
+. (Join-Path $PSScriptRoot 'test_target.ps1')
+# The target is resolved from the effective connection string and is fail-closed:
+# only the disposable database is accepted, and a mismatch stops the run.
+$sqlServer = (Get-TestTarget).Server
+$db = (Get-TestTarget).Database
 $rows = New-Object System.Collections.ArrayList
 
 function New-Phone { '9' + ('{0:D9}' -f (Get-Random -Minimum 100000000 -Maximum 999999999)) }
@@ -38,8 +49,12 @@ function Login([string]$Email, [string]$Pass) {
 function Reg([string]$FullName, [string]$Email, [int]$RoleId) {
   $body = @{ fullName = $FullName; email = $Email; phone = (New-Phone); password = $pw; roleId = $RoleId }
   if ($RoleId -eq 2) { $body.companyName = 'S6 Co'; $body.companyRegistrationNumber = "S6-REG-$stamp" }
+  $baseline = New-OutboxBaseline
   $r = Call 'POST' '/api/auth/register' $body
   if ($r.Status -ne 200) { throw "register failed ($($r.Status))" }
+  # The account can only sign in after its address was confirmed.
+  $v = Confirm-VerifiedAccount -Email $Email -Baseline $baseline
+  if ($v.Status -ne 204) { throw "the verification of $Email failed ($($v.Status))" }
   return [int](($r.Body | ConvertFrom-Json).id)
 }
 function Verify-Land([int]$landId, [string]$laTok, [string]$adminTok) {
@@ -83,25 +98,30 @@ function Create-Land([string]$ln, [string]$parcel, [int]$gid, [string]$laTok, [s
 Write-Output "== S6 setup ($stamp) - credentials never printed =="
 $target = Sql "SELECT DB_NAME();"
 if ($target -ne $db) { Write-Output "BLOCKED: expected $db but connected to '$target'"; exit 2 }
-Check 'S6-00' 'database target is NEBRASDB_Step1' $db $target
+Check 'S6-00' 'database target is the configured disposable database' $db $target
 
 # --- start the app once for this run ---
 . (Join-Path $PSScriptRoot 's4_app.ps1')
-$app = Start-S4App -Port 5181 -AuthPerMinute 1000
+$app = Start-S4App  -AuthPerMinute 1000
+# The base URL comes from the harness-owned instance, and the gate proves that
+# the instance is the one the harness started - before anything is written.
+$base = Initialize-TestApi
+# The instance that was just started is proved to write into the disposable database.
+Assert-TestInstanceIdentity | Out-Null
 
 $pass = 0; $fail = 0
 try {
-  # --- seed SuperAdmin credentials: read at run time via `dotnet user-secrets list`, never printed ---
+# --- seed SuperAdmin credentials: dedicated disposable-environment variables, never printed ---
   $repoRoot = $PSScriptRoot
   while ($repoRoot -and -not (Test-Path (Join-Path $repoRoot 'NibrasWeb.csproj'))) { $repoRoot = Split-Path $repoRoot -Parent }
   if (-not $repoRoot) { Write-Output 'BLOCKED: NibrasWeb.csproj not found above the script directory'; exit 2 }
   $sec = @{}
-  foreach ($line in @(& dotnet user-secrets list --project (Join-Path $repoRoot 'NibrasWeb.csproj') 2>$null)) {
-    if ($line -match '^\s*([^=]+?)\s*=\s*(.*)$') { $sec[$Matches[1].Trim()] = $Matches[2] }
-  }
-  $adminEmail = $sec['Seed:SuperAdminEmail']; $adminPass = $sec['Seed:SuperAdminPassword']
-  $sec = $null
-  if (-not $adminEmail -or -not $adminPass) { Write-Output 'BLOCKED: Seed:SuperAdmin* not configured in user-secrets'; exit 2 }
+# The SuperAdmin credentials come from the dedicated disposable-environment variables.
+# The user secrets are never enumerated: the suite reads exactly the two values it needs,
+# and it never prints them.
+$adminEmail = $env:NIBRAS_TEST_SUPERADMIN_EMAIL
+$adminPass = $env:NIBRAS_TEST_SUPERADMIN_PASSWORD
+if (-not $adminEmail -or -not $adminPass) { Write-Output 'BLOCKED: NIBRAS_TEST_SUPERADMIN_EMAIL / NIBRAS_TEST_SUPERADMIN_PASSWORD are not set'; exit 2 }
 
   $admin = Login $adminEmail $adminPass
   Check 'S6-01' 'seeded SuperAdmin login' 200 200

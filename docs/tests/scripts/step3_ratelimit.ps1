@@ -11,7 +11,13 @@
 # requests below use a non-existent account, so failures are expected 401s and
 # no user data is created or mutated.
 $ErrorActionPreference = 'Stop'
-$base = 'http://localhost:5181'
+. (Join-Path $PSScriptRoot 'verification_helpers.ps1')
+# The suite owns its instance: the harness starts it on the dedicated port, with the
+# explicit disposable connection string, and proves that it owns the port. The small
+# limit is set before the start, so the instance really runs with it.
+$env:NIBRAS_TEST_AUTH_PER_MINUTE = '5'
+$harness = Start-TestApiInstance
+$base = Initialize-TestApi
 $pw = if ($env:NIBRAS_TEST_PASSWORD) { $env:NIBRAS_TEST_PASSWORD } else { 'T5t!N1' + [guid]::NewGuid().ToString('N').Substring(0,10) } # runtime-generated credential, never a literal
 $stamp = (Get-Date).ToString('HHmmss') + (Get-Random -Minimum 100 -Maximum 999)
 $limit = 5   # must match the RateLimit__AuthPerMinute the app was started with

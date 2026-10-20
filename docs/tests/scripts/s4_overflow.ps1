@@ -1,11 +1,19 @@
 $ErrorActionPreference = 'Stop'
-$sqlServer = if ($env:NIBRAS_SQL_SERVER) { $env:NIBRAS_SQL_SERVER } else { "$env:COMPUTERNAME\SQLEXPRESS" }
-$dbName = 'NEBRASDB_Step1'
+. (Join-Path $PSScriptRoot 'test_target.ps1')
+. (Join-Path $PSScriptRoot 'verification_helpers.ps1')
+# The target is resolved from the effective connection string and is fail-closed:
+# only the disposable database is accepted, and a mismatch stops the run.
+$sqlServer = (Get-TestTarget).Server
+$dbName = (Get-TestTarget).Database
 . (Join-Path $PSScriptRoot 's4_app.ps1')
 $app = $null
 try {
-  $app = Start-S4App -Port 5181
-  $base = 'http://localhost:5181'
+  $app = Start-S4App
+  # The base URL comes from the harness-owned instance, and the gate proves that
+  # the instance is the one the harness started - before anything is written.
+  $base = Initialize-TestApi
+  # The instance that was just started is proved to write into the disposable database.
+  Assert-TestInstanceIdentity | Out-Null
   function Probe([string]$Method,[string]$Path,$Body=$null,[string]$Token=$null){
     $req = @{ Uri=($base+$Path); Method=$Method; UseBasicParsing=$true; ErrorAction='Stop'; Headers=@{} }
     if ($Token) { $req.Headers['Authorization']='Bearer '+$Token }
