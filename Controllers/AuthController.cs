@@ -35,7 +35,14 @@ public sealed class AuthController : ControllerBase
     {
         try
         {
-            return Ok(await _authService.RegisterAsync(request, HttpContext.RequestAborted));
+            var registered = await _authService.RegisterAsync(request, HttpContext.RequestAborted);
+
+            // 201 Created, per the documented contract. There is no client-accessible
+            // retrieval action for a freshly registered account: GET /api/auth/me needs the
+            // authentication that registration does not establish, and GET /api/users/{id}
+            // is restricted to administrators. A Location header would therefore point at a
+            // resource the caller cannot read, so the status alone reports the creation.
+            return StatusCode(StatusCodes.Status201Created, registered);
         }
         catch (DuplicateRegistrationException)
         {
