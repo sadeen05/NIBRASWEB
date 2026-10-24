@@ -19,6 +19,7 @@ namespace NibrasWeb.Service
         Task<OfferDto> AdminRejectAsync(int offerId, string reason);
 
         Task<List<OfferNegotiationHistoryDto>> GetNegotiationHistoryAsync(int offerId);
+        Task<List<OfferVersionDto>> GetVersionsAsync(int offerId);
         Task MarkOfferClosedAsync(int offerId, int contractId, int performedByUserId);
     }
 }

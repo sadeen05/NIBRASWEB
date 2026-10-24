@@ -62,4 +62,52 @@ public class ContractsController : ControllerBase
     {
         return Ok(await _contractService.GetReviewsAsync(id));
     }
+
+    [HttpGet("{id}/versions")]
+    public async Task<ActionResult<List<ContractVersionDto>>> GetVersions(int id)
+    {
+        return Ok(await _contractService.GetVersionsAsync(id));
+    }
+
+    [HttpGet("{id}/revisions")]
+    public async Task<ActionResult<List<ContractRevisionDto>>> GetRevisions(int id)
+    {
+        return Ok(await _contractService.GetRevisionsAsync(id));
+    }
+
+    [HttpPost("{id}/revisions")]
+    public async Task<ActionResult<ContractRevisionDto>> RequestRevision(
+        int id,
+        CreateContractRevisionRequest request)
+    {
+        var revision = await _contractService.RequestRevisionAsync(id, request);
+        return CreatedAtAction(nameof(GetRevisions), new { id }, revision);
+    }
+
+    [HttpPost("{id}/revisions/{revisionId}/consent")]
+    public async Task<ActionResult<ContractRevisionDto>> ConsentToRevision(
+        int id,
+        int revisionId,
+        ContractRevisionConsentRequest request)
+    {
+        return Ok(await _contractService.ConsentToRevisionAsync(id, revisionId, request));
+    }
+
+    [HttpPost("{id}/revisions/{revisionId}/admin-decision")]
+    public async Task<ActionResult<ContractRevisionDto>> AdminDecideRevision(
+        int id,
+        int revisionId,
+        ContractRevisionAdminDecisionRequest request)
+    {
+        return Ok(await _contractService.AdminReviewRevisionAsync(id, revisionId, request));
+    }
+
+    [HttpPost("{id}/revisions/{revisionId}/superadmin-decision")]
+    public async Task<ActionResult<ContractRevisionDto>> SuperAdminDecideRevision(
+        int id,
+        int revisionId,
+        ContractRevisionSuperAdminDecisionRequest request)
+    {
+        return Ok(await _contractService.SuperAdminDecideRevisionAsync(id, revisionId, request));
+    }
 }

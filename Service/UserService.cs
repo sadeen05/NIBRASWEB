@@ -58,8 +58,28 @@ public class UserService : IUserService
             .Take(pageSize)
             .ToListAsync();
 
+        // The list shows the latest approver of each investor. The actors are loaded in one
+        // query instead of one query per row.
+        var actorIds = users
+            .Where(u => u.ApprovedById.HasValue)
+            .Select(u => u.ApprovedById!.Value)
+            .Distinct()
+            .ToList();
+        var actors = actorIds.Count == 0
+            ? new Dictionary<int, User>()
+            : await _context.Users
+                .AsNoTracking()
+                .Include(u => u.Role)
+                .Where(u => actorIds.Contains(u.Id))
+                .ToDictionaryAsync(u => u.Id);
+
+        User? ApprovedByFor(User user) =>
+            user.ApprovedById is int actorId && actors.TryGetValue(actorId, out var actor)
+                ? actor
+                : null;
+
         return new UserListResponse(
-            users.Select(ToDto).ToList(),
+            users.Select(user => ToDto(user, ApprovedByFor(user))).ToList(),
             pageNumber,
             pageSize,
             totalCount,
@@ -77,7 +97,59 @@ public class UserService : IUserService
             _logger.LogWarning("User not found");
             return null;
         }
-        return ToDto(user);
+
+        var approvedBy = await LoadApproverAsync(user.ApprovedById);
+        return ToDto(user, approvedBy);
+    }
+
+    public async Task<UserApprovalStatusDto?> GetApprovalStatusAsync(int id)
+    {
+        var user = await _context.Users
+            .AsNoTracking()
+            .Include(u => u.Role)
+            .SingleOrDefaultAsync(u => u.Id == id && !u.IsDeleted);
+        if (user == null)
+        {
+            return null;
+        }
+
+        var approvedBy = await LoadApproverAsync(user.ApprovedById);
+        var history = await _context.UserSecurityEvents
+            .AsNoTracking()
+            .Where(e => e.UserId == id && (e.EventType == UserSecurityEventTypes.AccountApproved || e.EventType == UserSecurityEventTypes.AccountApprovalRejected))
+            .Include(e => e.Actor)
+                .ThenInclude(a => a!.Role)
+            .OrderByDescending(e => e.CreatedAt)
+            .ThenByDescending(e => e.Id)
+            .Select(e => new UserApprovalHistoryEntryDto(
+                e.Id,
+                e.ActorId,
+                e.ActorNameSnapshot ?? (e.Actor != null ? e.Actor.FullName : null),
+                e.ActorRoleSnapshot ?? (e.Actor != null && e.Actor.Role != null ? e.Actor.Role.Name : null),
+                e.CreatedAt,
+                e.Details, e.EventType,
+                e.ActorNameSnapshot != null && e.ActorRoleSnapshot != null))
+            .ToListAsync();
+
+        var isInvestor = user.Role.Name == RoleNames.Investor;
+        var companyDetailsPresent =
+            !string.IsNullOrWhiteSpace(user.CompanyName) &&
+            !string.IsNullOrWhiteSpace(user.CompanyRegistrationNumber);
+
+        return new UserApprovalStatusDto(
+            user.Id,
+            user.Role.Name,
+            isInvestor,
+            user.EmailVerified,
+            companyDetailsPresent,
+            user.IsApproved,
+            !user.IsApproved && isInvestor && user.EmailVerified is not false && companyDetailsPresent,
+            user.ApprovedById,
+            user.ApprovedByNameSnapshot ?? approvedBy?.FullName,
+            user.ApprovedByRoleSnapshot ?? approvedBy?.Role?.Name,
+            user.ApprovedAt,
+            history,
+            user.ApprovedByNameSnapshot != null && user.ApprovedByRoleSnapshot != null);
     }
 
     public async Task<UserCreationResponse> CreateAsync(CreateUserRequest request, CancellationToken cancellationToken = default)
@@ -157,7 +229,19 @@ public class UserService : IUserService
             ActorId = _currentUser.Id,
             CreatedAt = DateTime.UtcNow,
         });
-        await _context.SaveChangesAsync();
+        try
+        {
+            await _context.SaveChangesAsync();
+        }
+        catch (DbUpdateException ex) when (DatabaseErrors.IsUniqueViolation(ex))
+        {
+            // Two creations of the same address or phone number at the same moment: the unique
+            // index refused the second one. The answer is the same conflict the pre-checks
+            // above give, and the failed save leaves neither an account nor an audit event
+            // behind. The message repeats neither the address nor the phone number.
+            _context.ChangeTracker.Clear();
+            throw new DuplicateRegistrationException();
+        }
         await _context.Entry(user).Reference(u => u.Role).LoadAsync();
 
         var dto = ToDto(user);
@@ -261,29 +345,60 @@ public class UserService : IUserService
         return BCrypt.Net.BCrypt.HashPassword(Convert.ToBase64String(secret), workFactor: 12);
     }
 
-    public async Task<bool> ApproveAsync(int id, int approvedById)
+    public Task<bool> ApproveAsync(int id, int approvedById)
     {
-        var user = await _context.Users
-            .Include(u => u.Role)
+        if (_currentUser.Id != approvedById)
+            throw new ForbiddenException("The approval actor must be the authenticated administrator.");
+        return DecideApprovalAsync(id, true, null);
+    }
+
+    public Task<bool> RejectApprovalAsync(int id, RejectInvestorApprovalRequest request) =>
+        DecideApprovalAsync(id, false, request.Reason);
+
+    private async Task<bool> DecideApprovalAsync(int id, bool approved, string? reason)
+    {
+        if (_currentUser.Id is not int actorId ||
+            _currentUser.Role is not (RoleNames.Admin or RoleNames.SuperAdmin))
+            throw new ForbiddenException("Only administrators may decide investor approval.");
+        if (!approved && (string.IsNullOrWhiteSpace(reason) || reason.Length > 500 ||
+            reason.Any(c => char.IsControl(c) && c is not ('\t' or '\n'))))
+            throw new ValidationFailedException("A rejection reason of at most 500 characters is required.");
+        await using var tx = await _context.Database.BeginTransactionAsync();
+        if (!await _emailVerification.LockAccountAsync(id)) return false;
+        var user = await _context.Users.Include(u => u.Role)
             .SingleOrDefaultAsync(u => u.Id == id && !u.IsDeleted);
-        if (user == null)
-        {
-            return false;
-        }
-
+        if (user is null) return false;
+        await _context.Entry(user).ReloadAsync();
+        await _context.Entry(user).Reference(u => u.Role).Query().LoadAsync();
+        await _context.Entry(user.Role).ReloadAsync();
+        if (user.IsDeleted) return false;
         EnsureCallerCanManage(user);
-
-        if (user.Role.Name != RoleNames.Investor ||
-            string.IsNullOrWhiteSpace(user.CompanyName) ||
-            string.IsNullOrWhiteSpace(user.CompanyRegistrationNumber))
-        {
+        var actor = await _context.Users.FromSqlInterpolated($"SELECT * FROM [USERS] WITH (UPDLOCK, HOLDLOCK) WHERE [ID] = {actorId}").AsNoTracking().Include(u => u.Role)
+            .SingleOrDefaultAsync(u => !u.IsDeleted);
+        if (actor?.Role.Name is not (RoleNames.Admin or RoleNames.SuperAdmin) ||
+            actor.Role.Name != _currentUser.Role)
+            throw new ForbiddenException("The approval actor is no longer authorized.");
+        if (user.Role.Name != RoleNames.Investor)
+            throw new ValidationFailedException("Only Investor accounts have investor approval decisions.");
+        if (approved && (string.IsNullOrWhiteSpace(user.CompanyName) ||
+            string.IsNullOrWhiteSpace(user.CompanyRegistrationNumber)))
             throw new ValidationFailedException("Only an Investor with company details can be approved.");
+        if (approved && user.EmailVerified is false)
+            throw new BusinessRuleException("The email address of the investor must be verified before the account can be approved.");
+        var now = DateTime.UtcNow;
+        user.IsApproved = approved;
+        if (approved) {
+            user.ApprovedById=actorId; user.ApprovedAt=now;
+            user.ApprovedByNameSnapshot=actor.FullName; user.ApprovedByRoleSnapshot=actor.Role.Name;
         }
-
-        user.IsApproved = true;
-        user.ApprovedById = approvedById;
-        user.ApprovedAt = DateTime.UtcNow;
+        // A rejection changes current eligibility, and preserves the last approval and every event.
+        _context.UserSecurityEvents.Add(new UserSecurityEvent {
+            UserId=id, EventType=approved ? UserSecurityEventTypes.AccountApproved : UserSecurityEventTypes.AccountApprovalRejected,
+            ActorId=actorId, ActorNameSnapshot=actor.FullName, ActorRoleSnapshot=actor.Role.Name,
+            Details=approved ? "investor_approval" : reason!.Trim(), CreatedAt=now
+        });
         await _context.SaveChangesAsync();
+        await tx.CommitAsync();
         return true;
     }
 
@@ -298,6 +413,13 @@ public class UserService : IUserService
             return false;
         }
 
+        await using var transaction = await _context.Database.BeginTransactionAsync();
+        if (!await _emailVerification.LockAccountAsync(id)) { return false; }
+        await _context.Entry(user).ReloadAsync();
+        if (user.IsDeleted) { return false; }
+        // Query the persisted FK under the account lock without clearing a non-null navigation.
+        await _context.Entry(user).Reference(u => u.Role).Query().LoadAsync();
+        await _context.Entry(user.Role).ReloadAsync();
         EnsureCallerCanManage(user);
 
         var emailChanged = !string.Equals(user.Email, request.Email, StringComparison.OrdinalIgnoreCase);
@@ -324,12 +446,28 @@ public class UserService : IUserService
             }
         }
 
-        await using var transaction = await _context.Database.BeginTransactionAsync();
+        // The phone number is unique across every row - active and soft-deleted - exactly like
+        // the address. The pre-check gives the controlled field-specific conflict normally; the
+        // unique index stays the authority for the race window, and the catch below classifies
+        // what it refused. The answer never identifies the other account.
+        var phoneChanged = !string.Equals(user.Phone, request.Phone, StringComparison.Ordinal);
+        if (phoneChanged)
+        {
+            var phoneInUse = await _context.Users
+                .IgnoreQueryFilters()
+                .AnyAsync(u => u.Id != id && u.Phone == request.Phone);
+            if (phoneInUse)
+            {
+                throw new BusinessRuleException("Phone already in use by another user.");
+            }
+        }
+
+
         try
         {
             // The account row is locked before the verification tokens are touched, the same
             // order the token service uses, so the two paths cannot deadlock against each other.
-            await _emailVerification.LockAccountAsync(id);
+
 
             user.FullName = request.FullName;
             user.Phone = request.Phone;
@@ -357,10 +495,23 @@ public class UserService : IUserService
         }
         catch (DbUpdateException ex) when (IsUniqueViolation(ex))
         {
-            // The unique index refused the address; the caller gets the same controlled conflict
-            // as the check above instead of a server error.
+            // The unique index refused the address or the phone number. The index stays the
+            // authority: after the rollback a fresh read decides which of the two unique
+            // indexes won, so the caller is told exactly which field to correct - without any
+            // information about the other account. A value that is free again by now (it raced
+            // differently, or the winner reclaimed it) keeps the previous neutral answer.
             await transaction.RollbackAsync();
-            throw new BusinessRuleException("Email already in use by another user.");
+            var phoneClaimed = await _context.Users
+                .IgnoreQueryFilters()
+                .AnyAsync(u => u.Id != id && u.Phone == request.Phone);
+            if (phoneClaimed)
+                throw new BusinessRuleException("Phone already in use by another user.");
+            var addressClaimed = await _context.Users
+                .IgnoreQueryFilters()
+                .AnyAsync(u => u.Id != id && (u.Email == request.Email || u.PendingEmail == request.Email));
+            if (addressClaimed)
+                throw new BusinessRuleException("Email already in use by another user.");
+            throw new BusinessRuleException("Email or phone already in use by another user.");
         }
 
         return true;
@@ -387,13 +538,6 @@ public class UserService : IUserService
         if (hasContracts)
             throw new BusinessRuleException("Cannot delete user who has contracts.");
 
-        var hasPendingCancellations = await _context.Contracts.AnyAsync(c =>
-            (c.LandlordId == id || c.InvestorId == id)
-            && c.CancellationRequestedById != null
-            && (c.CancellationEffectiveDate >= DateTime.UtcNow || c.DisputeFlagged));
-        if (hasPendingCancellations)
-            throw new BusinessRuleException("Cannot delete user with pending contract cancellations.");
-
         user.IsDeleted = true;
 
         _context.Users.Update(user);
@@ -401,7 +545,20 @@ public class UserService : IUserService
         return true;
     }
 
-    private static UserDto ToDto(User user) =>
+    private async Task<User?> LoadApproverAsync(int? approvedById)
+    {
+        if (approvedById is not int actorId)
+        {
+            return null;
+        }
+
+        return await _context.Users
+            .AsNoTracking()
+            .Include(u => u.Role)
+            .SingleOrDefaultAsync(u => u.Id == actorId);
+    }
+
+    private static UserDto ToDto(User user, User? approvedBy = null) =>
         new(
             user.Id,
             user.FullName,
@@ -411,7 +568,15 @@ public class UserService : IUserService
             user.CreatedAt,
             user.IsApproved,
             user.CompanyName,
-            user.CompanyRegistrationNumber);
+            user.CompanyRegistrationNumber,
+            user.EmailVerified,
+            user.EmailVerifiedAt,
+            user.PendingEmail,
+            user.ApprovedById,
+            user.ApprovedByNameSnapshot ?? approvedBy?.FullName,
+            user.ApprovedByRoleSnapshot ?? approvedBy?.Role?.Name,
+            user.ApprovedAt,
+            user.ApprovedByNameSnapshot != null && user.ApprovedByRoleSnapshot != null);
 
     private static string? ParseRole(string? role)
     {

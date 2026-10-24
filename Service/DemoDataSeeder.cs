@@ -71,6 +71,12 @@ public static class DemoDataSeeder
         var context = scope.ServiceProvider.GetRequiredService<NebrasdbContext>();
         var now = DateTime.UtcNow;
 
+        // Demo data must never be written to the clean official database (or the legacy
+        // production-like database). This refusal is independent of the caller.
+        DatabaseTargetGuard.RefuseSeedingOnProtectedDatabase(
+            context.Database.GetConnectionString(),
+            nameof(DemoDataSeeder));
+
         var roleIds = await context.Roles.AsNoTracking().ToDictionaryAsync(r => r.Name, r => r.Id);
         if (!roleIds.TryGetValue(RoleNames.Admin, out var adminRoleId) ||
             !roleIds.TryGetValue(RoleNames.Landlord, out var landlordRoleId) ||

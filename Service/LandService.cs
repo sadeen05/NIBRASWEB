@@ -1,6 +1,8 @@
 using System.Text.Json;
+using Microsoft.AspNetCore.Http;
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Hosting;
 using NIBRAS;
 using NIBRAS.API.DTOs;
 using NIBRAS.Models;
@@ -44,11 +46,19 @@ public class LandService : ILandService
         "The land no longer meets the criteria version it was approved against: ";
     private readonly NebrasdbContext _context;
     private readonly ICurrentUser _currentUser;
+    private readonly IDocumentStorage _documentStorage;
+    private readonly IHostEnvironment _environment;
 
-    public LandService(NebrasdbContext context, ICurrentUser currentUser)
+    public LandService(
+        NebrasdbContext context,
+        ICurrentUser currentUser,
+        IDocumentStorage documentStorage,
+        IHostEnvironment environment)
     {
         _context = context;
         _currentUser = currentUser;
+        _documentStorage = documentStorage;
+        _environment = environment;
     }
 
     public async Task<LandListResponse> GetAllAsync(int pageNumber, int pageSize, string? status)
@@ -87,14 +97,21 @@ public class LandService : ILandService
             .Take(pageSize)
             .ToListAsync();
 
-        return new LandListResponse(lands.Select(ToDto).ToList(), pageNumber, pageSize, totalCount, totalPages);
+        var ids=lands.Select(l => l.Id).ToList();
+        var registrations=await _context.LandStatusHistories.AsNoTracking()
+            .Where(h => ids.Contains(h.LandId) && h.Status==LandStatus.Draft && h.Reason=="Land created as Draft.")
+            .GroupBy(h => h.LandId).Select(g => new {LandId=g.Key,At=g.OrderBy(h => h.Id).Select(h => h.ChangedAt).FirstOrDefault()})
+            .ToDictionaryAsync(h => h.LandId,h => h.At);
+        var items=lands.Select(ToDto).ToList();
+        foreach(var item in items) item.RegisteredAt=registrations.GetValueOrDefault(item.Id);
+        return new LandListResponse(items, pageNumber, pageSize, totalCount, totalPages);
     }
 
     public async Task<LandDto> GetByIdAsync(int id)
     {
         var land = await LoadLandAsync(id);
         await EnsureCanViewAsync(land);
-        return ToDto(land);
+        return await ToDtoAsync(land);
     }
 
     public async Task<LandDto> CreateAsync(CreateLandRequest request)
@@ -144,15 +161,25 @@ public class LandService : ILandService
 
     public async Task UpdateAsync(int id, UpdateLandRequest request)
     {
+        // The land row is pinned before any state this edit acts on is read. Without it an owner
+        // edit and a submit/revise/reject or a document review/upload for the same land can
+        // interleave: the edit can commit after a submission reviewed the old data, and a
+        // concurrent review can approve evidence the edit is about to invalidate. The lock is the
+        // same LANDS UPDLOCK/HOLDLOCK the other land-scoped mutations take (land first), so they
+        // run one at a time and the existing lock order is preserved.
+        await using var transaction = await _context.Database.BeginTransactionAsync();
+        var locked = await LockLandAsync(id);
+        EnsureOwner(locked);
+
+        if (locked.Status is not (LandStatus.Draft or LandStatus.Rejected))
+            throw new BusinessRuleException("Only lands in Draft or Rejected status can be edited.");
+
+        // The no-tracking lock copy above guards the state. The write goes through a tracked
+        // entity loaded under the same lock, exactly as the other land mutations do.
         var land = await _context.Lands
             .Include(l => l.Contracts)
             .FirstOrDefaultAsync(l => l.Id == id && !l.IsDeleted)
             ?? throw new NotFoundException("Land not found.");
-
-        EnsureOwner(land);
-
-        if (land.Status is not (LandStatus.Draft or LandStatus.Rejected))
-            throw new BusinessRuleException("Only lands in Draft or Rejected status can be edited.");
 
         if (land.Contracts.Any(c => c.Status == ContractStatus.Active))
             throw new BusinessRuleException("Cannot edit a land that has an active contract.");
@@ -203,15 +230,24 @@ public class LandService : ILandService
             await InvalidateApprovedDocumentsAsync(id);
 
         await SaveLandChangesAsync();
+        await transaction.CommitAsync();
     }
 
     public async Task SubmitAsync(int id)
     {
-        var land = await LoadLandAsync(id);
-        EnsureOwner(land);
+        await using var transaction = await _context.Database.BeginTransactionAsync();
+        var locked = await LockLandAsync(id);
+        EnsureOwner(locked);
 
-        if (land.Status != LandStatus.Draft)
+        if (locked.Status != LandStatus.Draft)
             throw new BusinessRuleException("Only lands in Draft status can be submitted.");
+
+        // Tracked row for the write, read under the lock. The lock serializes this submission
+        // against a second submit/revise/reject and against a document upload or review, so the
+        // status check, the evidence check and the history append all see one consistent state.
+        var land = await _context.Lands
+            .FirstOrDefaultAsync(l => l.Id == id && !l.IsDeleted)
+            ?? throw new NotFoundException("Land not found.");
 
         if (string.IsNullOrWhiteSpace(land.Village) ||
             string.IsNullOrWhiteSpace(land.Basin) ||
@@ -236,17 +272,24 @@ public class LandService : ILandService
             : (LandStatus.PendingVerification, "Submitted for admin verification.");
 
         await ChangeStatusAsync(land, targetStatus, RequireUserId(), reason);
+        await transaction.CommitAsync();
     }
 
     public async Task ReviseAsync(int id)
     {
-        var land = await LoadLandAsync(id);
-        EnsureOwner(land);
+        await using var transaction = await _context.Database.BeginTransactionAsync();
+        var locked = await LockLandAsync(id);
+        EnsureOwner(locked);
 
-        if (land.Status != LandStatus.Rejected)
+        if (locked.Status != LandStatus.Rejected)
             throw new BusinessRuleException("Only rejected lands can be revised.");
 
+        var land = await _context.Lands
+            .FirstOrDefaultAsync(l => l.Id == id && !l.IsDeleted)
+            ?? throw new NotFoundException("Land not found.");
+
         await ChangeStatusAsync(land, LandStatus.Draft, RequireUserId(), "Revised by owner and returned to Draft.");
+        await transaction.CommitAsync();
     }
 
     public async Task VerifyAsync(int id, string? note = null)
@@ -353,14 +396,23 @@ public class LandService : ILandService
         if (string.IsNullOrWhiteSpace(reason))
             throw new ValidationFailedException("A rejection reason is required.");
 
-        var land = await LoadLandAsync(id);
+        // The same land lock VerifyAsync takes. A reject and a verify (or a second reject) for
+        // the same pending land therefore serialize: exactly one decision commits, and a stale
+        // caller gets the controlled conflict instead of appending a contradictory history row.
+        await using var transaction = await _context.Database.BeginTransactionAsync();
+        var locked = await LockLandAsync(id);
 
-        EnsureReviewAuthority(land);
+        EnsureReviewAuthority(locked);
 
-        if (land.Status is not (LandStatus.PendingVerification or LandStatus.PendingSuperAdminReview))
+        if (locked.Status is not (LandStatus.PendingVerification or LandStatus.PendingSuperAdminReview))
             throw new BusinessRuleException("Land is not pending verification.");
 
+        var land = await _context.Lands
+            .FirstOrDefaultAsync(l => l.Id == id && !l.IsDeleted)
+            ?? throw new NotFoundException("Land not found.");
+
         await ChangeStatusAsync(land, LandStatus.Rejected, RequireUserId(), reason);
+        await transaction.CommitAsync();
     }
 
     public async Task<LandEligibilityResponse> GetEligibilityAsync(int id)
@@ -368,7 +420,11 @@ public class LandService : ILandService
         var land = await LoadLandAsync(id);
         await EnsureCanViewAsync(land);
 
-        var criterion = await GetCurrentCriterionAsync();
+        // Approved land eligibility must describe its pinned evidence, not today's thresholds.
+        var criterion = land.VerifiedAgainstCriterionId is int pinnedId
+            ? await _context.LandCriteria.AsNoTracking().SingleOrDefaultAsync(c => c.Id == pinnedId)
+                ?? throw new BusinessRuleException(PinnedCriteriaReviewUnavailableMessage)
+            : await GetCurrentCriterionAsync();
         return new LandEligibilityResponse(land.Id, criterion?.Id, EvaluateEligibility(land, criterion));
     }
 
@@ -390,85 +446,190 @@ public class LandService : ILandService
             LandId = h.LandId,
             statusName = h.Status.ToString(),
             ChangeByName = h.ChangedBy.FullName,
+            ChangedById = h.ChangedById,
             Reason = h.Reason,
             ChangedAt = h.ChangedAt ?? DateTime.MinValue
         }).ToList();
     }
 
-    public async Task<LandDocumentDto> UploadDocumentAsync(int landId, UploadLandDocumentRequest request)
+    /// <summary>
+    /// Legacy metadata-only registration. It is kept only for the historical Development
+    /// regression suites; a deployed environment must use the multipart upload so that the
+    /// stored row always points at a real, validated file.
+    /// </summary>
+    public Task<LandDocumentDto> UploadDocumentAsync(int landId, UploadLandDocumentRequest request)
+    {
+        if (!_environment.IsDevelopment())
+        {
+            throw new ValidationFailedException(
+                "Metadata-only document registration is not available. Upload the document file.");
+        }
+
+        return UploadDocumentCoreAsync(
+            landId,
+            request.DocumentTypeId,
+            file: null,
+            legacyFilePath: request.FilePath,
+            allowMetadataOnly: true);
+    }
+
+    public Task<LandDocumentDto> UploadDocumentAsync(int landId, int documentTypeId, IFormFile file) =>
+        UploadDocumentCoreAsync(
+            landId,
+            documentTypeId,
+            file,
+            legacyFilePath: null,
+            allowMetadataOnly: false);
+
+    private async Task<LandDocumentDto> UploadDocumentCoreAsync(
+        int landId,
+        int documentTypeId,
+        IFormFile? file,
+        string? legacyFilePath,
+        bool allowMetadataOnly)
     {
         // Existence and ownership are checked first so a missing or foreign land is rejected
-        // (404/403) without contending on the row lock.
+        // (404/403) without contending on the row lock and without writing a file for it.
         var existing = await LoadLandAsync(landId);
         EnsureOwner(existing);
 
-        await using var transaction = await _context.Database.BeginTransactionAsync();
-
-        // Pin the land row before reading anything the guard below depends on. The entity read
-        // above predates the transaction and may already be stale: a concurrent document review
-        // (which takes the same lock) can have approved the last outstanding document, and
-        // approving a document is exactly what makes the evidence complete again. Reading the
-        // authoritative row and evidence under the lock is what stops this guard from passing on
-        // stale state and then inserting a version that supersedes valid evidence. The lock is the
-        // same one the version allocation below needs, and it covers only this land.
-        var land = await LockLandAsync(landId);
-        EnsureOwner(land);
-
-        // Evidence may only be added while the land is Draft or Rejected. Once the land is
-        // PendingVerification the submitted evidence is frozen for the admin review, and a
-        // Verified/UnderContract land is final: allowing an upload in those states would
-        // silently change what is being verified.
-        //
-        // The one exception is the owner's correction of an approved land whose required
-        // evidence is outstanding: a required document type whose latest version is not
-        // Approved because a SuperAdmin rejected it during the re-review, or because an
-        // approved change request invalidated its approval. Only a new version of one of those
-        // types may be added. It is added as Pending and never overwrites the rejected version,
-        // and on an approved land only a SuperAdmin can review it, so the owner can correct
-        // evidence but can never self-approve, supersede valid evidence, or bypass the
-        // SuperAdmin review.
-        if (land.Status is not (LandStatus.Draft or LandStatus.Rejected))
+        if (file is null && (!allowMetadataOnly || string.IsNullOrWhiteSpace(legacyFilePath)))
         {
-            var correctableTypeIds = land.Status is LandStatus.Verified or LandStatus.UnderContract
-                ? await _context.OutstandingRequiredDocumentTypeIdsAsync(landId)
-                : new List<int>();
-
-            if (correctableTypeIds.Count == 0)
-                throw new BusinessRuleException("Documents can only be uploaded while the land is Draft or Rejected.");
-
-            if (!correctableTypeIds.Contains(request.DocumentTypeId))
-                throw new BusinessRuleException(
-                    "On an approved land only the document types whose latest version is not approved can be corrected.");
+            throw new ValidationFailedException("The document file is required.");
         }
 
-        var documentType = await _context.DocumentTypes.FirstOrDefaultAsync(t => t.Id == request.DocumentTypeId)
-            ?? throw new ValidationFailedException("Document type does not exist.");
-
-        // The lock taken above also serializes concurrent version allocation for this land. A
-        // transaction alone is not enough: two uploads can both read the same MAX(VERSION) and
-        // then both try to insert it, so the next version is always read after the previous
-        // upload committed.
-        var previousMax = await _context.LandDocuments
-            .Where(d => d.LandId == landId && d.DocumentTypeId == documentType.Id)
-            .Select(d => (int?)d.Version)
-            .MaxAsync();
-
-        var document = new LandDocument
+        // The file is validated and written before the database transaction starts, so a large
+        // upload never holds the land lock while the bytes are copied. The finally block removes
+        // it again if the row cannot be committed.
+        StoredDocument? stored = null;
+        if (file is not null)
         {
-            LandId = landId,
-            DocumentTypeId = documentType.Id,
-            FilePath = request.FilePath,
-            Version = (previousMax ?? 0) + 1,
-            Status = DocumentStatuses.Pending,
-            UploadedAt = DateTime.UtcNow
-        };
+            stored = await _documentStorage.SaveAsync(file, landId);
+        }
 
-        _context.LandDocuments.Add(document);
-        await _context.SaveChangesAsync();
-        await transaction.CommitAsync();
+        var committed = false;
+        try
+        {
+            await using var transaction = await _context.Database.BeginTransactionAsync();
 
-        document.DocumentType = documentType;
-        return ToDocumentDto(document);
+            // Pin the land row before reading anything the guard below depends on. The entity
+            // read above predates the transaction and may already be stale: a concurrent
+            // document review (which takes the same lock) can have approved the last outstanding
+            // document, and approving a document is exactly what makes the evidence complete
+            // again. Reading the authoritative row and evidence under the lock is what stops
+            // this guard from passing on stale state and then inserting a version that
+            // supersedes valid evidence. The lock is the same one the version allocation below
+            // needs, and it covers only this land.
+            var land = await LockLandAsync(landId);
+            EnsureOwner(land);
+
+            // Evidence may only be added while the land is Draft or Rejected. Once the land is
+            // PendingVerification the submitted evidence is frozen for the admin review, and a
+            // Verified/UnderContract land is final: allowing an upload in those states would
+            // silently change what is being verified.
+            //
+            // The one exception is the owner's correction of an approved land whose required
+            // evidence is outstanding: a required document type whose latest version is not
+            // Approved because a SuperAdmin rejected it during the re-review, or because an
+            // approved change request invalidated its approval. Only a new version of one of
+            // those types may be added. It is added as Pending and never overwrites the rejected
+            // version, and on an approved land only a SuperAdmin can review it, so the owner can
+            // correct evidence but can never self-approve, supersede valid evidence, or bypass
+            // the SuperAdmin review.
+            if (land.Status is not (LandStatus.Draft or LandStatus.Rejected))
+            {
+                var correctableTypeIds = land.Status is LandStatus.Verified or LandStatus.UnderContract
+                    ? await _context.OutstandingRequiredDocumentTypeIdsAsync(landId)
+                    : new List<int>();
+
+                if (correctableTypeIds.Count == 0)
+                    throw new BusinessRuleException("Documents can only be uploaded while the land is Draft or Rejected.");
+
+                if (!correctableTypeIds.Contains(documentTypeId))
+                    throw new BusinessRuleException(
+                        "On an approved land only the document types whose latest version is not approved can be corrected.");
+            }
+
+            var documentType = await _context.DocumentTypes.FirstOrDefaultAsync(t => t.Id == documentTypeId)
+                ?? throw new ValidationFailedException("Document type does not exist.");
+
+            // The lock taken above also serializes concurrent version allocation for this land.
+            // A transaction alone is not enough: two uploads can both read the same MAX(VERSION)
+            // and then both try to insert it, so the next version is always read after the
+            // previous upload committed.
+            var previousMax = await _context.LandDocuments
+                .Where(d => d.LandId == landId && d.DocumentTypeId == documentType.Id)
+                .Select(d => (int?)d.Version)
+                .MaxAsync();
+
+            var document = new LandDocument
+            {
+                LandId = landId,
+                DocumentTypeId = documentType.Id,
+                FilePath = stored?.RelativePath ?? legacyFilePath!,
+                OriginalFileName = stored?.OriginalFileName,
+                ContentType = stored?.ContentType,
+                FileSizeBytes = stored?.SizeBytes,
+                Sha256 = stored?.Sha256,
+                Version = (previousMax ?? 0) + 1,
+                Status = DocumentStatuses.Pending,
+                UploadedAt = DateTime.UtcNow
+            };
+
+            _context.LandDocuments.Add(document);
+
+            try
+            {
+                await _context.SaveChangesAsync();
+            }
+            catch (DbUpdateException ex) when (DatabaseErrors.IsForeignKeyViolation(ex))
+            {
+                // The document type was deleted between the lookup and the insert. The
+                // transaction is rolled back by the scope, and the finally block removes the
+                // file that was already written.
+                throw new ValidationFailedException("The selected document type no longer exists.");
+            }
+
+            await transaction.CommitAsync();
+            committed = true;
+
+            document.DocumentType = documentType;
+            return ToDocumentDto(document);
+        }
+        finally
+        {
+            if (stored is not null && !committed)
+            {
+                await _documentStorage.DeleteAsync(stored.RelativePath);
+            }
+        }
+    }
+
+    public async Task<LandDocumentDownload> DownloadDocumentAsync(int landId, int documentId)
+    {
+        var land = await LoadLandAsync(landId);
+        if (!IsAdmin && land.LandlordId != RequireUserId())
+            throw new ForbiddenException("You are not allowed to view this land's documents.");
+
+        var document = await _context.LandDocuments
+            .AsNoTracking()
+            .Include(d => d.DocumentType)
+            .FirstOrDefaultAsync(d => d.Id == documentId && d.LandId == landId)
+            ?? throw new NotFoundException("Document not found.");
+
+        if (document.FileSizeBytes is null ||
+            string.IsNullOrWhiteSpace(document.OriginalFileName) ||
+            string.IsNullOrWhiteSpace(document.FilePath))
+        {
+            throw new NotFoundException("The document file is not available.");
+        }
+
+        var stream = _documentStorage.OpenRead(document.FilePath);
+        return new LandDocumentDownload(
+            stream,
+            document.OriginalFileName,
+            document.ContentType ?? "application/octet-stream",
+            document.FileSizeBytes.Value);
     }
 
     public async Task<List<LandDocumentDto>> GetDocumentsAsync(int landId)
@@ -510,6 +671,17 @@ public class LandService : ILandService
             .FirstOrDefaultAsync(d => d.Id == documentId && d.LandId == landId)
             ?? throw new NotFoundException("Document not found.");
 
+        // The document type row is pinned with the same UPDLOCK, HOLDLOCK the required→optional
+        // decision in DocumentTypeService.UpdateAsync takes on its row. This path holds the LANDS
+        // lock already, so the order (LANDS first, then its types) matches the existing convention
+        // and cannot invert against that update. The tracking read refreshes the Include-loaded
+        // navigation in place, so the requiredness this review acts on below is the value under
+        // the lock: an optional change and a re-review of this type serialize, and the guard on an
+        // approved land (evidence outstanding) is never evaluated on a stale flag.
+        await _context.DocumentTypes
+            .FromSqlInterpolated($"SELECT * FROM DOCUMENT_TYPES WITH (UPDLOCK, HOLDLOCK) WHERE ID = {document.DocumentTypeId}")
+            .FirstAsync();
+
         // Verified and UnderContract lands already have a frozen evidence/criterion basis
         // (VerifiedAgainstCriterionId and DataVerifiedByAdmin). The single exception is a land
         // whose required evidence is currently outstanding: an approved change request
@@ -526,8 +698,15 @@ public class LandService : ILandService
         {
             var isLatestVersion = !await _context.LandDocuments.AnyAsync(d =>
                 d.LandId == landId && d.DocumentTypeId == document.DocumentTypeId && d.Version > document.Version);
-            var evidenceOutstanding = await _context.HasOutstandingRequiredDocumentAsync(landId);
-            if (!isLatestVersion || !evidenceOutstanding)
+
+            // The re-review is of an outstanding required type itself, not merely of a land
+            // whose evidence is outstanding for some type. The required→optional decision
+            // (DocumentTypeService.UpdateAsync) serializes against this review on the
+            // DOCUMENT_TYPES row lock, so if it made this type optional first, the type is no
+            // longer in the outstanding set and this review cannot write a decision the
+            // derived evidence would ignore - either interleaving stays fail-closed.
+            var outstandingTypeIds = await _context.OutstandingRequiredDocumentTypeIdsAsync(landId);
+            if (!isLatestVersion || !outstandingTypeIds.Contains(document.DocumentTypeId))
                 throw new BusinessRuleException("Documents of a verified land cannot be reviewed again.");
 
             // The re-review belongs to the SuperAdmin, who owns the approved-land change
@@ -641,6 +820,8 @@ public class LandService : ILandService
         {
             LandId = land.Id,
             AssessedById = RequireUserId(),
+            AreaDonumSnapshot = land.AreaDonum,
+            CriterionId = land.VerifiedAgainstCriterionId ?? await _context.LandCriteria.OrderByDescending(c => c.Id).Select(c => (int?)c.Id).FirstOrDefaultAsync(),
             AssessedAt = DateTime.UtcNow,
             Note = request.Note,
             RegionId = land.RegionId,
@@ -672,6 +853,7 @@ public class LandService : ILandService
         var assessments = await _context.LandAssessments
             .AsNoTracking()
             .Include(a => a.AssessedBy)
+            .Include(a => a.Criterion)
             .Where(a => a.LandId == landId)
             .OrderBy(a => a.AssessedAt)
             .ThenBy(a => a.Id)
@@ -689,7 +871,10 @@ public class LandService : ILandService
             a.SlopePercentage,
             a.DistanceToGridKm,
             a.SolarIrradiance,
-            a.ElevationM)).ToList();
+            a.ElevationM, a.CriterionId, a.AreaDonumSnapshot,
+            a.Criterion == null ? null : new CriterionValuesDto(a.Criterion.Id,
+                a.Criterion.MinAreaDonum, a.Criterion.MaxSlopePct, a.Criterion.MaxGridDistanceKm,
+                a.Criterion.MinSolarIrradiance, a.Criterion.MinElevationM))).ToList();
     }
 
     /// <summary>
@@ -1464,7 +1649,11 @@ public class LandService : ILandService
     {
         await _context.Entry(land).Reference(l => l.Region).LoadAsync();
         await _context.Entry(land).Reference(l => l.Governorate).LoadAsync();
-        return ToDto(land);
+        var result=ToDto(land);
+        result.RegisteredAt=await _context.LandStatusHistories.AsNoTracking()
+            .Where(h => h.LandId==land.Id && h.Status==LandStatus.Draft && h.Reason=="Land created as Draft.")
+            .OrderBy(h => h.Id).Select(h => h.ChangedAt).FirstOrDefaultAsync();
+        return result;
     }
 
     private static LandDocumentDto ToDocumentDto(LandDocument document) => new(
@@ -1472,13 +1661,18 @@ public class LandService : ILandService
         document.LandId,
         document.DocumentTypeId,
         document.DocumentType.Name,
-        document.FilePath,
+        document.FileSizeBytes is null ? document.FilePath : null,
         document.Version,
         document.Status ?? "",
         document.UploadedAt,
         document.ReviewedById,
         document.ReviewedAt,
-        document.ReviewNote);
+        document.ReviewNote,
+        document.OriginalFileName,
+        document.ContentType,
+        document.FileSizeBytes,
+        document.Sha256,
+        document.FileSizeBytes is not null && !string.IsNullOrWhiteSpace(document.OriginalFileName));
 
     private static LandStatus? ParseStatus(string? status)
     {

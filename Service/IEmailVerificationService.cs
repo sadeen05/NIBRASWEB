@@ -67,6 +67,9 @@ public interface IEmailVerificationService
         string? reason = null,
         CancellationToken cancellationToken = default);
 
+    /// <summary>Retires only the exact interrupted delivery; never clears a newer request.</summary>
+    Task CancelDeliveryAsync(int userId, string plaintext, string purpose, CancellationToken cancellationToken = default);
+
     /// <summary>
     /// Locks the account row for the current transaction and reports whether the account
     /// exists. A caller that changes the account takes this lock <b>before</b> it touches the

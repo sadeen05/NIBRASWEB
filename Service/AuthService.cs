@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using Microsoft.EntityFrameworkCore;
@@ -216,7 +217,13 @@ public sealed class AuthService : IAuthService
         {
             new Claim(ClaimTypes.NameIdentifier, user.Id.ToString()),
             new Claim(ClaimTypes.Role, user.Role.Name),
-            new Claim(ClaimTypes.Email, user.Email)
+            new Claim(ClaimTypes.Email, user.Email),
+            // The verification epoch is part of the session identity. Confirming an address
+            // change updates EmailVerifiedAt, so every JWT issued before the change no longer
+            // matches the account and is rejected by the JWT validation in Program.cs.
+            new Claim(
+                AuthClaimTypes.EmailVerifiedAt,
+                user.EmailVerifiedAt?.Ticks.ToString(CultureInfo.InvariantCulture) ?? string.Empty)
         };
         var credentials = new SigningCredentials(GetSigningKey(), SecurityAlgorithms.HmacSha256);
         var token = new JwtSecurityToken(
@@ -259,7 +266,16 @@ public sealed class AuthService : IAuthService
         string role,
         string verification = VerificationStatuses.NotApplicable,
         string? verificationMessage = null) =>
-        new(user.Id, user.FullName, role, user.IsApproved, verification, verificationMessage);
+        new(
+            user.Id,
+            user.FullName,
+            role,
+            user.IsApproved,
+            verification,
+            verificationMessage,
+            user.Email,
+            user.EmailVerified,
+            user.PendingEmail);
 }
 
 public sealed class DuplicateRegistrationException : BusinessRuleException

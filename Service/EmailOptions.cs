@@ -70,6 +70,12 @@ public sealed class EmailOptions
     /// </summary>
     public string VerificationPath { get; set; } = "/verify-email";
 
+    /// <summary>
+    /// Path of the frontend address-change confirmation page. The link carries the token in the
+    /// URL fragment, which no browser sends to a server.
+    /// </summary>
+    public string EmailChangePath { get; set; } = "/confirm-email-change";
+
     /// <summary>Lifetime of a registration verification token (hours).</summary>
     public int RegistrationTokenTtlHours { get; set; } = 24;
 

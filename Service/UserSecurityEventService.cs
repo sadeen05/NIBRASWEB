@@ -16,8 +16,13 @@ public sealed class UserSecurityEventService : IUserSecurityEventService
     private const int MaxIpLength = 45;
 
     private readonly NebrasdbContext _context;
+    private readonly TimeProvider _clock;
 
-    public UserSecurityEventService(NebrasdbContext context) => _context = context;
+    public UserSecurityEventService(NebrasdbContext context, TimeProvider? clock = null)
+    {
+        _context=context;
+        _clock=clock ?? TimeProvider.System;
+    }
 
     public async Task RecordAsync(
         int userId,
@@ -44,7 +49,7 @@ public sealed class UserSecurityEventService : IUserSecurityEventService
             ActorId = actorId,
             Ip = Truncate(ip, MaxIpLength),
             Details = Sanitize(details, MaxDetailsLength),
-            CreatedAt = DateTime.UtcNow,
+            CreatedAt = _clock.GetUtcNow().UtcDateTime,
         });
 
         await _context.SaveChangesAsync(cancellationToken);

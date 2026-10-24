@@ -22,6 +22,8 @@ public sealed class SmtpEmailSender : IEmailSender
 
     public async Task<EmailSendResult> SendAsync(EmailMessage message, CancellationToken cancellationToken = default)
     {
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        deadline.CancelAfter(TimeSpan.FromSeconds(30));
         try
         {
             using var client = new SmtpClient(_options.SmtpHost, _options.SmtpPort)
@@ -46,21 +48,44 @@ public sealed class SmtpEmailSender : IEmailSender
             };
             mail.To.Add(message.To);
 
-            await client.SendMailAsync(mail, cancellationToken);
+            await client.SendMailAsync(mail, deadline.Token);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            _logger.LogWarning("Verification email delivery timed out.");
+            return EmailSendResult.Failure("smtp_timeout");
         }
         catch (OperationCanceledException)
         {
             throw;
         }
+        catch (SmtpException ex) when (cancellationToken.IsCancellationRequested)
+        {
+            // Caller cancellation is distinct from a transport timeout.
+            throw new OperationCanceledException("The email delivery was cancelled by the caller.", ex, cancellationToken);
+        }
+        catch (SmtpException) when (deadline.IsCancellationRequested)
+        {
+            // The transport surfaced the timeout as an SmtpException. It is a genuine deadline
+            // expiry only because the send deadline actually elapsed; a server rejection or a
+            // fast transport failure does not reach this filter.
+            _logger.LogWarning("Verification email delivery timed out.");
+            return EmailSendResult.Failure("smtp_timeout");
+        }
         catch (SmtpException ex)
         {
             // The message is not repeated: it can carry an activation link.
-            _logger.LogWarning(ex, "Verification email delivery failed for {Recipient}.", MaskRecipient(message.To));
+            _logger.LogWarning("Verification email delivery failed ({ExceptionType}).", ex.GetType().Name);
             return EmailSendResult.Failure("smtp_delivery_failed");
+        }
+        catch (TimeoutException) when (deadline.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+        {
+            _logger.LogWarning("Verification email delivery timed out.");
+            return EmailSendResult.Failure("smtp_timeout");
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Verification email delivery failed for {Recipient}.", MaskRecipient(message.To));
+            _logger.LogWarning("Verification email delivery failed ({ExceptionType}).", ex.GetType().Name);
             return EmailSendResult.Failure("email_delivery_failed");
         }
 

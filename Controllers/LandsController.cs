@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.ModelBinding;
 using NIBRAS.API.DTOs;
@@ -13,10 +14,12 @@ namespace NIBRAS.API.Controllers;
 public class LandsController : ControllerBase
 {
     private readonly ILandService _landService;
+    private readonly IWebHostEnvironment _environment;
 
-    public LandsController(ILandService landService)
+    public LandsController(ILandService landService, IWebHostEnvironment environment)
     {
         _landService = landService;
+        _environment = environment;
     }
 
     [HttpGet]
@@ -96,11 +99,66 @@ public class LandsController : ControllerBase
         return Ok(await _landService.GetAllStatusHistoryAsync(id));
     }
 
+    /// <summary>
+    /// The real document upload. The body is multipart form data: the document type and the
+    /// file. The storage service validates the size and the magic bytes, so the browser-supplied
+    /// content type and file extension are never trusted.
+    /// </summary>
     [HttpPost("{id}/documents")]
-    public async Task<ActionResult<LandDocumentDto>> UploadDocument(int id, UploadLandDocumentRequest request)
+    [Consumes("multipart/form-data")]
+    [RequestSizeLimit(DocumentStorageOptions.MaxUploadRequestBytes)]
+    [RequestFormLimits(MultipartBodyLengthLimit = DocumentStorageOptions.MaxUploadRequestBytes)]
+    public async Task<ActionResult<LandDocumentDto>> UploadDocument(
+        int id,
+        [FromForm] UploadLandDocumentFileRequest request)
     {
+        if (request.File is null)
+        {
+            return BadRequest(new { message = "The document file is required." });
+        }
+
+        var document = await _landService.UploadDocumentAsync(id, request.DocumentTypeId, request.File);
+        return Created($"/api/lands/{id}/documents", document);
+    }
+
+    /// <summary>
+    /// Legacy metadata-only registration. It is accepted only in Development, for the historical
+    /// regression suites; every deployed environment uses the multipart upload above. It has its
+    /// own route so the multipart upload and this legacy action cannot collide in OpenAPI.
+    /// </summary>
+    [HttpPost("{id}/documents/metadata")]
+    [Consumes("application/json")]
+    public async Task<ActionResult<LandDocumentDto>> UploadDocumentMetadata(
+        int id,
+        UploadLandDocumentRequest request)
+    {
+        if (!_environment.IsDevelopment())
+        {
+            return StatusCode(StatusCodes.Status415UnsupportedMediaType, new
+            {
+                message = "Metadata-only document registration is not available. Upload the document file.",
+            });
+        }
+
         var document = await _landService.UploadDocumentAsync(id, request);
         return Created($"/api/lands/{id}/documents", document);
+    }
+
+    /// <summary>
+    /// Authenticated download of a stored land document. The file is served as an attachment
+    /// with <c>nosniff</c> and no-store headers; the private storage path is never exposed.
+    /// </summary>
+    [HttpGet("{id}/documents/{documentId}/download")]
+    public async Task<IActionResult> DownloadDocument(int id, int documentId)
+    {
+        var document = await _landService.DownloadDocumentAsync(id, documentId);
+        Response.Headers["X-Content-Type-Options"] = "nosniff";
+        Response.Headers["Cache-Control"] = "private, no-store";
+        return File(
+            document.Content,
+            document.ContentType,
+            document.FileName,
+            enableRangeProcessing: true);
     }
 
     [HttpGet("{id}/documents")]

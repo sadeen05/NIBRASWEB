@@ -657,6 +657,16 @@ namespace NibrasWeb.Service
             }).ToList();
         }
 
+        public async Task<List<OfferVersionDto>> GetVersionsAsync(int offerId)
+        {
+            var offer=await LoadOfferAsync(offerId);
+            EnsureCanRead(offer);
+            var result=new List<OfferVersionDto>();
+            foreach(var version in offer.OfferVersions.OrderBy(v => v.VersionNumber))
+                result.Add(await ToVersionDtoAsync(version,offer));
+            return result;
+        }
+
         // D-10: no public endpoint exposes this. It is internal (used by the contract
         // lifecycle) and enforces BOTH that the contract belongs to the specified offer and
         // that the offer is Accepted, as required by Step 5.2/5.4.
@@ -835,6 +845,7 @@ namespace NibrasWeb.Service
             return new OfferVersionDto
             {
                 Id = version.Id,
+                CreatedById = version.CreatedById,
                 OfferId = version.OfferId,
                 VersionNumber = version.VersionNumber,
                 LandlordSharePct = version.LandlordSharePct,
@@ -847,7 +858,7 @@ namespace NibrasWeb.Service
                 PaybackPeriodMonths = version.PaybackPeriodMonths,
                 Message = version.Message,
                 IsCurrent = version.IsCurrent || version.VersionNumber == maxVersion,
-                CreatedAt = version.CreatedAt ?? DateTime.UtcNow,
+                CreatedAt = version.CreatedAt,
                 CreatedByName = version.CreatedBy?.FullName ?? string.Empty,
                 CreatedByRole = version.CreatedBy?.Role?.Name ?? string.Empty
             };

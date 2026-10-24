@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Http;
 using NIBRAS.API.DTOs;
 
 namespace NIBRAS.API.Services;
@@ -29,6 +30,10 @@ public interface ILandService
     Task<List<LandStatusHistoryDto>> GetAllStatusHistoryAsync(int landId);
 
     Task<LandDocumentDto> UploadDocumentAsync(int landId, UploadLandDocumentRequest request);
+
+    Task<LandDocumentDto> UploadDocumentAsync(int landId, int documentTypeId, IFormFile file);
+
+    Task<LandDocumentDownload> DownloadDocumentAsync(int landId, int documentId);
 
     Task<List<LandDocumentDto>> GetDocumentsAsync(int landId);
 

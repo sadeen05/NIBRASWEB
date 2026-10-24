@@ -34,6 +34,8 @@ public sealed class EmailOptionsValidator : IValidateOptions<EmailOptions>
 
         if (options.IsSmtp)
         {
+            if (!_environment.IsDevelopment() && !options.SmtpEnableSsl)
+                failures.Add("Email SMTP transport must use TLS outside Development.");
             if (string.IsNullOrWhiteSpace(options.SmtpHost))
             {
                 failures.Add($"Email:SmtpHost is required when the delivery mode is {EmailOptions.ModeSmtp}.");
@@ -102,6 +104,7 @@ public sealed class EmailOptionsValidator : IValidateOptions<EmailOptions>
         // delivery is switched off, so a host cannot be started with a broken path.
         ValidateLocalPath(options.ActivationPath, "Email:ActivationPath", !options.IsDisabled, failures);
         ValidateLocalPath(options.VerificationPath, "Email:VerificationPath", !options.IsDisabled, failures);
+        ValidateLocalPath(options.EmailChangePath, "Email:EmailChangePath", !options.IsDisabled, failures);
 
         if (options.RegistrationTokenTtlHours is < 1 or > 168)
         {

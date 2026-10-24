@@ -32,7 +32,7 @@ public class CriteriaController : ControllerBase
     }
 
     [HttpPost]
-    [Authorize(Roles = RoleNames.Admin + "," + RoleNames.SuperAdmin)]
+    [Authorize(Roles = RoleNames.SuperAdmin)]
     public async Task<ActionResult<LandCriterionDto>> Create(CreateLandCriterionRequest request)
     {
         var criterion = await _criteriaService.CreateAsync(request);

@@ -40,7 +40,20 @@ public class DocumentTypeService : IDocumentTypeService
 
     public async Task<DocumentTypeDto> UpdateAsync(int id, DocumentTypeRequest request)
     {
-        var documentType = await _context.DocumentTypes.FirstOrDefaultAsync(t => t.Id == id)
+        // The required→optional decision and the guard that refuses it run in one transaction
+        // with the row pinned (UPDLOCK, HOLDLOCK - the same convention LockLandAsync uses).
+        // A SuperAdmin re-review (LandService.ReviewDocumentAsync) rejects a document of this
+        // type on an approved land under exactly this DOCUMENT_TYPES lock (taken after its
+        // LANDS lock, so lock order never inverts), which makes the guard's read and this
+        // write atomic against that rejection: either the guard sees it and refuses the
+        // change, or the change commits first and the re-review is refused because the type
+        // is no longer required. Without it, an update committing between the re-review's
+        // evidence check and its write (or vice versa) drops the fresh rejection out of the
+        // derived evidence and shows an approved land that a reviewer explicitly refused.
+        await using var transaction = await _context.Database.BeginTransactionAsync();
+        var documentType = await _context.DocumentTypes
+            .FromSqlInterpolated($"SELECT * FROM DOCUMENT_TYPES WITH (UPDLOCK, HOLDLOCK) WHERE ID = {id}")
+            .FirstOrDefaultAsync()
             ?? throw new NotFoundException("Document type not found.");
 
         // Changing IsRequiredForVerification only affects future verifications. Lands
@@ -71,6 +84,7 @@ public class DocumentTypeService : IDocumentTypeService
         documentType.IsRequiredForVerification = request.IsRequiredForVerification;
 
         await _context.SaveChangesAsync();
+        await transaction.CommitAsync();
         return ToDto(documentType);
     }
 

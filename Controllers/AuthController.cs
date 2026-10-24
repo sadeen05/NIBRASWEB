@@ -14,17 +14,20 @@ public sealed class AuthController : ControllerBase
     private readonly IAuthService _authService;
     private readonly ICurrentUser _currentUser;
     private readonly IEmailVerificationService _emailVerification;
+    private readonly IEmailChangeService _emailChange;
     private readonly IVerificationDeliveryQueue _deliveryQueue;
 
     public AuthController(
         IAuthService authService,
         ICurrentUser currentUser,
         IEmailVerificationService emailVerification,
+        IEmailChangeService emailChange,
         IVerificationDeliveryQueue deliveryQueue)
     {
         _authService = authService;
         _currentUser = currentUser;
         _emailVerification = emailVerification;
+        _emailChange = emailChange;
         _deliveryQueue = deliveryQueue;
     }
 
@@ -147,6 +150,104 @@ public sealed class AuthController : ControllerBase
             {
                 message = "The verification link is not valid.",
                 errorCode = "VERIFICATION_INVALID",
+            }),
+        };
+    }
+
+    /// <summary>
+    /// Requests an address change for the authenticated account. The current password is
+    /// required, and the active address is not replaced until the new address is confirmed
+    /// through the link sent to it. The endpoint is authenticated, but has its own rate-limit
+    /// budget because it can cause a mail to be sent.
+    /// </summary>
+    [Authorize]
+    [EnableRateLimiting("email-change")]
+    [HttpPost("change-email")]
+    public async Task<IActionResult> ChangeEmail(ChangeEmailRequest request)
+    {
+        if (_currentUser.Id is not int userId)
+        {
+            return Unauthorized();
+        }
+
+        var result = await _emailChange.RequestAsync(
+            userId,
+            request.NewEmail,
+            request.CurrentPassword,
+            HttpContext.Connection.RemoteIpAddress?.ToString(),
+            HttpContext.RequestAborted);
+
+        return result.Outcome switch
+        {
+            EmailChangeOutcome.Sent => Accepted(new
+            {
+                message = "A confirmation message has been sent to the new address. The current address stays active until the new one is confirmed.",
+            }),
+            EmailChangeOutcome.InvalidCurrentPassword => BadRequest(new
+            {
+                message = "The current password is not correct.",
+                errorCode = "EMAIL_CHANGE_PASSWORD_INVALID",
+            }),
+            EmailChangeOutcome.AddressUnchanged => Conflict(new
+            {
+                message = "The new address is already the active address of this account.",
+                errorCode = "EMAIL_CHANGE_UNCHANGED",
+            }),
+            EmailChangeOutcome.EmailInUse => Conflict(new
+            {
+                message = "The new address is already in use.",
+                errorCode = "EMAIL_CHANGE_CONFLICT",
+            }),
+            EmailChangeOutcome.InvalidAddress => BadRequest(new
+            {
+                message = "The new address is not valid.",
+                errorCode = "EMAIL_CHANGE_INVALID_ADDRESS",
+            }),
+            EmailChangeOutcome.Throttled => StatusCode(StatusCodes.Status429TooManyRequests, new
+            {
+                message = "Too many address-change requests. Please wait before trying again.",
+                errorCode = "EMAIL_CHANGE_THROTTLED",
+            }),
+            EmailChangeOutcome.DeliveryFailed => StatusCode(StatusCodes.Status503ServiceUnavailable, new
+            {
+                message = "The confirmation message could not be delivered. The current address is unchanged; please try again later.",
+                errorCode = "EMAIL_CHANGE_DELIVERY_FAILED",
+            }),
+            _ => Conflict(new
+            {
+                message = "The address change cannot be requested for this account.",
+                errorCode = "EMAIL_CHANGE_NOT_ELIGIBLE",
+            }),
+        };
+    }
+
+    /// <summary>
+    /// Confirms the new address of an authenticated account. The token is the only credential,
+    /// so the endpoint is anonymous, but it has its own rate-limit budget. On success the active
+    /// address is replaced and every JWT issued before the change stops validating, because the
+    /// session carries the old verification epoch.
+    /// </summary>
+    [AllowAnonymous]
+    [EnableRateLimiting("verification")]
+    [HttpPost("confirm-email-change")]
+    public async Task<IActionResult> ConfirmEmailChange(VerifyEmailRequest request)
+    {
+        var result = await _emailVerification.ConsumeTokenAsync(
+            request.Token,
+            EmailVerificationPurposes.EmailChange);
+
+        return result.Outcome switch
+        {
+            VerificationOutcome.Succeeded => NoContent(),
+            VerificationOutcome.EmailInUse => Conflict(new
+            {
+                message = "The address of the account is already in use.",
+                errorCode = "EMAIL_CHANGE_CONFLICT",
+            }),
+            _ => BadRequest(new
+            {
+                message = "The address-change link is not valid.",
+                errorCode = "EMAIL_CHANGE_INVALID",
             }),
         };
     }

@@ -1,3 +1,4 @@
+using System.ComponentModel.DataAnnotations;
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
@@ -32,15 +33,18 @@ public sealed class EmailVerificationService : IEmailVerificationService
     private readonly NebrasdbContext _context;
     private readonly EmailOptions _options;
     private readonly ILogger<EmailVerificationService> _logger;
+    private readonly TimeProvider _timeProvider;
 
     public EmailVerificationService(
         NebrasdbContext context,
         IOptions<EmailOptions> options,
-        ILogger<EmailVerificationService> logger)
+        ILogger<EmailVerificationService> logger,
+        TimeProvider timeProvider)
     {
         _context = context;
         _options = options.Value;
         _logger = logger;
+        _timeProvider = timeProvider;
     }
 
     public async Task<EmailVerificationResult> IssueRegistrationTokenAsync(
@@ -70,7 +74,7 @@ public sealed class EmailVerificationService : IEmailVerificationService
 
         PasswordPolicy.Validate(newPassword);
 
-        var now = DateTime.UtcNow;
+        var now = _timeProvider.GetUtcNow().UtcDateTime;
         var hash = VerificationTokenCodec.HashToken(token.Trim());
 
         await using var transaction = await _context.Database.BeginTransactionAsync(cancellationToken);
@@ -169,7 +173,7 @@ public sealed class EmailVerificationService : IEmailVerificationService
             return EmailVerificationResult.Failed(VerificationOutcome.AlreadyUsed, "consumed_concurrently");
         }
 
-        var appliedAt = DateTime.UtcNow;
+        var appliedAt = _timeProvider.GetUtcNow().UtcDateTime;
         user.PasswordHash = BCrypt.Net.BCrypt.HashPassword(newPassword, workFactor: 12);
         user.EmailVerified = true;
         user.EmailVerifiedAt = appliedAt;
@@ -258,7 +262,8 @@ public sealed class EmailVerificationService : IEmailVerificationService
         var address = newEmail?.Trim();
         if (string.IsNullOrWhiteSpace(address) ||
             address.Length > 255 ||
-            address.Any(character => character < ' '))
+            address.Any(character => character < ' ') ||
+            !new EmailAddressAttribute().IsValid(address))
         {
             return EmailVerificationResult.Failed(VerificationOutcome.InvalidAddress, "malformed_address");
         }
@@ -292,7 +297,7 @@ public sealed class EmailVerificationService : IEmailVerificationService
             return EmailVerificationResult.Failed(VerificationOutcome.WrongPurpose, "unknown_purpose");
         }
 
-        var now = DateTime.UtcNow;
+        var now = _timeProvider.GetUtcNow().UtcDateTime;
         var hash = VerificationTokenCodec.HashToken(token.Trim());
 
         await using var transaction = await _context.Database.BeginTransactionAsync(cancellationToken);
@@ -436,7 +441,7 @@ public sealed class EmailVerificationService : IEmailVerificationService
             return EmailVerificationResult.Failed(VerificationOutcome.AlreadyUsed, "consumed_concurrently");
         }
 
-        var appliedAt = DateTime.UtcNow;
+        var appliedAt = _timeProvider.GetUtcNow().UtcDateTime;
         var isAddressChange = row.Purpose == EmailVerificationPurposes.EmailChange;
 
         if (isAddressChange)
@@ -508,7 +513,7 @@ public sealed class EmailVerificationService : IEmailVerificationService
             return EmailVerificationResult.Failed(VerificationOutcome.WrongPurpose, "unknown_purpose");
         }
 
-        var now = DateTime.UtcNow;
+        var now = _timeProvider.GetUtcNow().UtcDateTime;
 
         await using var transaction = await _context.Database.BeginTransactionAsync(cancellationToken);
 
@@ -567,7 +572,7 @@ public sealed class EmailVerificationService : IEmailVerificationService
             return;
         }
 
-        var now = DateTime.UtcNow;
+        var now = _timeProvider.GetUtcNow().UtcDateTime;
 
         if (purpose is null)
         {
@@ -650,6 +655,29 @@ public sealed class EmailVerificationService : IEmailVerificationService
                 VerificationOutcome.InvalidCurrentPassword, "current_password_required");
         }
 
+        // An address change sends a mail to the requested address, so it is subject to the same
+        // per-account cooldown and daily cap as a resend. The checks run under the account lock
+        // taken above, so two parallel requests cannot both pass them. They count every
+        // verification token of the account, not just the address-change tokens, so the mail
+        // volume of one account cannot be multiplied by switching purposes.
+        var now = _timeProvider.GetUtcNow().UtcDateTime;
+        var lastCreated = await _context.EmailVerificationTokens
+            .AsNoTracking()
+            .Where(t => t.UserId == userId)
+            .MaxAsync(t => (DateTime?)t.CreatedAt, cancellationToken);
+        if (lastCreated is { } last && (now - last).TotalSeconds < _options.ResendCooldownSeconds)
+        {
+            return EmailVerificationResult.Failed(VerificationOutcome.CooldownActive, "cooldown_active");
+        }
+
+        var sentToday = await _context.EmailVerificationTokens
+            .AsNoTracking()
+            .CountAsync(t => t.UserId == userId && t.CreatedAt >= now.Date, cancellationToken);
+        if (sentToday >= _options.ResendDailyCap)
+        {
+            return EmailVerificationResult.Failed(VerificationOutcome.DailyCapReached, "daily_cap_reached");
+        }
+
         // The new address must be free: as the active address (also of a soft-deleted account,
         // which still owns the address) and as the pending address of another account. The rows
         // are read under an update lock, so two accounts cannot claim the same address at the
@@ -669,6 +697,16 @@ public sealed class EmailVerificationService : IEmailVerificationService
 
         // The active address is only replaced by a successful verification of the new one.
         user.PendingEmail = address;
+
+        // The requested address is deliberately not part of the event: the audit trail records
+        // that a change was requested, never the address or a token.
+        _context.UserSecurityEvents.Add(new UserSecurityEvent
+        {
+            UserId = userId,
+            EventType = UserSecurityEventTypes.EmailChangeRequested,
+            Details = "pending_address_set",
+            CreatedAt = now,
+        });
 
         return await IssueCoreAsync(userId, EmailVerificationPurposes.EmailChange, null, cancellationToken);
     }
@@ -759,7 +797,7 @@ public sealed class EmailVerificationService : IEmailVerificationService
                 "not_verification_eligible");
         }
 
-        var now = DateTime.UtcNow;
+        var now = _timeProvider.GetUtcNow().UtcDateTime;
 
         // A new token invalidates the earlier ones of the same purpose, so only the newest
         // link for that purpose works. The retirement and its audit event are written in the
@@ -814,6 +852,32 @@ public sealed class EmailVerificationService : IEmailVerificationService
         return EmailVerificationResult.Success(new IssuedVerificationToken(plaintext, expiresAt));
     }
 
+    /// <summary>Retires an interrupted issuance under the account lock, preserving newer requests and audit.</summary>
+    public async Task CancelDeliveryAsync(int userId, string plaintext, string purpose, CancellationToken cancellationToken = default)
+    {
+        await using var transaction = await _context.Database.BeginTransactionAsync(cancellationToken);
+        if (!await LockAccountAsync(userId, cancellationToken))
+            throw new InvalidOperationException("Cancelled delivery account is unavailable.");
+        var hash = VerificationTokenCodec.HashToken(plaintext);
+        var token = await _context.EmailVerificationTokens.AsNoTracking()
+            .SingleOrDefaultAsync(t => t.UserId == userId && t.TokenHash == hash && t.Purpose == purpose, cancellationToken);
+        if (token is null) throw new InvalidOperationException("Cancelled delivery token is unavailable.");
+        if (token.ConsumedAt is not null) { await transaction.CommitAsync(cancellationToken); return; }
+        var now = _timeProvider.GetUtcNow().UtcDateTime;
+        await _context.Database.ExecuteSqlInterpolatedAsync(
+            $"UPDATE [EMAIL_VERIFICATION_TOKENS] SET [CONSUMED_AT] = {now} WHERE [ID] = {token.Id} AND [CONSUMED_AT] IS NULL", cancellationToken);
+        var user = await _context.Users.SingleAsync(u => u.Id == userId, cancellationToken);
+        await _context.Entry(user).ReloadAsync(cancellationToken);
+        if (purpose == EmailVerificationPurposes.EmailChange &&
+            string.Equals(user.PendingEmail, token.PreviousEmail, StringComparison.OrdinalIgnoreCase))
+            user.PendingEmail = null;
+        _context.UserSecurityEvents.Add(new UserSecurityEvent {
+            UserId = userId, EventType = UserSecurityEventTypes.VerificationTokenInvalidated,
+            Details = "delivery_cancelled:" + purpose, CreatedAt = now
+        });
+        await _context.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+    }
     /// <summary>
     /// Locks the account row for the current transaction. The lock is taken on the primary key
     /// (an index seek, not a scan) and is held until the transaction ends.

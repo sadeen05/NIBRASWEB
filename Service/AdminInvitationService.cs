@@ -27,6 +27,7 @@ public sealed class AdminInvitationService : IAdminInvitationService
     private readonly IUserSecurityEventService _audit;
     private readonly EmailOptions _options;
     private readonly ILogger<AdminInvitationService> _logger;
+    private readonly TimeProvider _timeProvider;
 
     public AdminInvitationService(
         NebrasdbContext context,
@@ -34,7 +35,8 @@ public sealed class AdminInvitationService : IAdminInvitationService
         IEmailSender emailSender,
         IUserSecurityEventService audit,
         IOptions<EmailOptions> options,
-        ILogger<AdminInvitationService> logger)
+        ILogger<AdminInvitationService> logger,
+        TimeProvider timeProvider)
     {
         _context = context;
         _verification = verification;
@@ -42,6 +44,7 @@ public sealed class AdminInvitationService : IAdminInvitationService
         _audit = audit;
         _options = options.Value;
         _logger = logger;
+        _timeProvider = timeProvider;
     }
 
     public async Task<AdminInvitationResult> SendAsync(
@@ -58,53 +61,90 @@ public sealed class AdminInvitationService : IAdminInvitationService
             return new AdminInvitationResult(AdminInvitationOutcome.AccountNotEligible, "user_missing");
         }
 
-        // The token service re-checks the role, the deletion state and the verification state
-        // of the account, and it retires the earlier invitations in the same transaction. The
-        // resend path is used for both the first invitation and every later one, so the resend
-        // cooldown and the daily cap apply to an administrator invitation as well - a
-        // super administrator cannot use it to flood an address with invitations.
-        var issued = await _verification.ResendTokenAsync(
-            adminUserId,
-            EmailVerificationPurposes.AdminActivation,
-            cancellationToken);
-        if (!issued.Succeeded || issued.Issued is null)
+        // Equivalent bound to the onboarding path (RegistrationVerificationService): the
+        // invitation must not hold the request for the whole 30-second SMTP timeout. The linked
+        // token is used for token issuance and delivery. A caller cancellation still propagates;
+        // a deadline expiry is converted into the same DeliveryFailed outcome the resend endpoint
+        // already answers with 503. VerificationDelivery retires the exact issued token with its
+        // own bounded cleanup token before it rethrows, so a timeout leaves no usable link behind.
+        using var deliveryCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        deliveryCts.CancelAfter(
+            TimeSpan.FromSeconds(RegistrationVerificationService.OnboardingDeliveryTimeoutSeconds));
+
+        try
         {
-            _logger.LogWarning(
-                "The activation invitation for admin account {UserId} could not be issued.",
-                adminUserId);
-            return new AdminInvitationResult(AdminInvitationOutcome.AccountNotEligible, issued.FailureReason);
+            // The token service re-checks the role, the deletion state and the verification state
+            // of the account, and it retires the earlier invitations in the same transaction. The
+            // resend path is used for both the first invitation and every later one, so the resend
+            // cooldown and the daily cap apply to an administrator invitation as well - a
+            // super administrator cannot use it to flood an address with invitations.
+            var issued = await _verification.ResendTokenAsync(
+                adminUserId,
+                EmailVerificationPurposes.AdminActivation,
+                deliveryCts.Token);
+            if (!issued.Succeeded || issued.Issued is null)
+            {
+                _logger.LogWarning(
+                    "The activation invitation for admin account {UserId} could not be issued.",
+                    adminUserId);
+                return new AdminInvitationResult(AdminInvitationOutcome.AccountNotEligible, issued.FailureReason);
+            }
+
+            var message = BuildMessage(account.Email, issued.Issued.Plaintext, issued.Issued.ExpiresAt);
+
+            // The token travels from here straight into the mailer.
+            var sent = await VerificationDelivery.SendAsync(
+                _verification,
+                _emailSender,
+                adminUserId,
+                NibrasWeb.Enums.EmailVerificationPurposes.AdminActivation,
+                issued.Issued,
+                message,
+                deliveryCts.Token);
+            if (!sent.Sent)
+            {
+                // The account stays unverified and unusable. The failure is recorded; a new
+                // invitation can be issued at any time (it retires this one).
+                await RecordAuditAsync(
+                    adminUserId,
+                    UserSecurityEventTypes.VerificationEmailDeliveryFailed,
+                    actorId,
+                    ip,
+                    CancellationToken.None);
+                _logger.LogWarning(
+                    "The activation invitation for admin account {UserId} could not be delivered.",
+                    adminUserId);
+                return new AdminInvitationResult(AdminInvitationOutcome.DeliveryFailed, sent.FailureReason);
+            }
+
+            await RecordAuditAsync(
+                adminUserId,
+                UserSecurityEventTypes.VerificationEmailSent,
+                actorId,
+                ip,
+                CancellationToken.None);
+
+            // Only the outcome is logged: never the address of the recipient, never the token.
+            _logger.LogInformation("The activation invitation for admin account {UserId} was handed over for delivery.", adminUserId);
+            return new AdminInvitationResult(AdminInvitationOutcome.Sent);
         }
-
-        var message = BuildMessage(account.Email, issued.Issued.Plaintext, issued.Issued.ExpiresAt);
-
-        // The token travels from here straight into the mailer.
-        var sent = await _emailSender.SendAsync(message, cancellationToken);
-        if (!sent.Sent)
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
-            // The account stays unverified and unusable. The failure is recorded; a new
-            // invitation can be issued at any time (it retires this one).
+            // The deadline expired before the mail left the process. The account stays
+            // unverified; the invitation can be sent again. When the timeout interrupted
+            // delivery, VerificationDelivery has already retired the exact issued link; when it
+            // interrupted token issuance, that transaction rolled back and no link was created.
             await RecordAuditAsync(
                 adminUserId,
                 UserSecurityEventTypes.VerificationEmailDeliveryFailed,
                 actorId,
                 ip,
-                cancellationToken);
+                CancellationToken.None);
             _logger.LogWarning(
-                "The activation invitation for admin account {UserId} could not be delivered.",
+                "The activation invitation for admin account {UserId} could not be delivered before the deadline.",
                 adminUserId);
-            return new AdminInvitationResult(AdminInvitationOutcome.DeliveryFailed, sent.FailureReason);
+            return new AdminInvitationResult(AdminInvitationOutcome.DeliveryFailed, "delivery_timeout");
         }
-
-        await RecordAuditAsync(
-            adminUserId,
-            UserSecurityEventTypes.VerificationEmailSent,
-            actorId,
-            ip,
-            cancellationToken);
-
-        // Only the outcome is logged: never the address of the recipient, never the token.
-        _logger.LogInformation("The activation invitation for admin account {UserId} was handed over for delivery.", adminUserId);
-        return new AdminInvitationResult(AdminInvitationOutcome.Sent);
     }
 
     /// <summary>
@@ -141,7 +181,7 @@ public sealed class AdminInvitationService : IAdminInvitationService
     /// </summary>
     private EmailMessage BuildMessage(string recipient, string token, DateTime expiresAt)
     {
-        var hours = Math.Max(1, (int)Math.Ceiling((expiresAt - DateTime.UtcNow).TotalHours));
+        var hours = Math.Max(1, (int)Math.Ceiling((expiresAt - _timeProvider.GetUtcNow().UtcDateTime).TotalHours));
         var link = BuildActivationLink(token);
         var subject = "NIBRAS administrator account activation / تفعيل حساب مشرف في NIBRAS";
         var body =

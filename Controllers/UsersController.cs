@@ -46,6 +46,19 @@ public class UsersController : ControllerBase
         return Ok(user);
     }
 
+    /// <summary>
+    /// The investor-approval eligibility and the durable approval history. The history is read
+    /// from the append-only security events, so it keeps every earlier decision even after a
+    /// later administrator approves the account again.
+    /// </summary>
+    [HttpGet("{id}/approval")]
+    public async Task<ActionResult<UserApprovalStatusDto>> GetApprovalStatus(int id)
+    {
+        var status = await _userService.GetApprovalStatusAsync(id);
+        if (status == null) return NotFound();
+        return Ok(status);
+    }
+
     [HttpPost]
     public async Task<ActionResult<UserDto>> Create(CreateUserRequest request)
     {
@@ -94,6 +107,12 @@ public class UsersController : ControllerBase
 
         var result = await _userService.ApproveAsync(id, approvedById);
         return result ? NoContent() : NotFound();
+    }
+
+    [HttpPost("{id}/reject-approval")]
+    public async Task<IActionResult> RejectApproval(int id, RejectInvestorApprovalRequest request)
+    {
+        return await _userService.RejectApprovalAsync(id, request) ? NoContent() : NotFound();
     }
 
     [HttpPut("{id}")]

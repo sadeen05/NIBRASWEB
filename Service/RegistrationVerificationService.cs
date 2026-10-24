@@ -43,6 +43,7 @@ public sealed class RegistrationVerificationService : IRegistrationVerificationS
     private readonly IUserSecurityEventService _audit;
     private readonly EmailOptions _options;
     private readonly ILogger<RegistrationVerificationService> _logger;
+    private readonly TimeProvider _timeProvider;
 
     public RegistrationVerificationService(
         NebrasdbContext context,
@@ -50,7 +51,8 @@ public sealed class RegistrationVerificationService : IRegistrationVerificationS
         IEmailSender emailSender,
         IUserSecurityEventService audit,
         IOptions<EmailOptions> options,
-        ILogger<RegistrationVerificationService> logger)
+        ILogger<RegistrationVerificationService> logger,
+        TimeProvider timeProvider)
     {
         _context = context;
         _verification = verification;
@@ -58,6 +60,7 @@ public sealed class RegistrationVerificationService : IRegistrationVerificationS
         _audit = audit;
         _options = options.Value;
         _logger = logger;
+        _timeProvider = timeProvider;
     }
 
     public async Task<RegistrationVerificationResult> SendAsync(
@@ -160,7 +163,7 @@ public sealed class RegistrationVerificationService : IRegistrationVerificationS
         var message = BuildMessage(account.Email, issued.Issued.Plaintext, issued.Issued.ExpiresAt);
 
         // The token travels from here straight into the mailer.
-        var sent = await _emailSender.SendAsync(message, cancellationToken);
+        var sent = await VerificationDelivery.SendAsync(_verification, _emailSender, userId, NibrasWeb.Enums.EmailVerificationPurposes.Registration, issued.Issued, message, cancellationToken);
         if (!sent.Sent)
         {
             // The account stays unverified. The failure is recorded; a new verification can
@@ -231,7 +234,7 @@ public sealed class RegistrationVerificationService : IRegistrationVerificationS
     /// </summary>
     private EmailMessage BuildMessage(string recipient, string token, DateTime expiresAt)
     {
-        var hours = Math.Max(1, (int)Math.Ceiling((expiresAt - DateTime.UtcNow).TotalHours));
+        var hours = Math.Max(1, (int)Math.Ceiling((expiresAt - _timeProvider.GetUtcNow().UtcDateTime).TotalHours));
         var link = VerificationLinkBuilder.Build(_options.FrontendBaseUrl, _options.VerificationPath, token);
         var subject = "Confirm your NIBRAS account / تأكيد حسابك في نِبراس";
         var body =

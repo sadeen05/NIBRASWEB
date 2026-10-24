@@ -94,6 +94,10 @@ public class OffersController : ControllerBase
         return Ok(offer);
     }
 
+    [HttpGet("{id}/versions")]
+    public async Task<ActionResult<List<OfferVersionDto>>> GetVersions(int id) =>
+        Ok(await _offerService.GetVersionsAsync(id));
+
     [HttpGet("{id}/negotiation-history")]
     public async Task<ActionResult<List<OfferNegotiationHistoryDto>>> GetNegotiationHistory(int id)
     {

@@ -6,12 +6,14 @@ namespace NIBRAS.API.Services;
 public static class SuperAdminSeeder
 {
     /// <summary>
-    /// The phone number reserved for the seeded SuperAdmin identity. It is a constant on
-    /// purpose: the seed identity must be recognisable, and the seeding refuses to reuse or
-    /// change an account that already owns the number instead of failing with a raw unique
-    /// constraint violation.
+    /// The phone number reserved for the SuperAdmin identity (Development seed and the
+    /// production out-of-band bootstrap alike). It is a constant on purpose: the identity
+    /// must be recognisable, and a bootstrap refuses to reuse or change an account that
+    /// already owns the number instead of failing with a raw unique constraint violation.
     /// </summary>
-    private const string SeedPhone = "9999999999";
+    public const string ReservedPhone = "9999999999";
+
+    private const string SeedPhone = ReservedPhone;
 
     public static async Task SeedAsync(
         IServiceProvider services,
@@ -36,6 +38,12 @@ public static class SuperAdminSeeder
 
         await using var scope = services.CreateAsyncScope();
         var context = scope.ServiceProvider.GetRequiredService<NebrasdbContext>();
+
+        // The clean official database (and the legacy production-like database) must never
+        // receive Development seed data. This refusal is independent of the caller.
+        DatabaseTargetGuard.RefuseSeedingOnProtectedDatabase(
+            context.Database.GetConnectionString(),
+            nameof(SuperAdminSeeder));
 
         var superAdminRole = await context.Roles
             .SingleAsync(role => role.Name == RoleNames.SuperAdmin);
