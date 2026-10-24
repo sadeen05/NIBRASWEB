@@ -30,4 +30,12 @@
     <PackageReference Include="System.Security.Cryptography.Pkcs" Version="10.0.13" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Compile Remove="tests\**" />
+    <Content Remove="tests\**" />
+    <None Remove="tests\**" />
+    <Compile Remove="tools\**" />
+    <Content Remove="tools\**" />
+    <None Remove="tools\**" />
+  </ItemGroup>
 </Project>
