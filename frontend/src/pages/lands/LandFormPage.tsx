@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+﻿import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Alert,
   App as AntApp,
@@ -243,7 +243,7 @@ export function LandFormPage({ mode }: LandFormPageProps) {
           <ArrowLeft size={16} aria-hidden="true" />
           {t('common.back')}
         </Link>
-        <Typography.Title level={3} style={{ margin: '8px 0 0' }}>
+        <Typography.Title level={1} style={{ margin: '8px 0 0' }}>
           {mode === 'create' ? t('lands.form.createTitle') : t('lands.form.editTitle')}
         </Typography.Title>
       </div>

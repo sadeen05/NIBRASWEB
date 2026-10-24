@@ -3,6 +3,7 @@ import type {
   ActivateAdminRequest,
   AuthResponse,
   AuthUserSummary,
+  ChangeEmailRequest,
   LoginRequest,
   RegisterRequest,
   ResendVerificationRequest,
@@ -17,6 +18,8 @@ import type {
  *   POST /api/auth/activate-admin (anonymous, rate-limited) -> 204 No Content
  *   POST /api/auth/verify-email (anonymous, rate-limited) -> 204 No Content
  *   POST /api/auth/resend-verification (anonymous, rate-limited) -> 202
+ *   POST /api/auth/change-email (authenticated, rate-limited) -> 202
+ *   POST /api/auth/confirm-email-change (anonymous, rate-limited) -> 204 No Content
  *
  * Registration returns the created user's summary, NOT a session: the caller
  * must sign in separately to obtain a JWT.
@@ -72,4 +75,27 @@ export function resendVerification(
   request: ResendVerificationRequest,
 ): Promise<{ message: string }> {
   return postJson<{ message: string }>('/auth/resend-verification', request);
+}
+
+/**
+ * Requests an address change for the signed-in account. The current password
+ * is required. The active address is unchanged until the confirmation link is
+ * redeemed; on success the server sends a message to the new address.
+ */
+export function changeEmail(
+  request: ChangeEmailRequest,
+): Promise<{ message: string }> {
+  return postJson<{ message: string }>('/auth/change-email', request);
+}
+
+/**
+ * Confirms a pending address change:
+ *   POST /api/auth/confirm-email-change (anonymous, rate-limited) -> 204
+ *
+ * The token is read from the URL fragment by the confirmation page. The
+ * endpoint replaces the active address and invalidates every JWT issued before
+ * the change.
+ */
+export function confirmEmailChange(request: VerifyEmailRequest): Promise<void> {
+  return postJson<void>('/auth/confirm-email-change', request);
 }

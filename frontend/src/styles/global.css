@@ -293,6 +293,42 @@ body {
   padding: 32px 24px 56px;
 }
 
+/* Skip link: the first tab stop of every authenticated page. It stays out of the
+   layout until it receives keyboard focus, then pins itself over the header. */
+.skip-link {
+  position: absolute;
+  left: -9999px;
+  top: 0;
+  z-index: 1100;
+  padding: 10px 16px;
+  border-radius: 0 0 8px 0;
+  background: var(--nb-primary);
+  color: #fff;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.skip-link:focus {
+  left: 0;
+  outline: 2px solid var(--nb-primary);
+  outline-offset: 2px;
+}
+
+/* Heading semantics with the design's type scale: each authenticated view carries
+   exactly one h1, and its sub-sections are h2. Both keep the sizes the design
+   already used for the previous h3/h5 elements. */
+.shell-content h1.ant-typography {
+  font-size: 24px;
+  line-height: 1.35;
+  font-weight: 600;
+}
+
+.nb-section-title.ant-typography {
+  font-size: 16px;
+  line-height: 1.4;
+  font-weight: 600;
+}
+
 .user-chip {
   display: inline-flex;
   align-items: center;

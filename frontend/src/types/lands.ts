@@ -24,12 +24,10 @@ export const LAND_STATUSES: readonly LandStatus[] = [
   'PendingSuperAdminReview',
 ];
 
-/** Backend `LandDocument.Status` values (`DocumentStatuses`). */
-export type DocumentStatus = 'Pending' | 'Approved' | 'Rejected';
-
 /** `GET /api/Lands/{id}` and the `items` of `GET /api/Lands`. */
 export interface LandDto {
   id: number;
+  registeredAt: string | null;
   landlordId: number;
   /** Assigned by an admin technical assessment; `null` until assessed. */
   regionId: number | null;
@@ -112,6 +110,9 @@ export interface LandAssessmentDto {
   landId: number;
   assessedById: number;
   assessedByName: string;
+  criterionId: number | null;
+  areaDonumSnapshot: number | null;
+  criteriaSnapshot: CriterionValuesDto | null;
   assessedAt: string;
   note: string | null;
   regionId: number | null;
@@ -122,25 +123,39 @@ export interface LandAssessmentDto {
   elevationM: number | null;
 }
 
-/** A land document. `filePath` is a stored path/reference, not a file payload. */
+/**
+ * A land document. Real uploads expose the display metadata and `hasFile`; `filePath` is the
+ * private storage key and is never shown as a filesystem path. Legacy metadata rows have
+ * `hasFile: false`.
+ */
 export interface LandDocumentDto {
   id: number;
   landId: number;
   documentTypeId: number;
   documentTypeName: string;
-  filePath: string;
+  /** Legacy metadata-only reference; null for a real upload (use `hasFile` and download). */
+  filePath: string | null;
   version: number;
   status: string;
   uploadedAt: string | null;
   reviewedById: number | null;
   reviewedAt: string | null;
   reviewNote: string | null;
+  originalFileName: string | null;
+  contentType: string | null;
+  fileSizeBytes: number | null;
+  sha256: string | null;
+  hasFile: boolean;
 }
 
-/** Body of `POST /api/Lands/{id}/documents` (metadata only). */
-export interface UploadLandDocumentRequest {
+/**
+ * The real upload is multipart form data:
+ *   documentTypeId: number
+ *   file: File (PDF, JPEG or PNG, up to the server limit)
+ */
+export interface UploadLandDocumentInput {
   documentTypeId: number;
-  filePath: string;
+  file: File;
 }
 
 /** Body of `PUT /api/Lands/{id}/documents/{documentId}/review` (admin only). */
@@ -172,11 +187,14 @@ export interface LandStatusHistoryDto {
   landId: number;
   statusName: string;
   changeByName: string;
+  changedById: number;
   reason: string | null;
   changedAt: string;
 }
 
 /** `GET /api/criteria/current`. */
+export type CriterionValuesDto = Pick<LandCriterionDto, 'id' | 'minAreaDonum' | 'maxSlopePct' | 'maxGridDistanceKm' | 'minSolarIrradiance' | 'minElevationM'>;
+
 export interface LandCriterionDto {
   id: number;
   minAreaDonum: number | null;
@@ -224,9 +242,6 @@ export interface DocumentTypeDto {
   name: string;
   isRequiredForVerification: boolean;
 }
-
-/** Backend `ChangeRequestStatuses`. */
-export type ChangeRequestStatus = 'Pending' | 'Approved' | 'Rejected';
 
 /**
  * The landlord-owned fields of a land, as carried by a change request. Region, grid

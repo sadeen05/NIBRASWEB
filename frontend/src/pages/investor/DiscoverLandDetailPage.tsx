@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+﻿import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Alert,
   App as AntApp,
@@ -26,7 +26,7 @@ import { resolveApiMessage } from '@/api/knownMessages';
 import { createOffer } from '@/api/offers';
 import { FullPageState } from '@/components/FullPageState';
 import { LandStatusTag } from '@/components/LandStatusTag';
-import { formatDecimal } from '@/pages/lands/landFormat';
+import { formatDateTime, formatDecimal } from '@/pages/lands/landFormat';
 import { CONNECTION_MECHANISMS } from '@/types/offers';
 
 const RESULT_COLORS: Record<string, string> = {
@@ -123,12 +123,26 @@ export function DiscoverLandDetailPage() {
   if (landQuery.isError) {
     const status = isApiError(landQuery.error) ? landQuery.error.status : null;
     const isForbidden = status === 403;
+    const approvalRestricted =
+      isForbidden && isApiError(landQuery.error) && landQuery.error.message === 'Investor account is not approved.';
     return (
       <FullPageState
         variant="info"
         code={isForbidden ? '403' : '404'}
-        title={isForbidden ? t('errors.forbiddenTitle') : t('lands.detail.notFoundTitle')}
-        description={isForbidden ? t('discover.notApprovedBody') : t('lands.detail.notFoundBody')}
+        title={
+          isForbidden
+            ? approvalRestricted
+              ? t('discover.notApprovedTitle')
+              : t('discover.notVisibleTitle')
+            : t('lands.detail.notFoundTitle')
+        }
+        description={
+          isForbidden
+            ? approvalRestricted
+              ? t('discover.notApprovedBody')
+              : t('discover.notVisibleBody')
+            : t('lands.detail.notFoundBody')
+        }
         action={
           <Link to="/app/discover">
             <Button type="primary">{t('discover.backToList')}</Button>
@@ -157,7 +171,7 @@ export function DiscoverLandDetailPage() {
             <ArrowLeft size={16} aria-hidden="true" />
             {t('discover.backToList')}
           </Link>
-          <Typography.Title level={3} style={{ margin: '8px 0 0' }}>
+          <Typography.Title level={1} style={{ margin: '8px 0 0' }}>
             {land.landNumber} <LandStatusTag status={land.status} />
           </Typography.Title>
           <Typography.Paragraph style={{ margin: '4px 0 0', color: 'var(--nb-text-secondary)' }}>
@@ -182,6 +196,7 @@ export function DiscoverLandDetailPage() {
           size="small"
           bordered
           items={[
+            { key: 'registered', label: t('trace.registered'), children: formatDateTime(land.registeredAt, locale) },
             { key: 'governorate', label: t('lands.form.governorate'), children: land.governorateName ?? '—' },
             { key: 'region', label: t('lands.form.region'), children: land.regionName ?? '—' },
             { key: 'village', label: t('lands.form.village'), children: land.village ?? '—' },

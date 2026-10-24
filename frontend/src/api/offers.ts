@@ -3,6 +3,7 @@ import type {
   CounterOfferRequest,
   CreateOfferRequest,
   OfferDto,
+  OfferVersionDto,
   OfferNegotiationHistoryDto,
   RejectOfferRequest,
 } from '@/types/offers';
@@ -31,6 +32,10 @@ export function fetchPendingAdminApproval(): Promise<OfferDto[]> {
 
 export function fetchOffer(id: number): Promise<OfferDto> {
   return getJson<OfferDto>(`/Offers/${id}`);
+}
+
+export function fetchOfferVersions(id: number): Promise<OfferVersionDto[]> {
+  return getJson<OfferVersionDto[]>(`/Offers/${id}/versions`);
 }
 
 export function fetchNegotiationHistory(id: number): Promise<OfferNegotiationHistoryDto[]> {

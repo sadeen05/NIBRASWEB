@@ -62,6 +62,24 @@ export function isApiError(error: unknown): error is ApiError {
 }
 
 /**
+ * A failure raised by the client with copy that is already localized for display
+ * (for example a pre-flight guard inside a mutation). {@link resolveApiMessage}
+ * shows its message as-is instead of substituting the generic error title, so a
+ * localized client-side message is never silently replaced by a generic one.
+ * It never carries server text; only reviewed UI copy is thrown with it.
+ */
+export class LocalizedMessageError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'LocalizedMessageError';
+  }
+}
+
+export function isLocalizedMessageError(error: unknown): error is LocalizedMessageError {
+  return error instanceof LocalizedMessageError;
+}
+
+/**
  * Resolves user-visible copy through the shared i18n instance. The English
  * fallback is only used if the key is missing, so a translation gap can never
  * surface a raw i18n key to the user.

@@ -1,4 +1,4 @@
-import { Alert, Button, Form, Input, Typography } from 'antd';
+﻿import { Alert, Button, Form, Input, Typography } from 'antd';
 import { Lock, Mail } from 'lucide-react';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -16,6 +16,14 @@ interface LoginFormValues {
   email: string;
   password: string;
 }
+
+/**
+ * The login form caps input at the same lengths the backend `LoginRequest`
+ * declares (Email 255, Password 128), so an over-long entry is guided at the
+ * field instead of being rejected by the server after submission.
+ */
+const EMAIL_MAX = 255;
+const PASSWORD_MAX = 128;
 
 interface LocationState {
   from?: string;
@@ -123,7 +131,7 @@ export function LoginPage() {
         <div className="login-card">
           <div className="login-card__header">
             <div>
-              <h2 style={{ margin: 0, fontSize: 22 }}>{t('login.title')}</h2>
+              <h1 style={{ margin: 0, fontSize: 22 }}>{t('login.title')}</h1>
               <p style={{ margin: '4px 0 0', color: 'var(--nb-text-secondary)' }}>
                 {t('login.subtitle')}
               </p>
@@ -133,15 +141,13 @@ export function LoginPage() {
 
           {emailNotVerified && (
             <div style={{ marginBottom: 18 }}>
-              <div role="status" aria-live="polite">
-                <Alert
-                  type="warning"
-                  showIcon
-                  role="status"
-                  title={t('login.emailNotVerifiedTitle')}
-                  description={t('login.emailNotVerifiedBody')}
-                />
-              </div>
+              <Alert
+                type="warning"
+                showIcon
+                role="status"
+                title={t('login.emailNotVerifiedTitle')}
+                description={t('login.emailNotVerifiedBody')}
+              />
               <Button
                 type="primary"
                 size="large"
@@ -179,11 +185,13 @@ export function LoginPage() {
               rules={[
                 { required: true, message: t('login.emailRequired') },
                 { type: 'email', message: t('login.emailInvalid') },
+                { max: EMAIL_MAX, message: t('login.maxLength', { max: EMAIL_MAX }) },
               ]}
             >
               <Input
                 size="large"
                 type="email"
+                maxLength={EMAIL_MAX}
                 autoComplete="username"
                 placeholder={t('login.emailPlaceholder')}
                 prefix={<Mail size={16} aria-hidden="true" />}
@@ -193,10 +201,14 @@ export function LoginPage() {
             <Form.Item
               name="password"
               label={t('login.passwordLabel')}
-              rules={[{ required: true, message: t('login.passwordRequired') }]}
+              rules={[
+                { required: true, message: t('login.passwordRequired') },
+                { max: PASSWORD_MAX, message: t('login.maxLength', { max: PASSWORD_MAX }) },
+              ]}
             >
               <Input.Password
                 size="large"
+                maxLength={PASSWORD_MAX}
                 autoComplete="current-password"
                 placeholder={t('login.passwordPlaceholder')}
                 prefix={<Lock size={16} aria-hidden="true" />}

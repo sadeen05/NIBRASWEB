@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+﻿import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Alert, App as AntApp, Button, Card, Form, Input, Modal, Space, Table, Typography } from 'antd';
 import type { TableColumnsType } from 'antd';
 import { Check, X } from 'lucide-react';
@@ -146,7 +146,7 @@ export function AdminOffersPage() {
   return (
     <Space orientation="vertical" size="large" style={{ width: '100%' }}>
       <div>
-        <Typography.Title level={3} style={{ margin: 0 }}>
+        <Typography.Title level={1} style={{ margin: 0 }}>
           {t('admin.offerQueueTitle')}
         </Typography.Title>
         <Typography.Paragraph style={{ margin: '4px 0 0', color: 'var(--nb-text-secondary)' }}>

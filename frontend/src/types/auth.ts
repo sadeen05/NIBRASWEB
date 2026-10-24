@@ -25,6 +25,12 @@ export interface AuthUserSummary {
   verification?: 'not_applicable' | 'handed_over' | 'failed';
   /** A short explanation that belongs to the verification status. Never a credential. */
   verificationMessage?: string;
+  /** The active address of the account. Present on login and `/auth/me`. */
+  email?: string;
+  /** `true` when the active address is proven; `false` while it is not; absent on older shapes. */
+  emailVerified?: boolean | null;
+  /** An address that is waiting for confirmation; the active address is unchanged. */
+  pendingEmail?: string | null;
 }
 
 /** `POST /api/auth/login` response body. */
@@ -80,6 +86,16 @@ export interface ActivateAdminRequest {
  */
 export interface VerifyEmailRequest {
   token: string;
+}
+
+/**
+ * `POST /api/auth/change-email` request body. Mirrors the backend
+ * `ChangeEmailRequest`: the current password is required, and the active
+ * address is only replaced after the new address has been confirmed.
+ */
+export interface ChangeEmailRequest {
+  newEmail: string;
+  currentPassword: string;
 }
 
 /**

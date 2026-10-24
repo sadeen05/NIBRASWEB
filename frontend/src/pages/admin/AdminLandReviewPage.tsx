@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+﻿import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Alert,
   App as AntApp,
@@ -20,7 +20,7 @@ import {
   Typography,
 } from 'antd';
 import type { TableColumnsType } from 'antd';
-import { ArrowLeft, Check, HandCoins, Save, X } from 'lucide-react';
+import { ArrowLeft, Check, Download, HandCoins, Save, X } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link, useParams } from 'react-router-dom';
@@ -29,6 +29,7 @@ import { isApiError } from '@/api/errors';
 import { resolveApiMessage } from '@/api/knownMessages';
 import {
   assessLand,
+  downloadDocument,
   fetchAssessments,
   fetchDocuments,
   fetchEligibility,
@@ -43,8 +44,9 @@ import { useAuth } from '@/auth/useAuth';
 import { FullPageState } from '@/components/FullPageState';
 import { LandStatusTag } from '@/components/LandStatusTag';
 import { criterionLabelWithUnit, criterionThresholdText } from '@/pages/lands/criteriaFormat';
-import { formatDateTime, formatDecimal } from '@/pages/lands/landFormat';
+import { formatDateTime, formatDecimal, formatFileSize } from '@/pages/lands/landFormat';
 import type { AssessLandRequest, LandAssessmentDto, LandDocumentDto } from '@/types/lands';
+import { saveBlob } from '@/utils/saveBlob';
 
 const RESULT_COLORS: Record<string, string> = {
   Passed: 'green',
@@ -240,6 +242,14 @@ export function AdminLandReviewPage() {
       setActionError(null);
       message.success(t('admin.documentReviewed'));
       await queryClient.invalidateQueries({ queryKey: ['land', id, 'documents'] });
+    },
+    onError: onActionError,
+  });
+
+  const downloadMutation = useMutation({
+    mutationFn: (document: LandDocumentDto) => downloadDocument(id, document.id),
+    onSuccess: (blob, document) => {
+      saveBlob(blob, document.originalFileName ?? 'document');
     },
     onError: onActionError,
   });
@@ -476,7 +486,21 @@ export function AdminLandReviewPage() {
 
   const documentColumns: TableColumnsType<LandDocumentDto> = [
     { title: t('lands.documents.documentType'), dataIndex: 'documentTypeName', key: 'documentTypeName' },
-    { title: t('lands.documents.pathLabel'), dataIndex: 'filePath', key: 'filePath' },
+    {
+      title: t('lands.documents.fileName'),
+      key: 'fileName',
+      render: (_value, document) =>
+        document.originalFileName ? (
+          <Space orientation="vertical" size={0}>
+            <span>{document.originalFileName}</span>
+            <Typography.Text type="secondary">
+              {document.contentType ?? '—'} · {formatFileSize(document.fileSizeBytes)}
+            </Typography.Text>
+          </Space>
+        ) : (
+          <Typography.Text type="secondary">{t('lands.documents.legacyRow')}</Typography.Text>
+        ),
+    },
     { title: t('lands.documents.version'), dataIndex: 'version', key: 'version' },
     {
       title: t('lands.documents.status'),
@@ -484,7 +508,9 @@ export function AdminLandReviewPage() {
       key: 'status',
       render: (value: string, document) => (
         <Space size="small" wrap>
-          <Tag color={DOC_STATUS_COLORS[value] ?? 'default'}>{value}</Tag>
+          <Tag color={DOC_STATUS_COLORS[value] ?? 'default'}>
+            {t(`lands.documents.status${value}`, { defaultValue: value })}
+          </Tag>
           {needsReReview(document) && (
             <Tag color="orange">{t('lands.documents.reReviewTag')}</Tag>
           )}
@@ -513,6 +539,23 @@ export function AdminLandReviewPage() {
           </Space>
         ) : (
           '—'
+        ),
+    },
+    {
+      title: t('lands.documents.download'),
+      key: 'download',
+      render: (_value, document) =>
+        document.hasFile ? (
+          <Button
+            size="small"
+            icon={<Download size={14} aria-hidden="true" />}
+            loading={downloadMutation.isPending && downloadMutation.variables?.id === document.id}
+            onClick={() => downloadMutation.mutate(document)}
+          >
+            {t('lands.documents.download')}
+          </Button>
+        ) : (
+          <Typography.Text type="secondary">{t('lands.documents.notAvailable')}</Typography.Text>
         ),
     },
     {
@@ -603,7 +646,7 @@ export function AdminLandReviewPage() {
             <ArrowLeft size={16} aria-hidden="true" />
             {t('admin.backToQueue')}
           </Link>
-          <Typography.Title level={3} style={{ margin: '8px 0 0' }}>
+          <Typography.Title level={1} style={{ margin: '8px 0 0' }}>
             {land.landNumber} <LandStatusTag status={land.status} />
           </Typography.Title>
           <Typography.Paragraph style={{ margin: '4px 0 0', color: 'var(--nb-text-secondary)' }}>
@@ -716,6 +759,7 @@ export function AdminLandReviewPage() {
           items={[
             { key: 'governorate', label: t('lands.form.governorate'), children: land.governorateName ?? '—' },
             { key: 'region', label: t('lands.form.region'), children: land.regionName ?? '—' },
+            { key: 'registered', label: t('trace.registered'), children: formatDateTime(land.registeredAt, locale) },
             { key: 'grid', label: t('lands.form.grid'), children: land.gridId ?? '—' },
             { key: 'village', label: t('lands.form.village'), children: land.village ?? '—' },
             { key: 'basin', label: t('lands.form.basin'), children: land.basin ?? '—' },
@@ -867,7 +911,7 @@ export function AdminLandReviewPage() {
           />
         )}
 
-        <Typography.Title level={5} style={{ marginTop: 24 }}>
+        <Typography.Title level={2} className="nb-section-title" style={{ marginTop: 24 }}>
           {t('admin.assessmentHistoryTitle')}
         </Typography.Title>
         {assessmentsQuery.isLoading ? (
@@ -883,6 +927,13 @@ export function AdminLandReviewPage() {
             pagination={false}
             dataSource={assessmentsQuery.data ?? []}
             columns={assessmentColumns}
+            expandable={{ expandedRowRender: (entry) => <Space orientation="vertical">
+              <span>{t('criteria.current', { id: entry.criterionId ?? t('criteria.unknown') })}</span>
+              <span>{t('criteria.fields.minAreaDonum')}: {entry.areaDonumSnapshot ?? '—'}</span>
+              {entry.criteriaSnapshot && Object.entries(entry.criteriaSnapshot)
+                .filter(([key]) => ['minAreaDonum','maxSlopePct','maxGridDistanceKm','minSolarIrradiance','minElevationM'].includes(key))
+                .map(([key,value]) => <span key={key}>{t('criteria.fields.' + key)}: {value ?? '—'}</span>)}
+            </Space> }}
           />
         )}
       </Card>
@@ -933,6 +984,7 @@ export function AdminLandReviewPage() {
             loading={documentsQuery.isLoading}
             locale={{ emptyText: t('lands.documents.empty') }}
             pagination={false}
+            scroll={{ x: 'max-content' }}
             size="small"
           />
         )}
@@ -960,7 +1012,7 @@ export function AdminLandReviewPage() {
                 ),
                 content: (
                   <div>
-                    <div>{entry.changeByName}</div>
+                    <div>#{entry.changedById} · {entry.changeByName}</div>
                     {entry.reason && <Typography.Text type="secondary">{entry.reason}</Typography.Text>}
                   </div>
                 ),

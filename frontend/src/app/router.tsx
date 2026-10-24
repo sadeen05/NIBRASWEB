@@ -1,30 +1,35 @@
 import { createBrowserRouter, Navigate } from 'react-router-dom';
 
+import {
+  AccountPage,
+  ActivateAdminPage,
+  AdminChangeRequestsPage,
+  AdminCriteriaPage,
+  AdminLandQueuePage,
+  AdminLandReviewPage,
+  AdminOffersPage,
+  AdminUsersPage,
+  ConfirmEmailChangePage,
+  ContractDetailPage,
+  ContractsListPage,
+  DashboardPlaceholder,
+  DiscoverLandDetailPage,
+  DiscoverLandsPage,
+  ForbiddenPage,
+  LandDetailPage,
+  LandFormPage,
+  LandListPage,
+  LandOffersPage,
+  LoginPage,
+  MyOffersPage,
+  NotFoundPage,
+  OfferDetailPage,
+  RegisterPage,
+  VerifyEmailPage,
+} from '@/app/lazyPages';
 import { RequireAuth, RequireRole } from '@/auth/guards';
 import { AppShell } from '@/layouts/AppShell';
 import { PublicLayout } from '@/layouts/PublicLayout';
-import { AdminLandQueuePage } from '@/pages/admin/AdminLandQueuePage';
-import { AdminChangeRequestsPage } from '@/pages/admin/AdminChangeRequestsPage';
-import { AdminLandReviewPage } from '@/pages/admin/AdminLandReviewPage';
-import { AdminOffersPage } from '@/pages/admin/AdminOffersPage';
-import { AdminUsersPage } from '@/pages/admin/AdminUsersPage';
-import { DashboardPlaceholder } from '@/pages/app/DashboardPlaceholder';
-import { ActivateAdminPage } from '@/pages/auth/ActivateAdminPage';
-import { LoginPage } from '@/pages/auth/LoginPage';
-import { RegisterPage } from '@/pages/auth/RegisterPage';
-import { VerifyEmailPage } from '@/pages/auth/VerifyEmailPage';
-import { ContractDetailPage } from '@/pages/contracts/ContractDetailPage';
-import { ContractsListPage } from '@/pages/contracts/ContractsListPage';
-import { DiscoverLandDetailPage } from '@/pages/investor/DiscoverLandDetailPage';
-import { DiscoverLandsPage } from '@/pages/investor/DiscoverLandsPage';
-import { LandDetailPage } from '@/pages/lands/LandDetailPage';
-import { LandFormPage } from '@/pages/lands/LandFormPage';
-import { LandListPage } from '@/pages/lands/LandListPage';
-import { LandOffersPage } from '@/pages/offers/LandOffersPage';
-import { MyOffersPage } from '@/pages/offers/MyOffersPage';
-import { OfferDetailPage } from '@/pages/offers/OfferDetailPage';
-import { ForbiddenPage } from '@/pages/shared/ForbiddenPage';
-import { NotFoundPage } from '@/pages/shared/NotFoundPage';
 
 const ADMIN_ROLES = ['Admin', 'SuperAdmin'] as const;
 const PARTY_ROLES = ['Landlord', 'Investor', 'Admin', 'SuperAdmin'] as const;
@@ -45,6 +50,8 @@ export const router = createBrowserRouter([
       // The verification link of a new Landlord or Investor account carries its
       // token in the URL fragment as well, so this page is public too.
       { path: '/verify-email', element: <VerifyEmailPage /> },
+      // The address-change link also carries its token in the fragment.
+      { path: '/confirm-email-change', element: <ConfirmEmailChangePage /> },
       { path: '/403', element: <ForbiddenPage /> },
       { path: '*', element: <NotFoundPage /> },
     ],
@@ -57,6 +64,9 @@ export const router = createBrowserRouter([
         element: <AppShell />,
         children: [
           { index: true, element: <DashboardPlaceholder /> },
+
+          // --- Every authenticated role ---
+          { path: 'account', element: <AccountPage /> },
 
           // --- Landlord ---
           {
@@ -111,6 +121,7 @@ export const router = createBrowserRouter([
               { path: 'admin/lands/:id', element: <AdminLandReviewPage /> },
               { path: 'admin/offers', element: <AdminOffersPage /> },
               { path: 'admin/users', element: <AdminUsersPage /> },
+              { path: 'admin/criteria', element: <AdminCriteriaPage /> },
             ],
           },
         ],

@@ -1,4 +1,4 @@
-import { isApiError } from '@/api/errors';
+import { isApiError, isLocalizedMessageError } from '@/api/errors';
 import {
   describeEligibilityFailure,
   describePinnedCriteriaFailure,
@@ -13,12 +13,20 @@ type TranslateFn = (key: string, options?: Record<string, unknown>) => string;
  * OfferService / ContractService / UserService (Phase 5C).
  */
 export const KNOWN_MESSAGES: Record<string, string> = {
+  'A rejection reason of at most 500 characters is required.': 'common.reasonRequired',
+  'The verification mail could not be delivered. The account stays unverified; the verification can be sent again.': 'mailDelivery.failed',
+  'The invitation could not be delivered. The account stays inactive; the invitation can be sent again.': 'mailDelivery.failed',
+  'Criteria values and a reason are required.': 'common.reasonRequired',
+  'Criteria changed. Refresh the current record before submitting again.': 'criteria.conflict',
+  'Only SuperAdmin may change eligibility criteria.': 'apiErrors.forbidden',
+  'Only an active SuperAdmin may change eligibility criteria.': 'apiErrors.forbidden',
   // --- Offers ---------------------------------------------------------------
   'An investor cannot make an offer on their own land.': 'offers.errors.ownLand',
   'Only investors can create offers.': 'offers.errors.investorsOnly',
   'Only approved investors can create offers.': 'offers.errors.notApproved',
   'Investor account is not approved.': 'offers.errors.notApproved',
   'ConnectionMechanism is not a defined value.': 'offers.errors.badMechanism',
+  'You are not allowed to view this land.': 'discover.notVisibleBody',
   'Only verified lands can receive offers.': 'offers.errors.landNotVerified',
   'Only offers on Verified land can be approved.': 'offers.errors.landNotVerified',
   'You already have an active offer on this land.': 'offers.errors.activeOfferExists',
@@ -72,6 +80,56 @@ export const KNOWN_MESSAGES: Record<string, string> = {
   'Only active contracts can be terminated.': 'contracts.errors.notActive',
   'Contract not found.': 'contracts.errors.notFound',
   'You are not authorized to view this contract.': 'contracts.errors.forbidden',
+  'Only the contract parties can request a revision.': 'contracts.errors.revisionPartiesOnly',
+  'Only the contract parties can respond to a revision.': 'contracts.errors.revisionPartiesOnly',
+  'This contract already has an open revision.': 'contracts.errors.revisionOpen',
+  'This contract changed after you loaded it. Reload the current draft and try again.':
+    'contracts.errors.revisionStale',
+  'The proposed revision must change at least one contract term.': 'contracts.errors.revisionNoChange',
+  'This revision is not awaiting party consent.': 'contracts.errors.revisionNotPendingConsent',
+  'This party has already responded to this revision.': 'contracts.errors.revisionAlreadyResponded',
+  'This revision is not awaiting admin review.': 'contracts.errors.revisionNotPendingAdmin',
+  'This revision is not awaiting a SuperAdmin decision.':
+    'contracts.errors.revisionNotPendingSuperAdmin',
+  'Both the investor and the landlord must approve the revised terms before admin review.':
+    'contracts.errors.revisionConsentsRequired',
+  'Fully signed contracts cannot be revised; use the amendment workflow.':
+    'contracts.errors.revisionFullySigned',
+  'Reviewed or finalised contracts cannot use the draft-revision workflow.':
+    'contracts.errors.revisionFinalised',
+  'Only a contract pending signatures can be revised.':
+    'contracts.errors.notPendingSignatures',
+  'This contract has no recorded draft to revise.': 'contracts.errors.revisionNoDraft',
+  'A contract revision is in progress; resolve it before signing the contract.':
+    'contracts.errors.revisionInProgress',
+  'A contract revision is in progress; resolve it before reviewing the contract.':
+    'contracts.errors.revisionInProgress',
+  'Only a SuperAdmin can decide an escalated contract revision.':
+    'contracts.errors.revisionSuperAdminOnly',
+  'The admin decision must be Approve or Escalate.': 'contracts.errors.revisionApprovalInvalid',
+  'The SuperAdmin decision must be Continue or Cancel.':
+    'contracts.errors.revisionSuperAdminInvalid',
+  'An escalation reason is required.': 'common.reasonRequired',
+  'A SuperAdmin decision reason is required.': 'common.reasonRequired',
+  'This contract has no active grid reservation; the revision cannot proceed.':
+    'contracts.errors.revisionReservationMissing',
+  'The linked grid reservation does not match this contract.':
+    'contracts.errors.revisionReservationMissing',
+  'The grid reservation for this contract has expired; the revision cannot proceed.':
+    'contracts.errors.revisionReservationExpired',
+  'The current contract terms are unavailable.': 'contracts.errors.revisionTermsUnavailable',
+  'The stored revision terms cannot be read, so the revision cannot be approved.':
+    'contracts.errors.revisionTermsUnreadable',
+  'The stored revision terms do not match this contract.':
+    'contracts.errors.revisionTermsMismatch',
+  'The accepted offer version changed after this revision was requested. Reload and try again.':
+    'contracts.errors.revisionOfferChanged',
+  'The accepted offer version is no longer available.': 'contracts.errors.revisionOfferChanged',
+  'The offer is not in the contract-owned state.': 'contracts.errors.revisionOfferState',
+  'The offer no longer matches this contract.': 'contracts.errors.revisionOfferMismatch',
+  'The land is no longer under contract.': 'contracts.errors.landNotUnderContract',
+  'The proposed revision does not change any contract term.': 'contracts.errors.revisionNoChange',
+  'Contract revision not found.': 'contracts.errors.revisionNotFound',
 
   // --- Users ----------------------------------------------------------------
   'Only an Investor with company details can be approved.': 'users.errors.investorNeedsCompany',
@@ -82,6 +140,7 @@ export const KNOWN_MESSAGES: Record<string, string> = {
   'You are not authorized to create users.': 'users.errors.notAuthorized',
   'You are not authorized to create this user role.': 'users.errors.roleNotAllowed',
   'Email already in use by another user.': 'users.errors.emailInUse',
+  'Email or phone already in use by another user.': 'users.errors.emailOrPhoneInUse',
   'Cannot delete user who owns lands.': 'users.errors.hasLands',
   'Cannot delete user who has contracts.': 'users.errors.hasContracts',
   'Cannot delete user with pending contract cancellations.': 'users.errors.hasCancellations',
@@ -186,6 +245,10 @@ const TECHNICAL_ASSESSMENT_PREFIX = 'Technical assessment is incomplete:';
  * translated; unknown server text is shown verbatim.
  */
 export function resolveApiMessage(error: unknown, t: TranslateFn): string {
+  if (isLocalizedMessageError(error)) {
+    return error.message;
+  }
+
   if (!isApiError(error)) {
     return t('errors.genericTitle');
   }

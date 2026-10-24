@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+﻿import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Alert,
   App as AntApp,
@@ -219,7 +219,7 @@ export function LandChangeRequestPanel({ land }: { land: LandDto }) {
               <Input.TextArea rows={3} maxLength={500} placeholder={t('lands.changeRequest.reasonPlaceholder')} />
             </Form.Item>
 
-            <Typography.Title level={5}>{t('lands.changeRequest.proposedTitle')}</Typography.Title>
+            <Typography.Title level={2} className="nb-section-title">{t('lands.changeRequest.proposedTitle')}</Typography.Title>
             <Row gutter={16}>
               <Col xs={24} md={12}>
                 <Form.Item name="governorateId" label={t('lands.form.governorate')}>
@@ -301,7 +301,7 @@ export function LandChangeRequestPanel({ land }: { land: LandDto }) {
               </Col>
             </Row>
 
-            <Typography.Title level={5}>{t('lands.changeRequest.documentsTitle')}</Typography.Title>
+            <Typography.Title level={2} className="nb-section-title">{t('lands.changeRequest.documentsTitle')}</Typography.Title>
             <Form.List name="supportingDocuments">
               {(fields, { add, remove }) => (
                 <Space orientation="vertical" size="small" style={{ width: '100%' }}>
@@ -380,7 +380,7 @@ export function LandChangeRequestPanel({ land }: { land: LandDto }) {
         />
       )}
 
-      <Typography.Title level={5} style={{ marginTop: 0 }}>
+      <Typography.Title level={2} className="nb-section-title" style={{ marginTop: 0 }}>
         {t('lands.changeRequest.existingTitle')}
       </Typography.Title>
       {requestsQuery.isError ? (

@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+﻿import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Alert,
   App as AntApp,
@@ -12,6 +12,7 @@ import {
   Space,
   Spin,
   Timeline,
+  Table,
   Typography,
 } from 'antd';
 import { ArrowLeft, Check, FileSignature, HandCoins, Undo2, X } from 'lucide-react';
@@ -29,9 +30,11 @@ import {
   counterOffer,
   fetchNegotiationHistory,
   fetchOffer,
+  fetchOfferVersions,
   rejectOffer,
   withdrawOffer,
 } from '@/api/offers';
+import { formatApprovalUtc } from '@/utils/approvalTime';
 import { useAuth } from '@/auth/useAuth';
 import { FullPageState } from '@/components/FullPageState';
 import { OfferStatusTag } from '@/components/OfferStatusTag';
@@ -85,6 +88,9 @@ export function OfferDetailPage() {
     enabled: validId,
   });
 
+  const versionsQuery = useQuery({
+    queryKey: ['offer', id, 'versions'], queryFn: () => fetchOfferVersions(id), enabled: validId,
+  });
   const historyQuery = useQuery({
     queryKey: ['offer', id, 'history'],
     queryFn: () => fetchNegotiationHistory(id),
@@ -99,11 +105,10 @@ export function OfferDetailPage() {
   };
 
   const onActionError = (error: unknown) => setActionError(resolveApiMessage(error, t));
-  const onActionSuccess = async (serverMessage: string, key: string) => {
+  const onActionSuccess = async (serverMessage: string) => {
     setActionError(null);
     message.success(serverMessage);
     await invalidate();
-    return key;
   };
 
   const counterMutation = useMutation({
@@ -112,7 +117,7 @@ export function OfferDetailPage() {
     onSuccess: async () => {
       setCounterOpen(false);
       counterForm.resetFields();
-      await onActionSuccess(t('offers.countered'), 'counter');
+      await onActionSuccess(t('offers.countered'));
     },
     onError: onActionError,
   });
@@ -120,7 +125,7 @@ export function OfferDetailPage() {
   const acceptMutation = useMutation({
     mutationFn: () => acceptOffer(id),
     onSuccess: async () => {
-      await onActionSuccess(t('offers.accepted'), 'accept');
+      await onActionSuccess(t('offers.accepted'));
     },
     onError: onActionError,
   });
@@ -130,7 +135,7 @@ export function OfferDetailPage() {
     onSuccess: async () => {
       setRejectOpen(false);
       rejectForm.resetFields();
-      await onActionSuccess(t('offers.rejected'), 'reject');
+      await onActionSuccess(t('offers.rejected'));
     },
     onError: onActionError,
   });
@@ -138,7 +143,7 @@ export function OfferDetailPage() {
   const withdrawMutation = useMutation({
     mutationFn: () => withdrawOffer(id),
     onSuccess: async () => {
-      await onActionSuccess(t('offers.withdrawn'), 'withdraw');
+      await onActionSuccess(t('offers.withdrawn'));
     },
     onError: onActionError,
   });
@@ -146,7 +151,7 @@ export function OfferDetailPage() {
   const adminApproveMutation = useMutation({
     mutationFn: () => adminApproveOffer(id),
     onSuccess: async () => {
-      await onActionSuccess(t('offers.adminApproved'), 'admin-approve');
+      await onActionSuccess(t('offers.adminApproved'));
     },
     onError: onActionError,
   });
@@ -156,7 +161,7 @@ export function OfferDetailPage() {
     onSuccess: async () => {
       setAdminRejectOpen(false);
       adminRejectForm.resetFields();
-      await onActionSuccess(t('offers.adminRejected'), 'admin-reject');
+      await onActionSuccess(t('offers.adminRejected'));
     },
     onError: onActionError,
   });
@@ -274,7 +279,7 @@ export function OfferDetailPage() {
             <ArrowLeft size={16} aria-hidden="true" />
             {t('offers.backToList')}
           </Link>
-          <Typography.Title level={3} style={{ margin: '8px 0 0' }}>
+          <Typography.Title level={1} style={{ margin: '8px 0 0' }}>
             {t('offers.detailTitle')} #{offer.id} <OfferStatusTag status={offer.status} />
           </Typography.Title>
         </div>
@@ -429,6 +434,27 @@ export function OfferDetailPage() {
         </Card>
       )}
 
+      <Card title={t('trace.versions')}>
+        {versionsQuery.isLoading ? <Spin /> : versionsQuery.isError ?
+          <Alert type="error" showIcon title={resolveApiMessage(versionsQuery.error, t)} /> :
+          <Table rowKey="id" pagination={false} dataSource={versionsQuery.data ?? []} scroll={{ x: 'max-content' }}
+            locale={{ emptyText: t('trace.empty') }} columns={[
+              { title: t('trace.record'), dataIndex: 'id' },
+              { title: t('trace.version'), dataIndex: 'versionNumber' },
+              { title: t('users.approval.actor'), key: 'actor', render: (_v, row) => '#' + row.createdById + ' · ' + row.createdByName + ' (' + row.createdByRole + ')' },
+              { title: t('offers.form.landlordSharePct'), dataIndex: 'landlordSharePct' },
+              { title: t('offers.form.durationYears'), dataIndex: 'durationYears' },
+              { title: t('offers.form.startDate'), dataIndex: 'startDate', render: (v: string | null) => formatDateTime(v, locale) },
+              { title: t('offers.form.installationCost'), dataIndex: 'installationCost' },
+              { title: t('offers.form.solarCellCapacityKw'), dataIndex: 'solarCellCapacityKw' },
+              { title: t('offers.form.expectedAnnualRevenue'), dataIndex: 'expectedAnnualRevenue' },
+              { title: t('offers.form.effectiveCostPerKw'), dataIndex: 'effectiveCostPerKw' },
+              { title: t('offers.form.paybackPeriodMonths'), dataIndex: 'paybackPeriodMonths' },
+              { title: t('offers.form.message'), dataIndex: 'message' },
+              { title: t('offers.list.createdAt'), dataIndex: 'createdAt', render: (v: string | null) => formatApprovalUtc(v, locale) },
+            ]} />}
+      </Card>
+
       <Card title={t('offers.negotiationHistory')}>
         {historyQuery.isLoading ? (
           <Spin />
@@ -456,7 +482,7 @@ export function OfferDetailPage() {
                 content: (
                   <div>
                     <div>
-                      {entry.actorName ?? '—'}
+                      #{entry.actorId} · {entry.actorName ?? '—'}
                       {entry.actorRole ? ` (${entry.actorRole})` : ''}
                       {entry.amount !== null ? ` · ${formatDecimal(entry.amount, locale)}` : ''}
                     </div>

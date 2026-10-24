@@ -22,5 +22,3 @@ export const tokens = {
   fontLatin: "'Inter', 'Tajawal', system-ui, -apple-system, 'Segoe UI', sans-serif",
   fontArabic: "'Tajawal', 'Inter', system-ui, sans-serif",
 } as const;
-
-export type Tokens = typeof tokens;

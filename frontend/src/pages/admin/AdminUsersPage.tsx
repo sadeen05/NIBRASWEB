@@ -1,28 +1,45 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+﻿import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Alert,
   App as AntApp,
   Button,
   Card,
+  Descriptions,
   Form,
   Input,
   Modal,
   Select,
   Space,
+  Spin,
   Table,
   Tag,
+  Tooltip,
   Typography,
 } from 'antd';
 import type { TableColumnsType } from 'antd';
-import { Check, Trash2, UserPlus } from 'lucide-react';
+import { Check, History, Trash2, UserPlus } from 'lucide-react';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { resolveApiMessage } from '@/api/knownMessages';
-import { approveUser, createUser, deleteUser, fetchRoles, fetchUsers } from '@/api/users';
+import {
+  approveUser,
+  rejectUserApproval,
+  resendUserMail,
+  createUser,
+  deleteUser,
+  fetchRoles,
+  fetchUserApproval,
+  fetchUsers,
+} from '@/api/users';
 import { useAuth } from '@/auth/useAuth';
 import { formatDateTime } from '@/pages/lands/landFormat';
-import { ROLE_NAMES, type UserDto } from '@/types/users';
+import { formatApprovalUtc } from '@/utils/approvalTime';
+import {
+  ROLE_NAMES,
+  type UserApprovalHistoryEntryDto,
+  type UserDto,
+} from '@/types/users';
 
 const PAGE_SIZE = 20;
 
@@ -46,6 +63,9 @@ export function AdminUsersPage() {
   const [approval, setApproval] = useState<'all' | 'approved' | 'unapproved'>('all');
   const [createOpen, setCreateOpen] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
+  const [approvalTarget, setApprovalTarget] = useState<UserDto | null>(null);
+  const [rejectTarget, setRejectTarget] = useState<UserDto | null>(null);
+  const [rejectForm] = Form.useForm<{ reason: string }>();
   const [form] = Form.useForm<CreateUserFormValues>();
   const locale = i18n.resolvedLanguage ?? i18n.language ?? 'en';
   const isSuperAdmin = currentUser?.role === 'SuperAdmin';
@@ -67,15 +87,33 @@ export function AdminUsersPage() {
     staleTime: 10 * 60_000,
   });
 
+  const approvalQuery = useQuery({
+    queryKey: ['user', approvalTarget?.id, 'approval'],
+    queryFn: () => fetchUserApproval(approvalTarget!.id),
+    enabled: approvalTarget !== null,
+  });
+
   const refresh = async () => {
     await queryClient.invalidateQueries({ queryKey: ['users'] });
   };
 
   const approveMutation = useMutation({
     mutationFn: (id: number) => approveUser(id),
-    onSuccess: async () => {
+    onSuccess: async (_result, id) => {
       message.success(t('users.approved'));
-      await refresh();
+      await Promise.all([
+        refresh(),
+        queryClient.invalidateQueries({ queryKey: ['user', id, 'approval'] }),
+      ]);
+    },
+    onError: (error: unknown) => message.error(resolveApiMessage(error, t)),
+  });
+
+  const rejectMutation = useMutation({
+    mutationFn: ({ id, reason }: { id: number; reason: string }) => rejectUserApproval(id, reason),
+    onSuccess: async (_result, { id }) => {
+      setRejectTarget(null); rejectForm.resetFields(); message.success(t('approvalDecision.saved'));
+      await Promise.all([refresh(), queryClient.invalidateQueries({ queryKey: ['user', id, 'approval'] })]);
     },
     onError: (error: unknown) => message.error(resolveApiMessage(error, t)),
   });
@@ -89,6 +127,11 @@ export function AdminUsersPage() {
     onError: (error: unknown) => message.error(resolveApiMessage(error, t)),
   });
 
+  const resendMutation = useMutation({
+    mutationFn: (target: UserDto) => resendUserMail(target.id, target.role === 'Admin'),
+    onSuccess: () => message.success(t('mailDelivery.sent')),
+    onError: (error: unknown) => message.error(resolveApiMessage(error, t)),
+  });
   const createMutation = useMutation({
     mutationFn: (values: CreateUserFormValues) =>
       createUser({
@@ -100,11 +143,12 @@ export function AdminUsersPage() {
         companyName: values.companyName?.trim() || null,
         companyRegistrationNumber: values.companyRegistrationNumber?.trim() || null,
       }),
-    onSuccess: async () => {
+    onSuccess: async (result) => {
       setCreateOpen(false);
       form.resetFields();
       setCreateError(null);
-      message.success(t('users.created'));
+      if (result.invitation === 'failed' || result.verification === 'failed') message.warning(t('mailDelivery.failed'));
+      else message.success(t('users.created'));
       await refresh();
     },
     onError: (error: unknown) => setCreateError(resolveApiMessage(error, t)),
@@ -136,6 +180,52 @@ export function AdminUsersPage() {
       onOk: () => deleteMutation.mutateAsync(target.id),
     });
 
+  // The backend enforces the same eligibility. The UI shows why an approve action is blocked
+  // instead of offering a button that would fail with a server error.
+  const approvalBlockedReason = (target: UserDto): string | null => {
+    if (target.role !== 'Investor') {
+      return t('users.approval.notInvestor');
+    }
+    if (target.emailVerified === false) {
+      return t('users.approval.emailUnverified');
+    }
+    if (!target.companyName?.trim() || !target.companyRegistrationNumber?.trim()) {
+      return t('users.approval.companyMissing');
+    }
+    return null;
+  };
+
+  const historyColumns: TableColumnsType<UserApprovalHistoryEntryDto> = [
+    { title: t('approvalDecision.decision'), key: 'decision', render: (_value, entry) =>
+      t(entry.eventType === 'AccountApprovalRejected' ? 'approvalDecision.rejected' : 'approvalDecision.approved') },
+    { title: t('users.approval.actorId'), dataIndex: 'actorId', key: 'actorId', render: (id: number | null) => id ?? '—' },
+    {
+      title: t('users.approval.actor'),
+      key: 'actor',
+      render: (_value, entry) => <Space orientation="vertical" size={0}>
+        <span>{entry.actorName ?? (entry.actorId === null ? t('users.approval.systemActor') : '—')}</span>
+        {!entry.actorSnapshotRecorded && <Typography.Text type="secondary">{t('criteria.legacyActor')}</Typography.Text>}
+      </Space>,
+    },
+    {
+      title: t('users.approval.actorRole'),
+      key: 'actorRole',
+      render: (_value, entry) => entry.actorRole ?? '—',
+    },
+    {
+      title: t('mailDelivery.eventTime'),
+      dataIndex: 'approvedAt',
+      key: 'approvedAt',
+      render: (value: string) => formatApprovalUtc(value, locale),
+    },
+    {
+      title: t('users.approval.details'),
+      dataIndex: 'details',
+      key: 'details',
+      render: (value: string | null) => value ?? '—',
+    },
+  ];
+
   const columns: TableColumnsType<UserDto> = [
     { title: t('users.list.name'), dataIndex: 'fullName', key: 'fullName' },
     { title: t('users.list.email'), dataIndex: 'email', key: 'email' },
@@ -147,6 +237,18 @@ export function AdminUsersPage() {
       render: (value: string) => <Tag>{t(`roles.${value}`, { defaultValue: value })}</Tag>,
     },
     {
+      title: t('users.list.verification'),
+      key: 'verification',
+      render: (_value, target) =>
+        target.emailVerified === false ? (
+          <Tag color="gold">{t('users.verification.unverified')}</Tag>
+        ) : target.emailVerified === true ? (
+          <Tag color="green">{t('users.verification.verified')}</Tag>
+        ) : (
+          <Tag>{t('users.verification.legacy')}</Tag>
+        ),
+    },
+    {
       title: t('users.list.approved'),
       dataIndex: 'isApproved',
       key: 'isApproved',
@@ -155,6 +257,22 @@ export function AdminUsersPage() {
           <Tag color="green">{t('users.approvedYes')}</Tag>
         ) : (
           <Tag color="gold">{t('users.approvedNo')}</Tag>
+        ),
+    },
+    {
+      title: t('users.list.approvedBy'),
+      key: 'approvedBy',
+      render: (_value, target) =>
+        target.approvedByName ? (
+          <Space orientation="vertical" size={0}>
+            <span>{target.approvedByName}</span>
+            <Typography.Text type="secondary">
+              {formatApprovalUtc(target.approvedAt ?? null, locale)}
+              {target.approvedActorSnapshotRecorded === false && <span> · {t('criteria.legacyActor')}</span>}
+            </Typography.Text>
+          </Space>
+        ) : (
+          '—'
         ),
     },
     {
@@ -172,30 +290,53 @@ export function AdminUsersPage() {
     {
       title: t('lands.list.actions'),
       key: 'actions',
-      render: (_value, target) => (
-        <Space>
-          {!target.isApproved && (
-            <Button
-              size="small"
-              type="primary"
-              icon={<Check size={14} aria-hidden="true" />}
-              onClick={() => confirmApprove(target)}
-            >
-              {t('users.approve')}
-            </Button>
-          )}
-          {target.role !== 'SuperAdmin' && target.id !== currentUser?.id && (
-            <Button
-              size="small"
-              danger
-              icon={<Trash2 size={14} aria-hidden="true" />}
-              onClick={() => confirmDelete(target)}
-            >
-              {t('common.delete')}
-            </Button>
-          )}
-        </Space>
-      ),
+      render: (_value, target) => {
+        const blockedReason = approvalBlockedReason(target);
+        return (
+          <Space wrap>
+            {target.role === 'Investor' && target.id !== currentUser?.id && (
+              <Tooltip title={blockedReason ?? undefined}>
+                <span>
+                  <Button
+                    size="small"
+                    type="primary"
+                    icon={<Check size={14} aria-hidden="true" />}
+                    disabled={blockedReason !== null}
+                    onClick={() => confirmApprove(target)}
+                  >
+                    {t('users.approve')}
+                  </Button>
+                </span>
+              </Tooltip>
+            )}
+            {target.role === 'Investor' && target.id !== currentUser?.id && <Button size="small" danger onClick={() => setRejectTarget(target)}>
+              {t('approvalDecision.reject')}
+            </Button>}
+            {target.role === 'Investor' && (
+              <Button
+                size="small"
+                icon={<History size={14} aria-hidden="true" />}
+                onClick={() => setApprovalTarget(target)}
+              >
+                {t('users.approval.open')}
+              </Button>
+            )}
+            {isSuperAdmin && target.emailVerified === false && ['Admin','Investor','Landlord'].includes(target.role) &&
+              <Button size="small" loading={resendMutation.isPending && resendMutation.variables?.id === target.id}
+                onClick={() => resendMutation.mutate(target)}>{t('mailDelivery.resend')}</Button>}
+            {target.role !== 'SuperAdmin' && target.id !== currentUser?.id && (isSuperAdmin || ['Landlord','Investor'].includes(target.role)) && (
+              <Button
+                size="small"
+                danger
+                icon={<Trash2 size={14} aria-hidden="true" />}
+                onClick={() => confirmDelete(target)}
+              >
+                {t('common.delete')}
+              </Button>
+            )}
+          </Space>
+        );
+      },
     },
   ];
 
@@ -214,7 +355,7 @@ export function AdminUsersPage() {
     <Space orientation="vertical" size="large" style={{ width: '100%' }}>
       <div className="page-header">
         <div>
-          <Typography.Title level={3} style={{ margin: 0 }}>
+          <Typography.Title level={1} style={{ margin: 0 }}>
             {t('users.title')}
           </Typography.Title>
           <Typography.Paragraph style={{ margin: '4px 0 0', color: 'var(--nb-text-secondary)' }}>
@@ -276,6 +417,7 @@ export function AdminUsersPage() {
             dataSource={usersQuery.data?.items ?? []}
             loading={usersQuery.isLoading}
             locale={{ emptyText: t('users.empty') }}
+            scroll={{ x: 'max-content' }}
             pagination={{
               current: usersQuery.data?.pageNumber ?? pageNumber,
               pageSize: usersQuery.data?.pageSize ?? PAGE_SIZE,
@@ -286,6 +428,20 @@ export function AdminUsersPage() {
           />
         )}
       </Card>
+
+      <Modal open={rejectTarget !== null} title={t('approvalDecision.reject')}
+        okText={t('approvalDecision.reject')} cancelText={t('common.cancel')}
+        confirmLoading={rejectMutation.isPending} onCancel={() => setRejectTarget(null)}
+        onOk={() => rejectForm.submit()} destroyOnHidden>
+        <Form form={rejectForm} layout="vertical" onFinish={({ reason }) => {
+          if (rejectTarget) rejectMutation.mutate({ id: rejectTarget.id, reason: reason.trim() });
+        }}>
+          <Form.Item name="reason" label={t('common.reason')}
+            rules={[{ required: true, whitespace: true, message: t('common.reasonRequired') }, { max: 500 }]}>
+            <Input.TextArea rows={3} maxLength={500} />
+          </Form.Item>
+        </Form>
+      </Modal>
 
       <Modal
         open={createOpen}
@@ -362,6 +518,99 @@ export function AdminUsersPage() {
             {t('users.form.investorCompanyHint')}
           </Typography.Paragraph>
         </Form>
+      </Modal>
+
+      <Modal
+        open={approvalTarget !== null}
+        title={t('users.approval.title', { name: approvalTarget?.fullName ?? '' })}
+        width={800}
+        footer={
+          <Button onClick={() => setApprovalTarget(null)}>{t('common.close')}</Button>
+        }
+        onCancel={() => setApprovalTarget(null)}
+        destroyOnHidden
+      >
+        {approvalQuery.isLoading ? (
+          <Spin />
+        ) : approvalQuery.isError ? (
+          <Alert
+            type="error"
+            showIcon
+            role="alert"
+            title={resolveApiMessage(approvalQuery.error, t)}
+          />
+        ) : approvalQuery.data ? (
+          <Space orientation="vertical" size="middle" style={{ width: '100%' }}>
+            <Descriptions column={2} size="small" bordered>
+              <Descriptions.Item label={t('users.approval.role')}>
+                {t(`roles.${approvalQuery.data.role}`, { defaultValue: approvalQuery.data.role })}
+              </Descriptions.Item>
+              <Descriptions.Item label={t('users.approval.emailVerification')}>
+                {approvalQuery.data.emailVerified === false ? (
+                  <Tag color="gold">{t('users.verification.unverified')}</Tag>
+                ) : approvalQuery.data.emailVerified === true ? (
+                  <Tag color="green">{t('users.verification.verified')}</Tag>
+                ) : (
+                  <Tag>{t('users.verification.legacy')}</Tag>
+                )}
+              </Descriptions.Item>
+              <Descriptions.Item label={t('users.approval.companyDetails')}>
+                {approvalQuery.data.companyDetailsPresent ? (
+                  <Tag color="green">{t('users.approval.present')}</Tag>
+                ) : (
+                  <Tag color="gold">{t('users.approval.missing')}</Tag>
+                )}
+              </Descriptions.Item>
+              <Descriptions.Item label={t('users.approval.eligible')}>
+                {approvalQuery.data.eligibleForApproval ? (
+                  <Tag color="green">{t('users.approval.eligibleYes')}</Tag>
+                ) : (
+                  <Tag color="gold">{t('users.approval.eligibleNo')}</Tag>
+                )}
+              </Descriptions.Item>
+              <Descriptions.Item label={t('users.approval.actorId')}>
+                {approvalQuery.data.approvedById ?? '—'}
+              </Descriptions.Item>
+              <Descriptions.Item label={t('users.approval.latestApprover')}>
+                {approvalQuery.data.approvedByName ?? '—'}
+                {approvalQuery.data.approvedByRole
+                  ? ` (${approvalQuery.data.approvedByRole})`
+                  : ''}
+              </Descriptions.Item>
+              <Descriptions.Item label={t('users.list.approved')}>
+                {t(approvalQuery.data.isApproved ? 'users.approvedYes' : 'users.approvedNo')}
+              </Descriptions.Item>
+              <Descriptions.Item label={t('users.approval.latestApprovedAt')}>
+                {formatApprovalUtc(approvalQuery.data.approvedAt, locale)}
+              </Descriptions.Item>
+            </Descriptions>
+
+            {approvalQuery.data.approvedById !== null && !approvalQuery.data.approvedActorSnapshotRecorded &&
+              <Alert type="warning" showIcon title={t('criteria.legacyActor')} />}
+            {!approvalQuery.data.isApproved && !approvalQuery.data.eligibleForApproval && (
+              <Alert
+                type="warning"
+                showIcon
+                title={t('users.approval.notEligibleBody')}
+              />
+            )}
+
+            <div>
+              <Typography.Title level={2} className="nb-section-title" style={{ marginTop: 0 }}>
+                {t('users.approval.historyTitle')}
+              </Typography.Title>
+              <Table<UserApprovalHistoryEntryDto>
+                rowKey="eventId"
+                size="small"
+                columns={historyColumns}
+                dataSource={approvalQuery.data.history}
+                pagination={false}
+                locale={{ emptyText: t('users.approval.historyEmpty') }}
+                scroll={{ x: 'max-content' }}
+              />
+            </div>
+          </Space>
+        ) : null}
       </Modal>
     </Space>
   );

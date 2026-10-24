@@ -8,6 +8,7 @@ const COLORS: Record<string, string> = {
   Active: 'green',
   Terminated: 'default',
   Rejected: 'red',
+  Cancelled: 'red',
 };
 
 /** Renders a contract status (string enum) with its localized label. */

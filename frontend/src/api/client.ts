@@ -91,6 +91,39 @@ export async function putJson<T>(
   return response.data;
 }
 
+/**
+ * Multipart upload. The browser must set `Content-Type` itself so that the
+ * multipart boundary is included; the axios instance default (`application/json`)
+ * is cleared only for this request. Axios also clears a FormData content type in
+ * the browser adapter, but being explicit keeps the intent visible.
+ */
+export async function postForm<T>(
+  url: string,
+  body: FormData,
+  config?: AxiosRequestConfig,
+): Promise<T> {
+  const response = await apiClient.post<T>(url, body, {
+    ...config,
+    headers: {
+      ...(config?.headers ?? {}),
+      'Content-Type': undefined,
+    },
+  });
+  return response.data;
+}
+
+/** Downloads a binary response without exposing the bearer token in a URL. */
+export async function getBlob(
+  url: string,
+  config?: AxiosRequestConfig,
+): Promise<Blob> {
+  const response = await apiClient.get<Blob>(url, {
+    ...config,
+    responseType: 'blob',
+  });
+  return response.data;
+}
+
 export async function deleteJson<T>(
   url: string,
   config?: AxiosRequestConfig,

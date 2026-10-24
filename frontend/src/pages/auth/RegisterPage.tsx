@@ -1,4 +1,4 @@
-import { useMutation } from '@tanstack/react-query';
+﻿import { useMutation } from '@tanstack/react-query';
 import { Alert, Button, Form, Input, Space, Typography } from 'antd';
 import { ArrowLeft, CheckCircle2, HandCoins, Lock, Mail, MailCheck, Phone, Sprout, User } from 'lucide-react';
 import { useState } from 'react';
@@ -122,9 +122,9 @@ export function RegisterPage() {
         <div className="login-card">
           <div className="login-card__header">
             <div>
-              <h2 style={{ margin: 0, fontSize: 22 }}>
+              <h1 style={{ margin: 0, fontSize: 22 }}>
                 {heading ?? t('register.formTitle', { role: roleLabel })}
-              </h2>
+              </h1>
               {step !== 'done' && (
                 <p style={{ margin: '4px 0 0', color: 'var(--nb-text-secondary)' }}>{subtitle}</p>
               )}
@@ -276,7 +276,7 @@ export function RegisterPage() {
 
                 {isInvestor && (
                   <>
-                    <Typography.Title level={5} style={{ marginTop: 4 }}>
+                    <Typography.Title level={2} className="nb-section-title" style={{ marginTop: 4 }}>
                       {t('register.companySectionTitle')}
                     </Typography.Title>
                     <Form.Item
@@ -350,7 +350,7 @@ export function RegisterPage() {
             <div>
               <div role="status" aria-live="polite">
                 <MailCheck size={44} color="var(--nb-primary)" aria-hidden="true" />
-                <Typography.Title level={5} style={{ marginTop: 14, marginBottom: 0 }}>
+                <Typography.Title level={2} className="nb-section-title" style={{ marginTop: 14, marginBottom: 0 }}>
                   {t('register.verifyRequiredTitle')}
                 </Typography.Title>
                 <Typography.Paragraph style={{ margin: '8px 0 0' }}>

@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+﻿import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Alert,
   App as AntApp,
@@ -212,7 +212,7 @@ export function LandDetailPage() {
             <ArrowLeft size={16} aria-hidden="true" />
             {t('lands.backToList')}
           </Link>
-          <Typography.Title level={3} style={{ margin: '8px 0 0' }}>
+          <Typography.Title level={1} style={{ margin: '8px 0 0' }}>
             {land.landNumber} <LandStatusTag status={land.status} />
           </Typography.Title>
           <Typography.Paragraph style={{ margin: '4px 0 0', color: 'var(--nb-text-secondary)' }}>
@@ -295,6 +295,7 @@ export function LandDetailPage() {
           size="small"
           bordered
           items={[
+            { key: 'registered', label: t('trace.registered'), children: formatDateTime(land.registeredAt, locale) },
             { key: 'landNumber', label: t('lands.form.landNumber'), children: land.landNumber },
             { key: 'governorate', label: t('lands.form.governorate'), children: land.governorateName ?? '—' },
             { key: 'region', label: t('lands.form.region'), children: land.regionName ?? '—' },
@@ -420,7 +421,7 @@ export function LandDetailPage() {
               ),
               content: (
                 <div>
-                  <div>{entry.changeByName}</div>
+                  <div>#{entry.changedById} · {entry.changeByName}</div>
                   {entry.reason && (
                     <Typography.Text type="secondary">{entry.reason}</Typography.Text>
                   )}

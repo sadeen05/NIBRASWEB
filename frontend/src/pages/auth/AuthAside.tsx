@@ -1,4 +1,4 @@
-import { FileText, Search, Sprout } from 'lucide-react';
+﻿import { FileText, Search, Sprout } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
 import { AppLogo } from '@/components/AppLogo';
@@ -14,7 +14,7 @@ export function AuthAside() {
   return (
     <section className="login-aside">
       <AppLogo />
-      <h1 className="aside-title">{t('login.asideTitle')}</h1>
+      <p className="aside-title">{t('login.asideTitle')}</p>
       <ul className="aside-points">
         <li className="aside-point">
           <Sprout className="aside-point__icon" size={18} aria-hidden="true" />

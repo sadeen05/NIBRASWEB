@@ -37,6 +37,8 @@ const ROUTE_RULES: readonly RouteRule[] = [
   { pattern: /^\/app\/offers\/?$/, roles: ['Investor'] },
   { pattern: /^\/app\/lands(?:\/|$)/, roles: ['Landlord'] },
   { pattern: /^\/app\/contracts(?:\/|$)/, roles: PARTY_ROLES },
+  // Account settings are available to every signed-in role.
+  { pattern: /^\/app\/account(?:\/|$)/, roles: PARTY_ROLES },
   // The Overview index is the shell landing page for every signed-in role.
   { pattern: /^\/app\/?$/, roles: PARTY_ROLES },
 ];

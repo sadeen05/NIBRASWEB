@@ -1,11 +1,13 @@
 import { Alert, Button } from 'antd';
 import { LogOut } from 'lucide-react';
+import { Suspense } from 'react';
 import { useTranslation } from 'react-i18next';
 import { NavLink, Outlet } from 'react-router-dom';
 
 import { useAuth } from '@/auth/useAuth';
 import { AppLogo } from '@/components/AppLogo';
 import { LanguageToggle } from '@/components/LanguageToggle';
+import { RouteFallback } from '@/components/RouteFallback';
 
 const navLinkClass = ({ isActive }: { isActive: boolean }) =>
   `shell-nav__link${isActive ? ' is-active' : ''}`;
@@ -30,12 +32,14 @@ function navItemsFor(role: string | undefined): NavItem[] {
     items.push({ to: '/app/admin/lands', labelKey: 'shell.navAdminLands' });
     items.push({ to: '/app/admin/offers', labelKey: 'shell.navAdminOffers' });
     items.push({ to: '/app/admin/users', labelKey: 'shell.navAdminUsers' });
+    items.push({ to: '/app/admin/criteria', labelKey: 'criteria.title' });
   }
   if (role === 'SuperAdmin') {
     items.push({ to: '/app/admin/change-requests', labelKey: 'shell.navAdminChangeRequests' });
   }
   if (role === 'Landlord' || role === 'Investor' || role === 'Admin' || role === 'SuperAdmin') {
     items.push({ to: '/app/contracts', labelKey: 'shell.navContracts' });
+    items.push({ to: '/app/account', labelKey: 'shell.navAccount' });
   }
 
   return items;
@@ -54,6 +58,13 @@ export function AppShell() {
 
   return (
     <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
+      {/*
+        Keyboard-first escape from the persistent header/navigation. It stays hidden
+        until it receives focus and is the first tab stop of every authenticated page.
+      */}
+      <a className="skip-link" href="#main-content">
+        {t('shell.skipToContent')}
+      </a>
       <header className="shell-header">
         <AppLogo compact />
         <nav className="shell-nav" aria-label={t('shell.navigation')}>
@@ -85,7 +96,7 @@ export function AppShell() {
           </Button>
         </div>
       </header>
-      <main className="shell-content">
+      <main className="shell-content" id="main-content" tabIndex={-1}>
         {/*
           Persistent, informational only: an unapproved investor can sign in, but
           the backend refuses land browsing and offers until an admin approves the
@@ -101,7 +112,9 @@ export function AppShell() {
             style={{ marginBottom: 16 }}
           />
         )}
-        <Outlet />
+        <Suspense fallback={<RouteFallback />}>
+          <Outlet />
+        </Suspense>
       </main>
     </div>
   );

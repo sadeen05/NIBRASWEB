@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/react-query';
+﻿import { useQuery } from '@tanstack/react-query';
 import { Alert, Button, Card, Space, Table, Typography } from 'antd';
 import type { TableColumnsType } from 'antd';
 import { ArrowLeft } from 'lucide-react';
@@ -88,7 +88,7 @@ export function LandOffersPage() {
           <ArrowLeft size={16} aria-hidden="true" />
           {t('offers.backToLand')}
         </Link>
-        <Typography.Title level={3} style={{ margin: '8px 0 0' }}>
+        <Typography.Title level={1} style={{ margin: '8px 0 0' }}>
           {t('offers.landOffersTitle')}
         </Typography.Title>
       </div>

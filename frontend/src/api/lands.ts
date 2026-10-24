@@ -1,4 +1,4 @@
-import { getJson, postJson, putJson } from '@/api/client';
+import { getBlob, getJson, postForm, postJson, putJson } from '@/api/client';
 import type {
   AssessLandRequest,
   CreateLandChangeRequestRequest,
@@ -14,7 +14,7 @@ import type {
   ReviewLandChangeRequestRequest,
   ReviewLandDocumentRequest,
   UpdateLandRequest,
-  UploadLandDocumentRequest,
+  UploadLandDocumentInput,
 } from '@/types/lands';
 
 /**
@@ -116,14 +116,29 @@ export function fetchDocuments(id: number): Promise<LandDocumentDto[]> {
 }
 
 /**
- * Metadata-only document registration. The backend stores a relative path
- * reference; it has no binary upload, download, or delete endpoint.
+ * Real document upload: `POST /api/Lands/{id}/documents` as multipart form
+ * data. The backend validates the signature and size, stores the file privately,
+ * and returns the display metadata.
  */
 export function uploadDocument(
   id: number,
-  body: UploadLandDocumentRequest,
+  input: UploadLandDocumentInput,
 ): Promise<LandDocumentDto> {
-  return postJson<LandDocumentDto>(`/Lands/${id}/documents`, body);
+  const body = new FormData();
+  body.append('documentTypeId', String(input.documentTypeId));
+  body.append('file', input.file, input.file.name);
+  return postForm<LandDocumentDto>(`/Lands/${id}/documents`, body);
+}
+
+/**
+ * Authenticated binary download. The request uses the bearer header, never a
+ * token in the URL; the caller turns the blob into a local download.
+ */
+export function downloadDocument(
+  landId: number,
+  documentId: number,
+): Promise<Blob> {
+  return getBlob(`/Lands/${landId}/documents/${documentId}/download`);
 }
 
 /**

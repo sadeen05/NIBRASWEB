@@ -1,4 +1,4 @@
-import { Alert, Button, Form, Input, Spin, Typography } from 'antd';
+﻿import { Alert, Button, Form, Input, Spin, Typography } from 'antd';
 import { CheckCircle2, Lock } from 'lucide-react';
 import { useLayoutEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -128,7 +128,7 @@ export function ActivateAdminPage() {
         <div className="login-card">
           <div className="login-card__header">
             <div>
-              <h2 style={{ margin: 0, fontSize: 22 }}>{t('activateAdmin.title')}</h2>
+              <h1 style={{ margin: 0, fontSize: 22 }}>{t('activateAdmin.title')}</h1>
               <p style={{ margin: '4px 0 0', color: 'var(--nb-text-secondary)' }}>
                 {t('activateAdmin.subtitle')}
               </p>
@@ -139,7 +139,7 @@ export function ActivateAdminPage() {
           {activated ? (
             <div role="status" aria-live="polite" style={{ textAlign: 'center' }}>
               <CheckCircle2 size={44} color="var(--nb-primary)" aria-hidden="true" />
-              <Typography.Title level={5} style={{ marginTop: 14, marginBottom: 0 }}>
+              <Typography.Title level={2} className="nb-section-title" style={{ marginTop: 14, marginBottom: 0 }}>
                 {t('activateAdmin.successTitle')}
               </Typography.Title>
               <Typography.Paragraph style={{ margin: '8px 0 0' }}>

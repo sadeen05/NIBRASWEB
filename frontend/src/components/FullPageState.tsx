@@ -13,7 +13,11 @@ interface FullPageStateProps {
 /** Centered state surface used for loading, error and empty full-page states. */
 export function FullPageState({ variant, title, description, code, action }: FullPageStateProps) {
   return (
-    <div className="state-page" role="status" aria-live="polite">
+    <div
+      className="state-page"
+      role={variant === 'error' ? 'alert' : 'status'}
+      aria-live={variant === 'error' ? 'assertive' : 'polite'}
+    >
       <div className="state-card">
         {variant === 'loading' ? (
           <Spin size="large" />

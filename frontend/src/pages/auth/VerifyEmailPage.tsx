@@ -1,4 +1,4 @@
-import { Alert, Button, Spin, Typography } from 'antd';
+﻿import { Alert, Button, Spin, Typography } from 'antd';
 import { CheckCircle2 } from 'lucide-react';
 import { useLayoutEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -123,7 +123,7 @@ export function VerifyEmailPage() {
         <div className="login-card">
           <div className="login-card__header">
             <div>
-              <h2 style={{ margin: 0, fontSize: 22 }}>{t('verifyEmail.title')}</h2>
+              <h1 style={{ margin: 0, fontSize: 22 }}>{t('verifyEmail.title')}</h1>
               <p style={{ margin: '4px 0 0', color: 'var(--nb-text-secondary)' }}>
                 {t('verifyEmail.subtitle')}
               </p>
@@ -143,7 +143,7 @@ export function VerifyEmailPage() {
           {verifyState === 'success' && (
             <div role="status" aria-live="polite" style={{ textAlign: 'center' }}>
               <CheckCircle2 size={44} color="var(--nb-primary)" aria-hidden="true" />
-              <Typography.Title level={5} style={{ marginTop: 14, marginBottom: 0 }}>
+              <Typography.Title level={2} className="nb-section-title" style={{ marginTop: 14, marginBottom: 0 }}>
                 {t('verifyEmail.successTitle')}
               </Typography.Title>
               <Typography.Paragraph style={{ margin: '8px 0 0' }}>

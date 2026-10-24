@@ -20,8 +20,6 @@ export const OFFER_STATUS = {
   Closed: 9,
 } as const;
 
-export type OfferStatus = number;
-
 /** Numeric status -> translation key suffix. */
 export const OFFER_STATUS_NAMES: Record<number, string> = {
   1: 'PendingLandlordResponse',
@@ -64,6 +62,7 @@ export const OFFER_ACTION_NAMES: Record<number, string> = {
 
 export interface OfferVersionDto {
   id: number;
+  createdById: number;
   offerId: number;
   versionNumber: number;
   landlordSharePct: number | null;
@@ -78,7 +77,7 @@ export interface OfferVersionDto {
   paybackPeriodMonths: number | null;
   message: string | null;
   isCurrent: boolean;
-  createdAt: string;
+  createdAt: string | null;
 }
 
 export interface OfferDto {

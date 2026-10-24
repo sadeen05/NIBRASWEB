@@ -1,19 +1,32 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { Alert, App as AntApp, Button, Form, Input, Select, Space, Table, Tag, Typography } from 'antd';
+import {
+  Alert,
+  App as AntApp,
+  Button,
+  Form,
+  Select,
+  Space,
+  Table,
+  Tag,
+  Typography,
+  Upload,
+} from 'antd';
 import type { TableColumnsType } from 'antd';
-import { Plus } from 'lucide-react';
+import type { UploadFile } from 'antd/es/upload/interface';
+import { Download, FileUp, Plus } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
-import { uploadDocument } from '@/api/lands';
-import { formatDateTime } from '@/pages/lands/landFormat';
+import { downloadDocument, uploadDocument } from '@/api/lands';
+import { formatDateTime, formatFileSize } from '@/pages/lands/landFormat';
 import { resolveLandErrorMessage } from '@/pages/lands/landMessages';
 import { useLandEvidence } from '@/pages/lands/useLandEvidence';
 import type { LandDocumentDto } from '@/types/lands';
+import { saveBlob } from '@/utils/saveBlob';
 
 interface DocumentFormValues {
   documentTypeId: number;
-  filePath: string;
+  file: UploadFile[];
 }
 
 const DOC_STATUS_COLORS: Record<string, string> = {
@@ -27,6 +40,9 @@ const DOC_STATUS_KEYS: Record<string, string> = {
   Approved: 'lands.documents.statusApproved',
   Rejected: 'lands.documents.statusRejected',
 };
+
+const ACCEPTED_DOCUMENT_TYPES =
+  '.pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png';
 
 /**
  * A document that was reviewed and then invalidated (the land data changed afterwards)
@@ -46,7 +62,7 @@ function DocumentStatusTag({ status }: { status: string }) {
 
 interface LandDocumentsPanelProps {
   landId: number;
-  /** Only `Draft` and `Rejected` lands accept new document references. */
+  /** Only `Draft` and `Rejected` lands accept new document files. */
   status: string;
 }
 
@@ -75,7 +91,8 @@ export function LandDocumentsPanel({ landId, status }: LandDocumentsPanelProps) 
     status === 'Draft' || status === 'Rejected' || (isApprovedLand && outstandingEvidence);
 
   const uploadMutation = useMutation({
-    mutationFn: (values: DocumentFormValues) => uploadDocument(landId, values),
+    mutationFn: (values: { documentTypeId: number; file: File }) =>
+      uploadDocument(landId, values),
     onSuccess: async () => {
       form.resetFields();
       setFormError(null);
@@ -87,6 +104,18 @@ export function LandDocumentsPanel({ landId, status }: LandDocumentsPanelProps) 
     },
   });
 
+  const downloadMutation = useMutation({
+    mutationFn: (document: LandDocumentDto) => downloadDocument(landId, document.id),
+    onSuccess: (blob, document) => {
+      saveBlob(blob, document.originalFileName ?? 'document');
+    },
+    onError: (error: unknown) => {
+      void message.error(
+        resolveLandErrorMessage(error, t) || t('lands.documents.downloadFailed'),
+      );
+    },
+  });
+
   const columns = useMemo<TableColumnsType<LandDocumentDto>>(
     () => [
       {
@@ -95,9 +124,22 @@ export function LandDocumentsPanel({ landId, status }: LandDocumentsPanelProps) 
         key: 'documentTypeName',
       },
       {
-        title: t('lands.documents.pathLabel'),
-        dataIndex: 'filePath',
-        key: 'filePath',
+        title: t('lands.documents.fileName'),
+        key: 'fileName',
+        render: (_value, document) =>
+          document.originalFileName ?? (
+            <Typography.Text type="secondary">{t('lands.documents.legacyRow')}</Typography.Text>
+          ),
+      },
+      {
+        title: t('lands.documents.fileType'),
+        key: 'contentType',
+        render: (_value, document) => document.contentType ?? '—',
+      },
+      {
+        title: t('lands.documents.fileSize'),
+        key: 'fileSize',
+        render: (_value, document) => formatFileSize(document.fileSizeBytes),
       },
       {
         title: t('lands.documents.version'),
@@ -124,8 +166,6 @@ export function LandDocumentsPanel({ landId, status }: LandDocumentsPanelProps) 
         render: (value: string | null) => formatDateTime(value, locale),
       },
       {
-        // The reviewer's decision and reason for this version, so a rejection is
-        // actionable for the owner instead of an unexplained status.
         title: t('lands.documents.lastReview'),
         key: 'lastReview',
         render: (_value, document) =>
@@ -140,8 +180,25 @@ export function LandDocumentsPanel({ landId, status }: LandDocumentsPanelProps) 
             '—'
           ),
       },
+      {
+        title: t('lands.documents.download'),
+        key: 'download',
+        render: (_value, document) =>
+          document.hasFile ? (
+            <Button
+              size="small"
+              icon={<Download size={15} aria-hidden="true" />}
+              loading={downloadMutation.isPending && downloadMutation.variables?.id === document.id}
+              onClick={() => downloadMutation.mutate(document)}
+            >
+              {t('lands.documents.download')}
+            </Button>
+          ) : (
+            <Typography.Text type="secondary">{t('lands.documents.notAvailable')}</Typography.Text>
+          ),
+      },
     ],
-    [t, locale],
+    [t, locale, downloadMutation],
   );
 
   // On an approved land the owner may only correct the outstanding required types, mirroring
@@ -160,13 +217,22 @@ export function LandDocumentsPanel({ landId, status }: LandDocumentsPanelProps) 
   // the administrator simply has to review the evidence again.
   const reReviewDocuments = documents.filter(needsReReview);
 
+  const submit = (values: DocumentFormValues) => {
+    const file = values.file?.[0]?.originFileObj;
+    if (!file) {
+      setFormError(t('lands.documents.fileRequired'));
+      return;
+    }
+    uploadMutation.mutate({ documentTypeId: values.documentTypeId, file });
+  };
+
   return (
     <Space orientation="vertical" size="middle" style={{ width: '100%' }}>
       <Alert
         type="info"
         showIcon
-        title={t('lands.documents.referenceNotice')}
-        description={t('lands.documents.noDeleteNotice')}
+        title={t('lands.documents.uploadNotice')}
+        description={t('lands.documents.downloadNotice')}
       />
 
       {isApprovedLand && outstandingEvidence && (
@@ -209,6 +275,7 @@ export function LandDocumentsPanel({ landId, status }: LandDocumentsPanelProps) 
           loading={documentsQuery.isLoading}
           locale={{ emptyText: t('lands.documents.empty') }}
           pagination={false}
+          scroll={{ x: 'max-content' }}
           size="small"
         />
       )}
@@ -217,7 +284,7 @@ export function LandDocumentsPanel({ landId, status }: LandDocumentsPanelProps) 
         <Form<DocumentFormValues>
           form={form}
           layout="vertical"
-          onFinish={(values) => uploadMutation.mutate(values)}
+          onFinish={submit}
           disabled={uploadMutation.isPending}
         >
           {formError && (
@@ -237,17 +304,27 @@ export function LandDocumentsPanel({ landId, status }: LandDocumentsPanelProps) 
               />
             </Form.Item>
             <Form.Item
-              name="filePath"
-              label={t('lands.documents.pathLabel')}
-              rules={[
-                { required: true, message: t('lands.documents.pathRequired') },
-                { max: 500, message: t('lands.form.maxLength', { max: 500 }) },
-              ]}
+              name="file"
+              label={t('lands.documents.fileLabel')}
+              valuePropName="fileList"
+              getValueFromEvent={(event) =>
+                Array.isArray(event) ? event : event?.fileList
+              }
+              rules={[{ required: true, message: t('lands.documents.fileRequired') }]}
+              extra={t('lands.documents.fileHint')}
               style={{ minWidth: 320, marginBottom: 12 }}
             >
-              <Input placeholder={t('lands.documents.pathPlaceholder')} />
+              <Upload
+                accept={ACCEPTED_DOCUMENT_TYPES}
+                beforeUpload={() => false}
+                maxCount={1}
+              >
+                <Button icon={<FileUp size={16} aria-hidden="true" />}>
+                  {t('lands.documents.chooseFile')}
+                </Button>
+              </Upload>
             </Form.Item>
-            <Form.Item label=" " colon={false} style={{ marginBottom: 12 }}>
+            <Form.Item label={null} colon={false} style={{ marginBottom: 12 }}>
               <Button
                 type="primary"
                 htmlType="submit"

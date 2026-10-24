@@ -1,4 +1,4 @@
-import { Alert, Button, Form, Input, Typography } from 'antd';
+﻿import { Alert, Button, Form, Input, Typography } from 'antd';
 import { Mail, RefreshCw } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -77,7 +77,7 @@ export function VerificationResendForm({ initialEmail }: VerificationResendFormP
 
   return (
     <div style={{ marginTop: 18 }}>
-      <Typography.Title level={5} style={{ marginTop: 4 }}>
+      <Typography.Title level={2} className="nb-section-title" style={{ marginTop: 4 }}>
         {t('verifyEmail.resendTitle')}
       </Typography.Title>
       <Typography.Paragraph type="secondary">

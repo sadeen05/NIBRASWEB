@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/react-query';
+﻿import { useQuery } from '@tanstack/react-query';
 import { Alert, Button, Card, Select, Space, Table, Typography } from 'antd';
 import type { TableColumnsType } from 'antd';
 import { Plus } from 'lucide-react';
@@ -89,7 +89,7 @@ export function LandListPage() {
     <Space orientation="vertical" size="large" style={{ width: '100%' }}>
       <div className="page-header">
         <div>
-          <Typography.Title level={3} style={{ margin: 0 }}>
+          <Typography.Title level={1} style={{ margin: 0 }}>
             {t('lands.title')}
           </Typography.Title>
           <Typography.Paragraph style={{ margin: '4px 0 0', color: 'var(--nb-text-secondary)' }}>
