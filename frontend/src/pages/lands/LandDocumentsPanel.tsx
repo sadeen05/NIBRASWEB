@@ -241,7 +241,11 @@ export function LandDocumentsPanel({ landId, status }: LandDocumentsPanelProps) 
           showIcon
           role="status"
           title={t('lands.documents.correctionTitle')}
-          description={t('lands.documents.correctionBody')}
+          description={t(
+            status === 'UnderContract'
+              ? 'lands.documents.correctionBodyUnderContract'
+              : 'lands.documents.correctionBody',
+          )}
         />
       )}
 

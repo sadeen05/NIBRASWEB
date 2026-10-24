@@ -16,8 +16,8 @@ function formatExpiry(value: string, locale: string): string {
 }
 
 /**
- * Protected placeholder for the authenticated shell. It intentionally does NOT
- * render any business feature; it only confirms the shell and session wiring.
+ * Authenticated overview landing page. It shows who is signed in and points to the
+ * workspace the current role can open; it renders no business records of its own.
  */
 export function DashboardPlaceholder() {
   const { user, session } = useAuth();

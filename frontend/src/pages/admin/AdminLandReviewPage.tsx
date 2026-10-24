@@ -21,7 +21,7 @@ import {
 } from 'antd';
 import type { TableColumnsType } from 'antd';
 import { ArrowLeft, Check, Download, HandCoins, Save, X } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link, useParams } from 'react-router-dom';
 
@@ -44,6 +44,7 @@ import { useAuth } from '@/auth/useAuth';
 import { FullPageState } from '@/components/FullPageState';
 import { LandStatusTag } from '@/components/LandStatusTag';
 import { criterionLabelWithUnit, criterionThresholdText } from '@/pages/lands/criteriaFormat';
+import { gridDisplayText } from '@/pages/lands/gridFormat';
 import { formatDateTime, formatDecimal, formatFileSize } from '@/pages/lands/landFormat';
 import type { AssessLandRequest, LandAssessmentDto, LandDocumentDto } from '@/types/lands';
 import { saveBlob } from '@/utils/saveBlob';
@@ -188,6 +189,29 @@ export function AdminLandReviewPage() {
         .filter((grid) => grid.regionId === selectedRegionId)
         .map((grid) => ({ value: grid.id, label: grid.name })),
     [gridsQuery.data, selectedRegionId],
+  );
+
+  // The land and the assessment snapshots store the grid as an id; the reference list
+  // carries its name, so the name is shown whenever the list has one.
+  const gridText = useCallback(
+    (gridId: number | null | undefined) => gridDisplayText(gridsQuery.data, gridId) ?? '—',
+    [gridsQuery.data],
+  );
+
+  // The assessment snapshot stores the region id as well; the region reference list carries
+  // its localized name, and the id stays visible only when the list has no entry for it.
+  const regionText = useCallback(
+    (regionId: number | null | undefined) => {
+      if (regionId === null || regionId === undefined) {
+        return '—';
+      }
+      const region = (regionsQuery.data ?? []).find((entry) => entry.id === regionId);
+      if (!region) {
+        return `#${regionId}`;
+      }
+      return isArabic ? region.nameAr : region.nameEn;
+    },
+    [regionsQuery.data, isArabic],
   );
 
   useEffect(() => {
@@ -599,8 +623,8 @@ export function AdminLandReviewPage() {
       render: (value: string) => formatDateTime(value, locale),
     },
     { title: t('admin.assessmentBy'), dataIndex: 'assessedByName', key: 'assessedByName' },
-    { title: t('lands.form.region'), key: 'region', render: (_v, a) => a.regionId ?? '—' },
-    { title: t('lands.form.grid'), key: 'grid', render: (_v, a) => a.gridId ?? '—' },
+    { title: t('lands.form.region'), key: 'region', render: (_v, a) => regionText(a.regionId) },
+    { title: t('lands.form.grid'), key: 'grid', render: (_v, a) => gridText(a.gridId) },
     {
       title: t('lands.form.slopePercentage'),
       key: 'slope',
@@ -676,80 +700,94 @@ export function AdminLandReviewPage() {
         <Alert type="info" showIcon role="status" title={t('admin.resubmissionNotice')} />
       )}
 
-      <Card title={t('admin.readinessTitle')}>
+      {/*
+        A land under contract is already verified and can no longer be verified or rejected,
+        so a readiness checklist for a verification decision would report a misleading
+        "not ready for verification" state. The server refuses such a decision anyway.
+      */}
+      {land.status === 'UnderContract' ? (
         <Alert
-          type={readyForDecision ? 'success' : 'warning'}
+          type="info"
           showIcon
-          title={
-            readyForDecision
-              ? t('admin.readinessReady')
-              : t('admin.readinessBlocked', { count: blockerCount })
-          }
-          description={t('admin.readinessDisclaimer')}
-          style={{ marginBottom: 16 }}
+          title={t('admin.readinessNotApplicableUnderContractTitle')}
+          description={t('admin.readinessNotApplicableUnderContractBody')}
         />
+      ) : (
+        <Card title={t('admin.readinessTitle')}>
+          <Alert
+            type={readyForDecision ? 'success' : 'warning'}
+            showIcon
+            title={
+              readyForDecision
+                ? t('admin.readinessReady')
+                : t('admin.readinessBlocked', { count: blockerCount })
+            }
+            description={t('admin.readinessDisclaimer')}
+            style={{ marginBottom: 16 }}
+          />
 
-        <Space orientation="vertical" size="small" style={{ width: '100%' }}>
-          <Space orientation="vertical" size={2} style={{ width: '100%' }}>
-            <Typography.Text strong>{t('admin.readinessSectionData')}</Typography.Text>
-            {dataFindings.length === 0 ? (
-              <ReadinessLine blocked={false} text={t('admin.readinessNoBlockers')} />
-            ) : (
-              dataFindings.map((finding) => (
-                <ReadinessLine key={finding.key} blocked text={finding.text} />
-              ))
+          <Space orientation="vertical" size="small" style={{ width: '100%' }}>
+            <Space orientation="vertical" size={2} style={{ width: '100%' }}>
+              <Typography.Text strong>{t('admin.readinessSectionData')}</Typography.Text>
+              {dataFindings.length === 0 ? (
+                <ReadinessLine blocked={false} text={t('admin.readinessNoBlockers')} />
+              ) : (
+                dataFindings.map((finding) => (
+                  <ReadinessLine key={finding.key} blocked text={finding.text} />
+                ))
+              )}
+            </Space>
+
+            <Space orientation="vertical" size={2} style={{ width: '100%' }}>
+              <Typography.Text strong>{t('admin.readinessSectionEligibility')}</Typography.Text>
+              {failedFindings.length === 0 ? (
+                <ReadinessLine blocked={false} text={t('admin.readinessEligibilityOk')} />
+              ) : (
+                failedFindings.map((finding) => (
+                  <ReadinessLine key={finding.key} blocked text={finding.text} />
+                ))
+              )}
+            </Space>
+
+            <Space orientation="vertical" size={2} style={{ width: '100%' }}>
+              <Typography.Text strong>{t('admin.readinessSectionAssessment')}</Typography.Text>
+              {measurementFindings.length === 0 ? (
+                <ReadinessLine blocked={false} text={t('admin.readinessAssessmentOk')} />
+              ) : (
+                measurementFindings.map((finding) => (
+                  <ReadinessLine key={finding.key} blocked text={finding.text} />
+                ))
+              )}
+            </Space>
+
+            <Space orientation="vertical" size={2} style={{ width: '100%' }}>
+              <Typography.Text strong>{t('admin.readinessSectionDocuments')}</Typography.Text>
+              {documentTypesLoading ? (
+                <Space size="small" align="start">
+                  <Spin size="small" />
+                  <Typography.Text type="secondary">{t('common.loading')}</Typography.Text>
+                </Space>
+              ) : documentTypesUnavailable ? (
+                <ReadinessLine blocked text={t('admin.readinessDocumentsUnavailable')} />
+              ) : noRequiredDocumentTypes ? (
+                <ReadinessLine blocked text={t('admin.noRequiredDocumentTypes')} />
+              ) : (
+                documentFindings.map((finding) => (
+                  <ReadinessLine
+                    key={finding.key}
+                    blocked={finding.blocked ?? true}
+                    text={finding.text}
+                  />
+                ))
+              )}
+            </Space>
+
+            {land.status !== 'PendingVerification' && land.status !== 'PendingSuperAdminReview' && (
+              <ReadinessLine blocked={false} text={t('admin.readinessStatusNotPending')} />
             )}
           </Space>
-
-          <Space orientation="vertical" size={2} style={{ width: '100%' }}>
-            <Typography.Text strong>{t('admin.readinessSectionEligibility')}</Typography.Text>
-            {failedFindings.length === 0 ? (
-              <ReadinessLine blocked={false} text={t('admin.readinessEligibilityOk')} />
-            ) : (
-              failedFindings.map((finding) => (
-                <ReadinessLine key={finding.key} blocked text={finding.text} />
-              ))
-            )}
-          </Space>
-
-          <Space orientation="vertical" size={2} style={{ width: '100%' }}>
-            <Typography.Text strong>{t('admin.readinessSectionAssessment')}</Typography.Text>
-            {measurementFindings.length === 0 ? (
-              <ReadinessLine blocked={false} text={t('admin.readinessAssessmentOk')} />
-            ) : (
-              measurementFindings.map((finding) => (
-                <ReadinessLine key={finding.key} blocked text={finding.text} />
-              ))
-            )}
-          </Space>
-
-          <Space orientation="vertical" size={2} style={{ width: '100%' }}>
-            <Typography.Text strong>{t('admin.readinessSectionDocuments')}</Typography.Text>
-            {documentTypesLoading ? (
-              <Space size="small" align="start">
-                <Spin size="small" />
-                <Typography.Text type="secondary">{t('common.loading')}</Typography.Text>
-              </Space>
-            ) : documentTypesUnavailable ? (
-              <ReadinessLine blocked text={t('admin.readinessDocumentsUnavailable')} />
-            ) : noRequiredDocumentTypes ? (
-              <ReadinessLine blocked text={t('admin.noRequiredDocumentTypes')} />
-            ) : (
-              documentFindings.map((finding) => (
-                <ReadinessLine
-                  key={finding.key}
-                  blocked={finding.blocked ?? true}
-                  text={finding.text}
-                />
-              ))
-            )}
-          </Space>
-
-          {land.status !== 'PendingVerification' && land.status !== 'PendingSuperAdminReview' && (
-            <ReadinessLine blocked={false} text={t('admin.readinessStatusNotPending')} />
-          )}
-        </Space>
-      </Card>
+        </Card>
+      )}
 
       <Card title={t('lands.detail.sectionDetails')}>
         <Descriptions
@@ -760,7 +798,7 @@ export function AdminLandReviewPage() {
             { key: 'governorate', label: t('lands.form.governorate'), children: land.governorateName ?? '—' },
             { key: 'region', label: t('lands.form.region'), children: land.regionName ?? '—' },
             { key: 'registered', label: t('trace.registered'), children: formatDateTime(land.registeredAt, locale) },
-            { key: 'grid', label: t('lands.form.grid'), children: land.gridId ?? '—' },
+            { key: 'grid', label: t('lands.form.grid'), children: gridText(land.gridId) },
             { key: 'village', label: t('lands.form.village'), children: land.village ?? '—' },
             { key: 'basin', label: t('lands.form.basin'), children: land.basin ?? '—' },
             { key: 'parcel', label: t('lands.form.parcelNumber'), children: land.parcelNumber ?? '—' },

@@ -18,9 +18,11 @@ import { Link, useParams } from 'react-router-dom';
 
 import { isApiError } from '@/api/errors';
 import { fetchEligibility, fetchHistory, fetchLand, reviseLand, submitLand } from '@/api/lands';
+import { fetchGrids } from '@/api/reference';
 import { FullPageState } from '@/components/FullPageState';
 import { LandStatusTag } from '@/components/LandStatusTag';
 import { criterionLabelWithUnit, criterionThresholdText } from '@/pages/lands/criteriaFormat';
+import { gridDisplayText } from '@/pages/lands/gridFormat';
 import { LandChangeRequestPanel } from '@/pages/lands/LandChangeRequestPanel';
 import { LandDocumentsPanel } from '@/pages/lands/LandDocumentsPanel';
 import { formatDateTime, formatDecimal } from '@/pages/lands/landFormat';
@@ -60,6 +62,13 @@ export function LandDetailPage() {
     queryKey: ['land', id, 'history'],
     queryFn: () => fetchHistory(id),
     enabled: validId,
+  });
+
+  // The land endpoint exposes the grid as an id; the reference list carries its name.
+  const gridsQuery = useQuery({
+    queryKey: ['reference', 'grids'],
+    queryFn: fetchGrids,
+    staleTime: 5 * 60_000,
   });
 
   // The derived investor-visibility evidence rule, shared with the documents panel below (same
@@ -299,7 +308,11 @@ export function LandDetailPage() {
             { key: 'landNumber', label: t('lands.form.landNumber'), children: land.landNumber },
             { key: 'governorate', label: t('lands.form.governorate'), children: land.governorateName ?? '—' },
             { key: 'region', label: t('lands.form.region'), children: land.regionName ?? '—' },
-            { key: 'grid', label: t('lands.form.grid'), children: land.gridId ?? '—' },
+            {
+              key: 'grid',
+              label: t('lands.form.grid'),
+              children: gridDisplayText(gridsQuery.data, land.gridId) ?? '—',
+            },
             { key: 'village', label: t('lands.form.village'), children: land.village ?? '—' },
             { key: 'basin', label: t('lands.form.basin'), children: land.basin ?? '—' },
             {

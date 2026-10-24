@@ -273,9 +273,9 @@ export const en = {
     navAdminOffers: 'Offer approvals',
     navAdminUsers: 'Users',
     navAdminChangeRequests: 'Change requests',
-    foundationTitle: 'Application foundation ready',
+    foundationTitle: 'Overview',
     foundationBody:
-      'The application shell, design system, localization and authentication foundation are in place. Business workflows will be added in later phases.',
+      'Use the navigation to open the workspace available to your role. Your session, role and expiry are listed below.',
     sessionLabel: 'Authenticated session',
     roleLabel: 'Role',
     expiresLabel: 'Session expires',
@@ -514,6 +514,8 @@ export const en = {
       correctionTitle: 'Required documents must be corrected',
       correctionBody:
         'This land is hidden from investors because a required document is not approved. Upload a corrected version of it; only a super administrator can approve it, and the land is shown to investors again once every required document has an approved latest version.',
+      correctionBodyUnderContract:
+        'This land is already under contract, so it is not hidden from investors. A required document is not approved: upload a corrected version of it, and only a super administrator can approve it again.',
     },
     errors: {
       landNumberConflict: 'A land with this land number already exists in the selected region.',
@@ -1110,6 +1112,9 @@ export const en = {
       'The list of required document types could not be loaded, so the evidence cannot be checked here.',
     readinessStatusNotPending:
       'The land is not awaiting verification, so the decision buttons are hidden (the server refuses a decision in this state anyway).',
+    readinessNotApplicableUnderContractTitle: 'Verification is already complete',
+    readinessNotApplicableUnderContractBody:
+      'This land is under contract, so the verification readiness checklist does not apply and no verification decision can be recorded. Its technical assessment is frozen.',
     offerQueueTitle: 'Offers pending approval',
     offerQueueSubtitle: 'Accepted offers awaiting administrator approval.',
     offerQueueEmpty: 'No offers are awaiting approval.',
