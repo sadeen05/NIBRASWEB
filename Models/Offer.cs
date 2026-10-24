@@ -9,10 +9,10 @@ public partial class Offer
     public int Id { get; set; }
 
     public int LandId { get; set; }
-    public Land Land { get; set; }
+    public Land Land { get; set; } = null!;
 
     public int InvestorId { get; set; }
-    public User Investor { get; set; }
+    public User Investor { get; set; } = null!;
     public OfferStatus Status { get; set; }
     public ConnectionMechanism ConnectionMechanism { get; set; }
     public decimal CurrentAmount { get; set; }

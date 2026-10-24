@@ -17,4 +17,7 @@ public record LandAssessmentDto(
     decimal? SlopePercentage,
     decimal? DistanceToGridKm,
     decimal? SolarIrradiance,
-    decimal? ElevationM);
+    decimal? ElevationM,
+    int? CriterionId = null,
+    decimal? AreaDonumSnapshot = null,
+    CriterionValuesDto? CriteriaSnapshot = null);

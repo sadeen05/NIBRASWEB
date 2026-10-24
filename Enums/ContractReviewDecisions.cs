@@ -9,5 +9,11 @@ namespace NibrasWeb.Enums
         public const string Approved = "Approved";
         public const string Rejected = "Rejected";
         public const string Terminated = "Terminated";
+
+        // Contract-revision decisions. Each value is at most 20 characters, matching DECISION.
+        public const string RevisionApproved = "RevisionApproved";
+        public const string RevisionEscalated = "RevisionEscalated";
+        public const string RevisionContinued = "RevisionContinued";
+        public const string RevisionCancelled = "RevisionCancelled";
     }
 }

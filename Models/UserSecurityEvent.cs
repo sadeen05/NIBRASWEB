@@ -25,6 +25,10 @@ public partial class UserSecurityEvent
     public int? ActorId { get; set; }
 
     /// <summary>The address the request came from, for abuse analysis. Never a credential.</summary>
+    public string? ActorNameSnapshot { get; set; }
+
+    public string? ActorRoleSnapshot { get; set; }
+
     public string? Ip { get; set; }
 
     /// <summary>Free-form, non-sensitive context. Never a token, a password or a hash.</summary>

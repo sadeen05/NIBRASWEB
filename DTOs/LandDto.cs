@@ -3,6 +3,7 @@ namespace NIBRAS.API.DTOs;
 public class LandDto
 {
     public int Id { get; set; }
+    public DateTime? RegisteredAt { get; set; }
     public int LandlordId { get; set; }
 
     /// <summary>Assigned by an admin technical assessment; null until assessed.</summary>

@@ -465,7 +465,7 @@ namespace NibrasWeb.Migrations
 
                     b.HasIndex(new[] { "RegionId", "Village", "Basin", "ParcelNumber" }, "UQ_LAND_LOCATION")
                         .IsUnique()
-                        .HasFilter("[IS_DELETED] = 0");
+                        .HasFilter("[IS_DELETED] = 0 AND [REGION_ID] IS NOT NULL AND [VILLAGE] IS NOT NULL AND [BASIN] IS NOT NULL AND [PARCEL_NUMBER] IS NOT NULL");
 
                     b.HasIndex(new[] { "LandNumber", "RegionId" }, "UQ_LAND_NUMBER_REGION")
                         .IsUnique();

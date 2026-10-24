@@ -1,4 +1,4 @@
-﻿using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore;
 using NibrasWeb.Enums;
 using NIBRAS.Models;
 
@@ -29,6 +29,9 @@ public partial class NebrasdbContext : DbContext
 
     public virtual DbSet<Contract> Contracts { get; set; }
     public virtual DbSet<ContractReview> ContractReviews { get; set; }
+    public virtual DbSet<ContractVersion> ContractVersions { get; set; }
+    public virtual DbSet<ContractRevision> ContractRevisions { get; set; }
+    public virtual DbSet<ContractRevisionConsent> ContractRevisionConsents { get; set; }
     public virtual DbSet<DeletionRequest> DeletionRequests { get; set; }
     public virtual DbSet<DocumentType> DocumentTypes { get; set; }
     public virtual DbSet<EmailVerificationToken> EmailVerificationTokens { get; set; }
@@ -154,6 +157,168 @@ public partial class NebrasdbContext : DbContext
                 .HasConstraintName("FK_CR_USERS");
         });
 
+        modelBuilder.Entity<ContractVersion>(entity =>
+        {
+            entity.HasKey(e => e.Id).HasName("PK__CONTRACT_VERSIONS");
+            entity.ToTable("CONTRACT_VERSIONS");
+
+            // One immutable row per draft version; event rows may share a version number.
+            entity.HasIndex(e => new { e.ContractId, e.VersionNumber })
+                .HasDatabaseName("UX_CV_DRAFT_VERSION")
+                .HasFilter("[VERSION_KIND] = 'Draft'")
+                .IsUnique();
+            entity.HasIndex(e => new { e.ContractId, e.CreatedAt })
+                .HasDatabaseName("IX_CV_CONTRACT_CREATED");
+
+            entity.Property(e => e.Id).HasColumnName("ID");
+            entity.Property(e => e.ContractId).HasColumnName("CONTRACT_ID");
+            entity.Property(e => e.VersionNumber).HasColumnName("VERSION_NUMBER");
+            entity.Property(e => e.VersionKind).HasMaxLength(20).HasColumnName("VERSION_KIND");
+            entity.Property(e => e.EventType).HasMaxLength(30).HasColumnName("EVENT_TYPE");
+            entity.Property(e => e.Status).HasMaxLength(30).HasColumnName("STATUS");
+            entity.Property(e => e.PreviousVersionId).HasColumnName("PREVIOUS_VERSION_ID");
+            entity.Property(e => e.TargetVersionId).HasColumnName("TARGET_VERSION_ID");
+            entity.Property(e => e.OfferId).HasColumnName("OFFER_ID");
+            entity.Property(e => e.OfferVersionId).HasColumnName("OFFER_VERSION_ID");
+            entity.Property(e => e.TermsSnapshot).HasColumnType("nvarchar(max)").HasColumnName("TERMS_SNAPSHOT");
+            entity.Property(e => e.Reason).HasMaxLength(500).HasColumnName("REASON");
+            entity.Property(e => e.CreatedById).HasColumnName("CREATED_BY_ID");
+            entity.Property(e => e.CreatedByNameSnapshot).HasMaxLength(100).HasColumnName("CREATED_BY_NAME_SNAPSHOT");
+            entity.Property(e => e.CreatedByRoleSnapshot).HasMaxLength(50).HasColumnName("CREATED_BY_ROLE_SNAPSHOT");
+            entity.Property(e => e.CreatedAt).HasColumnName("CREATED_AT");
+
+            entity.HasOne<Contract>().WithMany()
+                .HasForeignKey(e => e.ContractId)
+                .OnDelete(DeleteBehavior.Restrict)
+                .HasConstraintName("FK_CV_CONTRACTS");
+
+            entity.HasOne<Offer>().WithMany()
+                .HasForeignKey(e => e.OfferId)
+                .OnDelete(DeleteBehavior.Restrict)
+                .HasConstraintName("FK_CV_OFFERS");
+
+            entity.HasOne<OfferVersion>().WithMany()
+                .HasForeignKey(e => e.OfferVersionId)
+                .OnDelete(DeleteBehavior.Restrict)
+                .HasConstraintName("FK_CV_OFFER_VERSION");
+
+            entity.HasOne<ContractVersion>().WithMany()
+                .HasForeignKey(e => e.PreviousVersionId)
+                .OnDelete(DeleteBehavior.Restrict)
+                .HasConstraintName("FK_CV_PREVIOUS");
+
+            entity.HasOne<ContractVersion>().WithMany()
+                .HasForeignKey(e => e.TargetVersionId)
+                .OnDelete(DeleteBehavior.Restrict)
+                .HasConstraintName("FK_CV_TARGET");
+        });
+
+        modelBuilder.Entity<ContractRevision>(entity =>
+        {
+            entity.HasKey(e => e.Id).HasName("PK_CONTRACT_REVISIONS");
+            entity.ToTable("CONTRACT_REVISIONS");
+
+            // At most one open revision per contract. Terminal rows have CLOSED_AT set.
+            entity.HasIndex(e => e.ContractId)
+                .HasDatabaseName("UX_CR_OPEN_CONTRACT")
+                .HasFilter("[CLOSED_AT] IS NULL")
+                .IsUnique();
+            entity.HasIndex(e => new { e.ContractId, e.ProposedAt })
+                .HasDatabaseName("IX_CR_CONTRACT_PROPOSED");
+
+            entity.Property(e => e.Id).HasColumnName("ID");
+            entity.Property(e => e.ContractId).HasColumnName("CONTRACT_ID");
+            entity.Property(e => e.BaseDraftVersionId).HasColumnName("BASE_DRAFT_VERSION_ID");
+            entity.Property(e => e.Status).HasMaxLength(30).HasColumnName("STATUS");
+            entity.Property(e => e.Reason).HasMaxLength(500).HasColumnName("REASON");
+            entity.Property(e => e.ProposedTermsSnapshot).HasColumnType("nvarchar(max)").HasColumnName("PROPOSED_TERMS_SNAPSHOT");
+            entity.Property(e => e.ProposedById).HasColumnName("PROPOSED_BY_ID");
+            entity.Property(e => e.ProposedByNameSnapshot).HasMaxLength(100).HasColumnName("PROPOSED_BY_NAME_SNAPSHOT");
+            entity.Property(e => e.ProposedByRoleSnapshot).HasMaxLength(50).HasColumnName("PROPOSED_BY_ROLE_SNAPSHOT");
+            entity.Property(e => e.ProposedAt).HasColumnName("PROPOSED_AT");
+            entity.Property(e => e.AdminReviewedById).HasColumnName("ADMIN_REVIEWED_BY_ID");
+            entity.Property(e => e.AdminReviewedByNameSnapshot).HasMaxLength(100).HasColumnName("ADMIN_REVIEWED_BY_NAME_SNAPSHOT");
+            entity.Property(e => e.AdminReviewedByRoleSnapshot).HasMaxLength(50).HasColumnName("ADMIN_REVIEWED_BY_ROLE_SNAPSHOT");
+            entity.Property(e => e.AdminReviewedAt).HasColumnName("ADMIN_REVIEWED_AT");
+            entity.Property(e => e.AdminDecision).HasMaxLength(30).HasColumnName("ADMIN_DECISION");
+            entity.Property(e => e.EscalationReason).HasMaxLength(500).HasColumnName("ESCALATION_REASON");
+            entity.Property(e => e.SuperAdminDecidedById).HasColumnName("SUPERADMIN_DECIDED_BY_ID");
+            entity.Property(e => e.SuperAdminDecidedByNameSnapshot).HasMaxLength(100).HasColumnName("SUPERADMIN_DECIDED_BY_NAME_SNAPSHOT");
+            entity.Property(e => e.SuperAdminDecidedByRoleSnapshot).HasMaxLength(50).HasColumnName("SUPERADMIN_DECIDED_BY_ROLE_SNAPSHOT");
+            entity.Property(e => e.SuperAdminDecidedAt).HasColumnName("SUPERADMIN_DECIDED_AT");
+            entity.Property(e => e.SuperAdminDecision).HasMaxLength(30).HasColumnName("SUPERADMIN_DECISION");
+            entity.Property(e => e.SuperAdminReason).HasMaxLength(500).HasColumnName("SUPERADMIN_REASON");
+            entity.Property(e => e.NewOfferVersionId).HasColumnName("NEW_OFFER_VERSION_ID");
+            entity.Property(e => e.NewDraftVersionId).HasColumnName("NEW_DRAFT_VERSION_ID");
+            entity.Property(e => e.ClosedAt).HasColumnName("CLOSED_AT");
+
+            entity.HasOne<Contract>().WithMany()
+                .HasForeignKey(e => e.ContractId)
+                .OnDelete(DeleteBehavior.Restrict)
+                .HasConstraintName("FK_CONTRACT_REV_CONTRACTS");
+
+            entity.HasOne<ContractVersion>().WithMany()
+                .HasForeignKey(e => e.BaseDraftVersionId)
+                .OnDelete(DeleteBehavior.Restrict)
+                .HasConstraintName("FK_CONTRACT_REV_BASE_DRAFT");
+
+            entity.HasOne<User>().WithMany()
+                .HasForeignKey(e => e.ProposedById)
+                .OnDelete(DeleteBehavior.Restrict)
+                .HasConstraintName("FK_CONTRACT_REV_PROPOSED_BY");
+
+            entity.HasOne<User>().WithMany()
+                .HasForeignKey(e => e.AdminReviewedById)
+                .OnDelete(DeleteBehavior.Restrict)
+                .HasConstraintName("FK_CONTRACT_REV_ADMIN_REVIEWED_BY");
+
+            entity.HasOne<User>().WithMany()
+                .HasForeignKey(e => e.SuperAdminDecidedById)
+                .OnDelete(DeleteBehavior.Restrict)
+                .HasConstraintName("FK_CONTRACT_REV_SUPERADMIN_DECIDED_BY");
+
+            entity.HasOne<OfferVersion>().WithMany()
+                .HasForeignKey(e => e.NewOfferVersionId)
+                .OnDelete(DeleteBehavior.Restrict)
+                .HasConstraintName("FK_CONTRACT_REV_NEW_OFFER_VERSION");
+
+            entity.HasOne<ContractVersion>().WithMany()
+                .HasForeignKey(e => e.NewDraftVersionId)
+                .OnDelete(DeleteBehavior.Restrict)
+                .HasConstraintName("FK_CONTRACT_REV_NEW_DRAFT");
+        });
+
+        modelBuilder.Entity<ContractRevisionConsent>(entity =>
+        {
+            entity.HasKey(e => e.Id).HasName("PK_CONTRACT_REVISION_CONSENTS");
+            entity.ToTable("CONTRACT_REVISION_CONSENTS");
+
+            entity.HasIndex(e => new { e.RevisionId, e.PartyUserId })
+                .HasDatabaseName("UX_CRC_REVISION_PARTY")
+                .IsUnique();
+            entity.HasIndex(e => e.RevisionId)
+                .HasDatabaseName("IX_CRC_REVISION");
+
+            entity.Property(e => e.Id).HasColumnName("ID");
+            entity.Property(e => e.RevisionId).HasColumnName("REVISION_ID");
+            entity.Property(e => e.PartyUserId).HasColumnName("PARTY_USER_ID");
+            entity.Property(e => e.PartyNameSnapshot).HasMaxLength(100).HasColumnName("PARTY_NAME_SNAPSHOT");
+            entity.Property(e => e.PartyRoleSnapshot).HasMaxLength(50).HasColumnName("PARTY_ROLE_SNAPSHOT");
+            entity.Property(e => e.Decision).HasMaxLength(20).HasColumnName("DECISION");
+            entity.Property(e => e.Reason).HasMaxLength(500).HasColumnName("REASON");
+            entity.Property(e => e.CreatedAt).HasColumnName("CREATED_AT");
+
+            entity.HasOne(d => d.Revision).WithMany(p => p.Consents)
+                .HasForeignKey(d => d.RevisionId)
+                .OnDelete(DeleteBehavior.Restrict)
+                .HasConstraintName("FK_CONTRACT_REV_CONSENT_REVISION");
+
+            entity.HasOne<User>().WithMany()
+                .HasForeignKey(d => d.PartyUserId)
+                .OnDelete(DeleteBehavior.Restrict)
+                .HasConstraintName("FK_CONTRACT_REV_CONSENT_PARTY");
+        });
+
         modelBuilder.Entity<DeletionRequest>(entity =>
         {
             entity.HasKey(e => e.Id).HasName("PK__DELETION__3214EC278A03ACC4");
@@ -264,10 +429,10 @@ public partial class NebrasdbContext : DbContext
                 .HasFilter("[REGION_ID] IS NOT NULL");
             entity.HasIndex(e => new { e.RegionId, e.Village, e.Basin, e.ParcelNumber }, "UQ_LAND_LOCATION")
                 .IsUnique()
-                .HasFilter("[IS_DELETED] = 0 AND [REGION_ID] IS NOT NULL");
+                .HasFilter("[IS_DELETED] = 0 AND [REGION_ID] IS NOT NULL AND [VILLAGE] IS NOT NULL AND [BASIN] IS NOT NULL AND [PARCEL_NUMBER] IS NOT NULL");
             entity.HasIndex(e => new { e.GovernorateId, e.Village, e.Basin, e.ParcelNumber }, "UQ_LAND_LOCATION_GOV")
                 .IsUnique()
-                .HasFilter("[IS_DELETED] = 0 AND [GOVERNORATE_ID] IS NOT NULL");
+                .HasFilter("[IS_DELETED] = 0 AND [GOVERNORATE_ID] IS NOT NULL AND [VILLAGE] IS NOT NULL AND [BASIN] IS NOT NULL AND [PARCEL_NUMBER] IS NOT NULL");
             entity.HasIndex(e => new { e.LandNumber, e.GovernorateId }, "UQ_LAND_NUMBER_GOV")
                 .IsUnique()
                 .HasFilter("[GOVERNORATE_ID] IS NOT NULL");
@@ -325,6 +490,10 @@ public partial class NebrasdbContext : DbContext
         modelBuilder.Entity<LandAssessment>(entity =>
         {
             entity.HasKey(e => e.Id).HasName("PK_LAND_ASSESSMENTS");
+            entity.Property(e => e.CriterionId).HasColumnName("CRITERION_ID");
+            entity.Property(e => e.AreaDonumSnapshot).HasColumnType("decimal(10, 2)").HasColumnName("AREA_DONUM_SNAPSHOT");
+            entity.HasOne(e => e.Criterion).WithMany().HasForeignKey(e => e.CriterionId)
+                .OnDelete(DeleteBehavior.Restrict).HasConstraintName("FK_LA_CRITERIA");
             entity.ToTable("LAND_ASSESSMENTS");
             entity.HasIndex(e => e.LandId, "IX_LAND_ASSESSMENTS_LAND_ID");
             entity.Property(e => e.Id).HasColumnName("ID");
@@ -406,6 +575,12 @@ public partial class NebrasdbContext : DbContext
             entity.Property(e => e.Reason).HasMaxLength(500).HasColumnName("REASON");
             entity.Property(e => e.UpdatedAt).HasDefaultValueSql("(getdate())").HasColumnName("UPDATED_AT");
             entity.Property(e => e.UpdatedById).HasColumnName("UPDATED_BY_ID");
+            entity.Property(e => e.PreviousCriterionId).HasColumnName("PREVIOUS_CRITERION_ID");
+            entity.Property(e => e.UpdatedByNameSnapshot).HasMaxLength(100).HasColumnName("UPDATED_BY_NAME_SNAPSHOT");
+            entity.Property(e => e.UpdatedByRoleSnapshot).HasMaxLength(50).HasColumnName("UPDATED_BY_ROLE_SNAPSHOT");
+            entity.HasOne<LandCriterion>().WithMany().HasForeignKey(e => e.PreviousCriterionId)
+                .OnDelete(DeleteBehavior.Restrict).HasConstraintName("FK_LC_PREVIOUS");
+
 
             entity.HasOne(d => d.UpdatedBy).WithMany(p => p.LandCriteria)
                 .HasForeignKey(d => d.UpdatedById)
@@ -420,6 +595,14 @@ public partial class NebrasdbContext : DbContext
             entity.Property(e => e.Id).HasColumnName("ID");
             entity.Property(e => e.DocumentTypeId).HasColumnName("DOCUMENT_TYPE_ID");
             entity.Property(e => e.FilePath).HasMaxLength(500).HasColumnName("FILE_PATH");
+            entity.Property(e => e.OriginalFileName).HasMaxLength(255).HasColumnName("ORIGINAL_FILE_NAME");
+            entity.Property(e => e.ContentType).HasMaxLength(100).HasColumnName("CONTENT_TYPE");
+            entity.Property(e => e.FileSizeBytes).HasColumnName("FILE_SIZE_BYTES");
+            entity.Property(e => e.Sha256)
+                .HasMaxLength(64)
+                .IsUnicode(false)
+                .IsFixedLength()
+                .HasColumnName("SHA256");
             entity.Property(e => e.LandId).HasColumnName("LAND_ID");
             entity.Property(e => e.ReviewedById).HasColumnName("REVIEWED_BY_ID");
             entity.Property(e => e.ReviewedAt).HasColumnName("REVIEWED_AT");
@@ -514,6 +697,8 @@ public partial class NebrasdbContext : DbContext
             entity.Property(e => e.UserId).HasColumnName("USER_ID");
             entity.Property(e => e.EventType).HasMaxLength(40).HasColumnName("EVENT_TYPE");
             entity.Property(e => e.ActorId).HasColumnName("ACTOR_ID");
+            entity.Property(e => e.ActorNameSnapshot).HasMaxLength(100).HasColumnName("ACTOR_NAME_SNAPSHOT");
+            entity.Property(e => e.ActorRoleSnapshot).HasMaxLength(50).HasColumnName("ACTOR_ROLE_SNAPSHOT");
             entity.Property(e => e.Ip).HasMaxLength(45).HasColumnName("IP");
             entity.Property(e => e.Details).HasMaxLength(500).HasColumnName("DETAILS");
             entity.Property(e => e.CreatedAt).HasDefaultValueSql("(getdate())").HasColumnName("CREATED_AT");
@@ -683,6 +868,8 @@ public partial class NebrasdbContext : DbContext
             entity.Property(e => e.IsDeleted).HasColumnName("IS_DELETED");
             entity.Property(e => e.IsApproved).HasDefaultValue(false).HasColumnName("IS_APPROVED");
             entity.Property(e => e.ApprovedById).HasColumnName("APPROVED_BY_ID");
+            entity.Property(e => e.ApprovedByNameSnapshot).HasMaxLength(100).HasColumnName("APPROVED_BY_NAME_SNAPSHOT");
+            entity.Property(e => e.ApprovedByRoleSnapshot).HasMaxLength(50).HasColumnName("APPROVED_BY_ROLE_SNAPSHOT");
             entity.Property(e => e.ApprovedAt).HasColumnName("APPROVED_AT");
             entity.Property(e => e.CompanyName).HasMaxLength(200).HasColumnName("COMPANY_NAME");
             entity.Property(e => e.CompanyRegistrationNumber).HasMaxLength(100).HasColumnName("COMPANY_REGISTRATION_NUMBER");

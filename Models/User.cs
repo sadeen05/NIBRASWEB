@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 
 namespace NIBRAS.Models;
@@ -22,6 +22,10 @@ public partial class User
     public bool IsApproved { get; set; }
 
     public int? ApprovedById { get; set; }
+
+    public string? ApprovedByNameSnapshot { get; set; }
+
+    public string? ApprovedByRoleSnapshot { get; set; }
 
     public DateTime? ApprovedAt { get; set; }
 

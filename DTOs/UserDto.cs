@@ -10,8 +10,47 @@ public record UserDto
     DateTime CreatedAt,
     bool IsApproved,
     string? CompanyName,
-    string? CompanyRegistrationNumber
+    string? CompanyRegistrationNumber,
+    bool? EmailVerified = null,
+    DateTime? EmailVerifiedAt = null,
+    string? PendingEmail = null,
+    int? ApprovedById = null,
+    string? ApprovedByName = null,
+    string? ApprovedByRole = null,
+    DateTime? ApprovedAt = null,
+    bool ApprovedActorSnapshotRecorded = false
 );
+
+/// <summary>One durable approval decision from the append-only security event trail.</summary>
+public record UserApprovalHistoryEntryDto(
+    int EventId,
+    int? ActorId,
+    string? ActorName,
+    string? ActorRole,
+    DateTime ApprovedAt,
+    string? Details,
+    string EventType = "AccountApproved",
+    bool ActorSnapshotRecorded = false);
+
+/// <summary>
+/// The investor-approval eligibility and the complete approval history. It is separate from the
+/// list DTO so the queue stays cheap and the detail view can show exactly which administrator
+/// approved the account, when, and under which role.
+/// </summary>
+public record UserApprovalStatusDto(
+    int UserId,
+    string Role,
+    bool IsInvestor,
+    bool? EmailVerified,
+    bool CompanyDetailsPresent,
+    bool IsApproved,
+    bool EligibleForApproval,
+    int? ApprovedById,
+    string? ApprovedByName,
+    string? ApprovedByRole,
+    DateTime? ApprovedAt,
+    IReadOnlyList<UserApprovalHistoryEntryDto> History,
+    bool ApprovedActorSnapshotRecorded = false);
 
 public record UserListResponse(
     IReadOnlyList<UserDto> Items,

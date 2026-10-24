@@ -21,7 +21,10 @@ public record AuthUserSummary(
     string Role,
     bool IsApproved,
     string Verification = VerificationStatuses.NotApplicable,
-    string? VerificationMessage = null);
+    string? VerificationMessage = null,
+    string? Email = null,
+    bool? EmailVerified = null,
+    string? PendingEmail = null);
 
 /// <summary>
 /// The status of a verification that was handed to the mailer. The values are part of the API
@@ -77,3 +80,15 @@ public record VerifyEmailRequest(
 public record ResendVerificationRequest(
     [param: Required, EmailAddress, MaxLength(255), NoControlCharacters]
     string Email);
+
+/// <summary>
+/// Request to replace the active address of an authenticated account. The current password is
+/// required so a hijacked session alone cannot move the address; the active address is only
+/// replaced after the new address has been verified.
+/// </summary>
+public record ChangeEmailRequest(
+    [param: Required, EmailAddress, MaxLength(255), NoControlCharacters]
+    string NewEmail,
+
+    [param: Required, MaxLength(128), NoControlCharacters, MaxUtf8Bytes(72)]
+    string CurrentPassword);

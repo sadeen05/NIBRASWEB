@@ -166,14 +166,14 @@ namespace NibrasWeb.Migrations
                 table: "LANDS",
                 columns: new[] { "REGION_ID", "VILLAGE", "BASIN", "PARCEL_NUMBER" },
                 unique: true,
-                filter: "[IS_DELETED] = 0 AND [REGION_ID] IS NOT NULL");
+                filter: "[IS_DELETED] = 0 AND [REGION_ID] IS NOT NULL AND [VILLAGE] IS NOT NULL AND [BASIN] IS NOT NULL AND [PARCEL_NUMBER] IS NOT NULL");
 
             migrationBuilder.CreateIndex(
                 name: "UQ_LAND_LOCATION_GOV",
                 table: "LANDS",
                 columns: new[] { "GOVERNORATE_ID", "VILLAGE", "BASIN", "PARCEL_NUMBER" },
                 unique: true,
-                filter: "[IS_DELETED] = 0 AND [GOVERNORATE_ID] IS NOT NULL");
+                filter: "[IS_DELETED] = 0 AND [GOVERNORATE_ID] IS NOT NULL AND [VILLAGE] IS NOT NULL AND [BASIN] IS NOT NULL AND [PARCEL_NUMBER] IS NOT NULL");
 
             migrationBuilder.CreateIndex(
                 name: "UQ_LAND_NUMBER_GOV",
@@ -317,7 +317,7 @@ namespace NibrasWeb.Migrations
                 table: "LANDS",
                 columns: new[] { "REGION_ID", "VILLAGE", "BASIN", "PARCEL_NUMBER" },
                 unique: true,
-                filter: "[IS_DELETED] = 0");
+                filter: "[IS_DELETED] = 0 AND [REGION_ID] IS NOT NULL AND [VILLAGE] IS NOT NULL AND [BASIN] IS NOT NULL AND [PARCEL_NUMBER] IS NOT NULL");
 
             migrationBuilder.CreateIndex(
                 name: "UQ_LAND_NUMBER_REGION",

@@ -178,6 +178,313 @@ namespace NIBRAS.API.Migrations
                     b.ToTable("CONTRACT_REVIEWS", (string)null);
                 });
 
+            modelBuilder.Entity("NIBRAS.Models.ContractRevision", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int")
+                        .HasColumnName("ID");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<string>("AdminDecision")
+                        .HasMaxLength(30)
+                        .HasColumnType("nvarchar(30)")
+                        .HasColumnName("ADMIN_DECISION");
+
+                    b.Property<DateTime?>("AdminReviewedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("ADMIN_REVIEWED_AT");
+
+                    b.Property<int?>("AdminReviewedById")
+                        .HasColumnType("int")
+                        .HasColumnName("ADMIN_REVIEWED_BY_ID");
+
+                    b.Property<string>("AdminReviewedByNameSnapshot")
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)")
+                        .HasColumnName("ADMIN_REVIEWED_BY_NAME_SNAPSHOT");
+
+                    b.Property<string>("AdminReviewedByRoleSnapshot")
+                        .HasMaxLength(50)
+                        .HasColumnType("nvarchar(50)")
+                        .HasColumnName("ADMIN_REVIEWED_BY_ROLE_SNAPSHOT");
+
+                    b.Property<int>("BaseDraftVersionId")
+                        .HasColumnType("int")
+                        .HasColumnName("BASE_DRAFT_VERSION_ID");
+
+                    b.Property<DateTime?>("ClosedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("CLOSED_AT");
+
+                    b.Property<int>("ContractId")
+                        .HasColumnType("int")
+                        .HasColumnName("CONTRACT_ID");
+
+                    b.Property<string>("EscalationReason")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)")
+                        .HasColumnName("ESCALATION_REASON");
+
+                    b.Property<int?>("NewDraftVersionId")
+                        .HasColumnType("int")
+                        .HasColumnName("NEW_DRAFT_VERSION_ID");
+
+                    b.Property<int?>("NewOfferVersionId")
+                        .HasColumnType("int")
+                        .HasColumnName("NEW_OFFER_VERSION_ID");
+
+                    b.Property<DateTime>("ProposedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("PROPOSED_AT");
+
+                    b.Property<int>("ProposedById")
+                        .HasColumnType("int")
+                        .HasColumnName("PROPOSED_BY_ID");
+
+                    b.Property<string>("ProposedByNameSnapshot")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)")
+                        .HasColumnName("PROPOSED_BY_NAME_SNAPSHOT");
+
+                    b.Property<string>("ProposedByRoleSnapshot")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("nvarchar(50)")
+                        .HasColumnName("PROPOSED_BY_ROLE_SNAPSHOT");
+
+                    b.Property<string>("ProposedTermsSnapshot")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)")
+                        .HasColumnName("PROPOSED_TERMS_SNAPSHOT");
+
+                    b.Property<string>("Reason")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)")
+                        .HasColumnName("REASON");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("nvarchar(30)")
+                        .HasColumnName("STATUS");
+
+                    b.Property<DateTime?>("SuperAdminDecidedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("SUPERADMIN_DECIDED_AT");
+
+                    b.Property<int?>("SuperAdminDecidedById")
+                        .HasColumnType("int")
+                        .HasColumnName("SUPERADMIN_DECIDED_BY_ID");
+
+                    b.Property<string>("SuperAdminDecidedByNameSnapshot")
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)")
+                        .HasColumnName("SUPERADMIN_DECIDED_BY_NAME_SNAPSHOT");
+
+                    b.Property<string>("SuperAdminDecidedByRoleSnapshot")
+                        .HasMaxLength(50)
+                        .HasColumnType("nvarchar(50)")
+                        .HasColumnName("SUPERADMIN_DECIDED_BY_ROLE_SNAPSHOT");
+
+                    b.Property<string>("SuperAdminDecision")
+                        .HasMaxLength(30)
+                        .HasColumnType("nvarchar(30)")
+                        .HasColumnName("SUPERADMIN_DECISION");
+
+                    b.Property<string>("SuperAdminReason")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)")
+                        .HasColumnName("SUPERADMIN_REASON");
+
+                    b.HasKey("Id")
+                        .HasName("PK_CONTRACT_REVISIONS");
+
+                    b.HasIndex("AdminReviewedById");
+
+                    b.HasIndex("BaseDraftVersionId");
+
+                    b.HasIndex("ContractId")
+                        .IsUnique()
+                        .HasDatabaseName("UX_CR_OPEN_CONTRACT")
+                        .HasFilter("[CLOSED_AT] IS NULL");
+
+                    b.HasIndex("NewDraftVersionId");
+
+                    b.HasIndex("NewOfferVersionId");
+
+                    b.HasIndex("ProposedById");
+
+                    b.HasIndex("SuperAdminDecidedById");
+
+                    b.HasIndex("ContractId", "ProposedAt")
+                        .HasDatabaseName("IX_CR_CONTRACT_PROPOSED");
+
+                    b.ToTable("CONTRACT_REVISIONS", (string)null);
+                });
+
+            modelBuilder.Entity("NIBRAS.Models.ContractRevisionConsent", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int")
+                        .HasColumnName("ID");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("CREATED_AT");
+
+                    b.Property<string>("Decision")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)")
+                        .HasColumnName("DECISION");
+
+                    b.Property<string>("PartyNameSnapshot")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)")
+                        .HasColumnName("PARTY_NAME_SNAPSHOT");
+
+                    b.Property<string>("PartyRoleSnapshot")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("nvarchar(50)")
+                        .HasColumnName("PARTY_ROLE_SNAPSHOT");
+
+                    b.Property<int>("PartyUserId")
+                        .HasColumnType("int")
+                        .HasColumnName("PARTY_USER_ID");
+
+                    b.Property<string>("Reason")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)")
+                        .HasColumnName("REASON");
+
+                    b.Property<int>("RevisionId")
+                        .HasColumnType("int")
+                        .HasColumnName("REVISION_ID");
+
+                    b.HasKey("Id")
+                        .HasName("PK_CONTRACT_REVISION_CONSENTS");
+
+                    b.HasIndex("PartyUserId");
+
+                    b.HasIndex("RevisionId")
+                        .HasDatabaseName("IX_CRC_REVISION");
+
+                    b.HasIndex("RevisionId", "PartyUserId")
+                        .IsUnique()
+                        .HasDatabaseName("UX_CRC_REVISION_PARTY");
+
+                    b.ToTable("CONTRACT_REVISION_CONSENTS", (string)null);
+                });
+
+            modelBuilder.Entity("NIBRAS.Models.ContractVersion", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int")
+                        .HasColumnName("ID");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<int>("ContractId")
+                        .HasColumnType("int")
+                        .HasColumnName("CONTRACT_ID");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("CREATED_AT");
+
+                    b.Property<int?>("CreatedById")
+                        .HasColumnType("int")
+                        .HasColumnName("CREATED_BY_ID");
+
+                    b.Property<string>("CreatedByNameSnapshot")
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)")
+                        .HasColumnName("CREATED_BY_NAME_SNAPSHOT");
+
+                    b.Property<string>("CreatedByRoleSnapshot")
+                        .HasMaxLength(50)
+                        .HasColumnType("nvarchar(50)")
+                        .HasColumnName("CREATED_BY_ROLE_SNAPSHOT");
+
+                    b.Property<string>("EventType")
+                        .HasMaxLength(30)
+                        .HasColumnType("nvarchar(30)")
+                        .HasColumnName("EVENT_TYPE");
+
+                    b.Property<int>("OfferId")
+                        .HasColumnType("int")
+                        .HasColumnName("OFFER_ID");
+
+                    b.Property<int?>("OfferVersionId")
+                        .HasColumnType("int")
+                        .HasColumnName("OFFER_VERSION_ID");
+
+                    b.Property<int?>("PreviousVersionId")
+                        .HasColumnType("int")
+                        .HasColumnName("PREVIOUS_VERSION_ID");
+
+                    b.Property<string>("Reason")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)")
+                        .HasColumnName("REASON");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("nvarchar(30)")
+                        .HasColumnName("STATUS");
+
+                    b.Property<int?>("TargetVersionId")
+                        .HasColumnType("int")
+                        .HasColumnName("TARGET_VERSION_ID");
+
+                    b.Property<string>("TermsSnapshot")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)")
+                        .HasColumnName("TERMS_SNAPSHOT");
+
+                    b.Property<string>("VersionKind")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)")
+                        .HasColumnName("VERSION_KIND");
+
+                    b.Property<int>("VersionNumber")
+                        .HasColumnType("int")
+                        .HasColumnName("VERSION_NUMBER");
+
+                    b.HasKey("Id")
+                        .HasName("PK__CONTRACT_VERSIONS");
+
+                    b.HasIndex("OfferId");
+
+                    b.HasIndex("OfferVersionId");
+
+                    b.HasIndex("PreviousVersionId");
+
+                    b.HasIndex("TargetVersionId");
+
+                    b.HasIndex("ContractId", "CreatedAt")
+                        .HasDatabaseName("IX_CV_CONTRACT_CREATED");
+
+                    b.HasIndex("ContractId", "VersionNumber")
+                        .IsUnique()
+                        .HasDatabaseName("UX_CV_DRAFT_VERSION")
+                        .HasFilter("[VERSION_KIND] = 'Draft'");
+
+                    b.ToTable("CONTRACT_VERSIONS", (string)null);
+                });
+
             modelBuilder.Entity("NIBRAS.Models.DeletionRequest", b =>
                 {
                     b.Property<int>("Id")
@@ -666,11 +973,11 @@ namespace NIBRAS.API.Migrations
 
                     b.HasIndex(new[] { "RegionId", "Village", "Basin", "ParcelNumber" }, "UQ_LAND_LOCATION")
                         .IsUnique()
-                        .HasFilter("[IS_DELETED] = 0 AND [REGION_ID] IS NOT NULL");
+                        .HasFilter("[IS_DELETED] = 0 AND [REGION_ID] IS NOT NULL AND [VILLAGE] IS NOT NULL AND [BASIN] IS NOT NULL AND [PARCEL_NUMBER] IS NOT NULL");
 
                     b.HasIndex(new[] { "GovernorateId", "Village", "Basin", "ParcelNumber" }, "UQ_LAND_LOCATION_GOV")
                         .IsUnique()
-                        .HasFilter("[IS_DELETED] = 0 AND [GOVERNORATE_ID] IS NOT NULL");
+                        .HasFilter("[IS_DELETED] = 0 AND [GOVERNORATE_ID] IS NOT NULL AND [VILLAGE] IS NOT NULL AND [BASIN] IS NOT NULL AND [PARCEL_NUMBER] IS NOT NULL");
 
                     b.HasIndex(new[] { "LandNumber", "GovernorateId" }, "UQ_LAND_NUMBER_GOV")
                         .IsUnique()
@@ -692,6 +999,10 @@ namespace NIBRAS.API.Migrations
 
                     SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
 
+                    b.Property<decimal?>("AreaDonumSnapshot")
+                        .HasColumnType("decimal(10, 2)")
+                        .HasColumnName("AREA_DONUM_SNAPSHOT");
+
                     b.Property<DateTime>("AssessedAt")
                         .HasColumnType("datetime2")
                         .HasColumnName("ASSESSED_AT");
@@ -699,6 +1010,10 @@ namespace NIBRAS.API.Migrations
                     b.Property<int>("AssessedById")
                         .HasColumnType("int")
                         .HasColumnName("ASSESSED_BY_ID");
+
+                    b.Property<int?>("CriterionId")
+                        .HasColumnType("int")
+                        .HasColumnName("CRITERION_ID");
 
                     b.Property<decimal?>("DistanceToGridKm")
                         .HasColumnType("decimal(10, 2)")
@@ -737,6 +1052,8 @@ namespace NIBRAS.API.Migrations
                         .HasName("PK_LAND_ASSESSMENTS");
 
                     b.HasIndex("AssessedById");
+
+                    b.HasIndex("CriterionId");
 
                     b.HasIndex(new[] { "LandId" }, "IX_LAND_ASSESSMENTS_LAND_ID");
 
@@ -861,6 +1178,10 @@ namespace NIBRAS.API.Migrations
                         .HasColumnType("decimal(10, 2)")
                         .HasColumnName("MIN_SOLAR_IRRADIANCE");
 
+                    b.Property<int?>("PreviousCriterionId")
+                        .HasColumnType("int")
+                        .HasColumnName("PREVIOUS_CRITERION_ID");
+
                     b.Property<string>("Reason")
                         .IsRequired()
                         .HasMaxLength(500)
@@ -877,8 +1198,20 @@ namespace NIBRAS.API.Migrations
                         .HasColumnType("int")
                         .HasColumnName("UPDATED_BY_ID");
 
+                    b.Property<string>("UpdatedByNameSnapshot")
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)")
+                        .HasColumnName("UPDATED_BY_NAME_SNAPSHOT");
+
+                    b.Property<string>("UpdatedByRoleSnapshot")
+                        .HasMaxLength(50)
+                        .HasColumnType("nvarchar(50)")
+                        .HasColumnName("UPDATED_BY_ROLE_SNAPSHOT");
+
                     b.HasKey("Id")
                         .HasName("PK__LAND_CRI__3214EC276031D9CC");
+
+                    b.HasIndex("PreviousCriterionId");
 
                     b.HasIndex("UpdatedById");
 
@@ -906,6 +1239,11 @@ namespace NIBRAS.API.Migrations
 
                     SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
 
+                    b.Property<string>("ContentType")
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)")
+                        .HasColumnName("CONTENT_TYPE");
+
                     b.Property<int>("DocumentTypeId")
                         .HasColumnType("int")
                         .HasColumnName("DOCUMENT_TYPE_ID");
@@ -916,9 +1254,18 @@ namespace NIBRAS.API.Migrations
                         .HasColumnType("nvarchar(500)")
                         .HasColumnName("FILE_PATH");
 
+                    b.Property<long?>("FileSizeBytes")
+                        .HasColumnType("bigint")
+                        .HasColumnName("FILE_SIZE_BYTES");
+
                     b.Property<int>("LandId")
                         .HasColumnType("int")
                         .HasColumnName("LAND_ID");
+
+                    b.Property<string>("OriginalFileName")
+                        .HasMaxLength(255)
+                        .HasColumnType("nvarchar(255)")
+                        .HasColumnName("ORIGINAL_FILE_NAME");
 
                     b.Property<string>("ReviewNote")
                         .HasMaxLength(500)
@@ -932,6 +1279,13 @@ namespace NIBRAS.API.Migrations
                     b.Property<int?>("ReviewedById")
                         .HasColumnType("int")
                         .HasColumnName("REVIEWED_BY_ID");
+
+                    b.Property<string>("Sha256")
+                        .HasMaxLength(64)
+                        .IsUnicode(false)
+                        .HasColumnType("char(64)")
+                        .HasColumnName("SHA256")
+                        .IsFixedLength();
 
                     b.Property<string>("Status")
                         .ValueGeneratedOnAdd()
@@ -1315,6 +1669,16 @@ namespace NIBRAS.API.Migrations
                         .HasColumnType("int")
                         .HasColumnName("APPROVED_BY_ID");
 
+                    b.Property<string>("ApprovedByNameSnapshot")
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)")
+                        .HasColumnName("APPROVED_BY_NAME_SNAPSHOT");
+
+                    b.Property<string>("ApprovedByRoleSnapshot")
+                        .HasMaxLength(50)
+                        .HasColumnType("nvarchar(50)")
+                        .HasColumnName("APPROVED_BY_ROLE_SNAPSHOT");
+
                     b.Property<string>("CompanyName")
                         .HasMaxLength(200)
                         .HasColumnType("nvarchar(200)")
@@ -1430,6 +1794,16 @@ namespace NIBRAS.API.Migrations
                         .HasColumnType("int")
                         .HasColumnName("ACTOR_ID");
 
+                    b.Property<string>("ActorNameSnapshot")
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)")
+                        .HasColumnName("ACTOR_NAME_SNAPSHOT");
+
+                    b.Property<string>("ActorRoleSnapshot")
+                        .HasMaxLength(50)
+                        .HasColumnType("nvarchar(50)")
+                        .HasColumnName("ACTOR_ROLE_SNAPSHOT");
+
                     b.Property<DateTime>("CreatedAt")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("datetime2")
@@ -1541,6 +1915,108 @@ namespace NIBRAS.API.Migrations
                     b.Navigation("Contract");
 
                     b.Navigation("Reviewer");
+                });
+
+            modelBuilder.Entity("NIBRAS.Models.ContractRevision", b =>
+                {
+                    b.HasOne("NIBRAS.Models.User", null)
+                        .WithMany()
+                        .HasForeignKey("AdminReviewedById")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("FK_CONTRACT_REV_ADMIN_REVIEWED_BY");
+
+                    b.HasOne("NIBRAS.Models.ContractVersion", null)
+                        .WithMany()
+                        .HasForeignKey("BaseDraftVersionId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("FK_CONTRACT_REV_BASE_DRAFT");
+
+                    b.HasOne("NIBRAS.Models.Contract", null)
+                        .WithMany()
+                        .HasForeignKey("ContractId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("FK_CONTRACT_REV_CONTRACTS");
+
+                    b.HasOne("NIBRAS.Models.ContractVersion", null)
+                        .WithMany()
+                        .HasForeignKey("NewDraftVersionId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("FK_CONTRACT_REV_NEW_DRAFT");
+
+                    b.HasOne("NIBRAS.Models.OfferVersion", null)
+                        .WithMany()
+                        .HasForeignKey("NewOfferVersionId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("FK_CONTRACT_REV_NEW_OFFER_VERSION");
+
+                    b.HasOne("NIBRAS.Models.User", null)
+                        .WithMany()
+                        .HasForeignKey("ProposedById")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("FK_CONTRACT_REV_PROPOSED_BY");
+
+                    b.HasOne("NIBRAS.Models.User", null)
+                        .WithMany()
+                        .HasForeignKey("SuperAdminDecidedById")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("FK_CONTRACT_REV_SUPERADMIN_DECIDED_BY");
+                });
+
+            modelBuilder.Entity("NIBRAS.Models.ContractRevisionConsent", b =>
+                {
+                    b.HasOne("NIBRAS.Models.User", null)
+                        .WithMany()
+                        .HasForeignKey("PartyUserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("FK_CONTRACT_REV_CONSENT_PARTY");
+
+                    b.HasOne("NIBRAS.Models.ContractRevision", "Revision")
+                        .WithMany("Consents")
+                        .HasForeignKey("RevisionId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("FK_CONTRACT_REV_CONSENT_REVISION");
+
+                    b.Navigation("Revision");
+                });
+
+            modelBuilder.Entity("NIBRAS.Models.ContractVersion", b =>
+                {
+                    b.HasOne("NIBRAS.Models.Contract", null)
+                        .WithMany()
+                        .HasForeignKey("ContractId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("FK_CV_CONTRACTS");
+
+                    b.HasOne("NIBRAS.Models.Offer", null)
+                        .WithMany()
+                        .HasForeignKey("OfferId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("FK_CV_OFFERS");
+
+                    b.HasOne("NIBRAS.Models.OfferVersion", null)
+                        .WithMany()
+                        .HasForeignKey("OfferVersionId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("FK_CV_OFFER_VERSION");
+
+                    b.HasOne("NIBRAS.Models.ContractVersion", null)
+                        .WithMany()
+                        .HasForeignKey("PreviousVersionId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("FK_CV_PREVIOUS");
+
+                    b.HasOne("NIBRAS.Models.ContractVersion", null)
+                        .WithMany()
+                        .HasForeignKey("TargetVersionId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("FK_CV_TARGET");
                 });
 
             modelBuilder.Entity("NIBRAS.Models.DeletionRequest", b =>
@@ -1657,6 +2133,12 @@ namespace NIBRAS.API.Migrations
                         .IsRequired()
                         .HasConstraintName("FK_LA_USERS");
 
+                    b.HasOne("NIBRAS.Models.LandCriterion", "Criterion")
+                        .WithMany()
+                        .HasForeignKey("CriterionId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("FK_LA_CRITERIA");
+
                     b.HasOne("NIBRAS.Models.Land", "Land")
                         .WithMany("LandAssessments")
                         .HasForeignKey("LandId")
@@ -1664,6 +2146,8 @@ namespace NIBRAS.API.Migrations
                         .HasConstraintName("FK_LA_LANDS");
 
                     b.Navigation("AssessedBy");
+
+                    b.Navigation("Criterion");
 
                     b.Navigation("Land");
                 });
@@ -1696,6 +2180,12 @@ namespace NIBRAS.API.Migrations
 
             modelBuilder.Entity("NIBRAS.Models.LandCriterion", b =>
                 {
+                    b.HasOne("NIBRAS.Models.LandCriterion", null)
+                        .WithMany()
+                        .HasForeignKey("PreviousCriterionId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("FK_LC_PREVIOUS");
+
                     b.HasOne("NIBRAS.Models.User", "UpdatedBy")
                         .WithMany("LandCriteria")
                         .HasForeignKey("UpdatedById")
@@ -1855,6 +2345,11 @@ namespace NIBRAS.API.Migrations
                     b.Navigation("ContractReviews");
 
                     b.Navigation("GridCapacityReservation");
+                });
+
+            modelBuilder.Entity("NIBRAS.Models.ContractRevision", b =>
+                {
+                    b.Navigation("Consents");
                 });
 
             modelBuilder.Entity("NIBRAS.Models.DocumentType", b =>

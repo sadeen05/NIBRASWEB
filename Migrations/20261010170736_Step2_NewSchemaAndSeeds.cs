@@ -169,19 +169,69 @@ namespace NibrasWeb.Migrations
                 type: "int",
                 nullable: true);
 
-            migrationBuilder.InsertData(
-                table: "DOCUMENT_TYPES",
-                columns: new[] { "ID", "IS_REQUIRED_FOR_VERIFICATION", "NAME" },
-                values: new object[,]
-                {
-                    { 1, true, "TitleDeed" },
-                    { 2, true, "EncumbranceStatement" }
-                });
+            // Preserve any reference rows that already exist (for example, rows created by an
+            // earlier runtime seed). Insert only missing rows, and fail closed when an ID or a
+            // business identity conflicts. Existing required flags and criterion values are
+            // never overwritten.
+            migrationBuilder.Sql(
+                """
+                IF EXISTS (SELECT 1 FROM [DOCUMENT_TYPES] WHERE [ID] = 1 AND [NAME] <> N'TitleDeed')
+                BEGIN
+                    THROW 51000, 'DOCUMENT_TYPES.ID = 1 exists with an unexpected name; refusing to change it.', 1;
+                END
 
-            migrationBuilder.InsertData(
-                table: "LAND_CRITERIA",
-                columns: new[] { "ID", "MAX_GRID_DISTANCE_KM", "MAX_SLOPE_PCT", "MIN_AREA_DONUM", "MIN_ELEVATION_M", "MIN_SOLAR_IRRADIANCE", "REASON", "UPDATED_BY_ID" },
-                values: new object[] { 1, 15m, 10m, 20m, null, 5.0m, "ILLUSTRATIVE PLACEHOLDER values for development; replace after engineering validation", -1 });
+                IF EXISTS (SELECT 1 FROM [DOCUMENT_TYPES] WHERE [NAME] = N'TitleDeed' AND [ID] <> 1)
+                BEGIN
+                    THROW 51001, 'A TitleDeed document type already exists at another ID; refusing to create a conflicting row.', 1;
+                END
+
+                IF NOT EXISTS (SELECT 1 FROM [DOCUMENT_TYPES] WHERE [ID] = 1)
+                BEGIN
+                    SET IDENTITY_INSERT [DOCUMENT_TYPES] ON;
+                    INSERT INTO [DOCUMENT_TYPES] ([ID], [IS_REQUIRED_FOR_VERIFICATION], [NAME])
+                    VALUES (1, 1, N'TitleDeed');
+                    SET IDENTITY_INSERT [DOCUMENT_TYPES] OFF;
+                END
+
+                IF EXISTS (SELECT 1 FROM [DOCUMENT_TYPES] WHERE [ID] = 2 AND [NAME] <> N'EncumbranceStatement')
+                BEGIN
+                    THROW 51002, 'DOCUMENT_TYPES.ID = 2 exists with an unexpected name; refusing to change it.', 1;
+                END
+
+                IF EXISTS (SELECT 1 FROM [DOCUMENT_TYPES] WHERE [NAME] = N'EncumbranceStatement' AND [ID] <> 2)
+                BEGIN
+                    THROW 51003, 'An EncumbranceStatement document type already exists at another ID; refusing to create a conflicting row.', 1;
+                END
+
+                IF NOT EXISTS (SELECT 1 FROM [DOCUMENT_TYPES] WHERE [ID] = 2)
+                BEGIN
+                    SET IDENTITY_INSERT [DOCUMENT_TYPES] ON;
+                    INSERT INTO [DOCUMENT_TYPES] ([ID], [IS_REQUIRED_FOR_VERIFICATION], [NAME])
+                    VALUES (2, 1, N'EncumbranceStatement');
+                    SET IDENTITY_INSERT [DOCUMENT_TYPES] OFF;
+                END
+                """);
+
+            migrationBuilder.Sql(
+                """
+                IF NOT EXISTS (SELECT 1 FROM [LAND_CRITERIA] WHERE [ID] = 1)
+                BEGIN
+                    IF EXISTS (SELECT 1 FROM [LAND_CRITERIA])
+                    BEGIN
+                        THROW 51004, 'LAND_CRITERIA has rows but no ID = 1; refusing to insert an older placeholder criterion.', 1;
+                    END
+
+                    SET IDENTITY_INSERT [LAND_CRITERIA] ON;
+                    INSERT INTO [LAND_CRITERIA]
+                        ([ID], [MIN_AREA_DONUM], [MAX_SLOPE_PCT], [MAX_GRID_DISTANCE_KM],
+                         [MIN_SOLAR_IRRADIANCE], [MIN_ELEVATION_M], [REASON], [UPDATED_BY_ID])
+                    VALUES
+                        (1, 20.0, 10.0, 15.0, 5.0, NULL,
+                         N'ILLUSTRATIVE PLACEHOLDER values for development; replace after engineering validation',
+                         -1);
+                    SET IDENTITY_INSERT [LAND_CRITERIA] OFF;
+                END
+                """);
 
             migrationBuilder.UpdateData(
                 table: "USERS",
@@ -195,7 +245,7 @@ namespace NibrasWeb.Migrations
                 table: "LANDS",
                 columns: new[] { "REGION_ID", "VILLAGE", "BASIN", "PARCEL_NUMBER" },
                 unique: true,
-                filter: "[IS_DELETED] = 0");
+                filter: "[IS_DELETED] = 0 AND [REGION_ID] IS NOT NULL AND [VILLAGE] IS NOT NULL AND [BASIN] IS NOT NULL AND [PARCEL_NUMBER] IS NOT NULL");
 
             migrationBuilder.CreateIndex(
                 name: "IX_LAND_DOCUMENTS_REVIEWED_BY_ID",
@@ -225,6 +275,10 @@ namespace NibrasWeb.Migrations
         /// <inheritdoc />
         protected override void Down(MigrationBuilder migrationBuilder)
         {
+            // Rollback is restore-from-backup. This Down deletes the seed rows; on a
+            // database where DOCUMENT_TYPES.ID = 1 or LAND_CRITERIA.ID = 1 already existed
+            // before this migration, that would remove pre-existing reference data.
+            // Do not run this Down against such a database.
             migrationBuilder.DropForeignKey(
                 name: "FK_CONTRACTS_CRITERIA",
                 table: "CONTRACTS");

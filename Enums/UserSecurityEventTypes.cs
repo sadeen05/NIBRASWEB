@@ -50,6 +50,7 @@ public static class UserSecurityEventTypes
 
     /// <summary>An admin approved an account (the investor approval, independent of verification).</summary>
     public const string AccountApproved = "AccountApproved";
+    public const string AccountApprovalRejected = "AccountApprovalRejected";
 
     /// <summary>
     /// A verification token was created for an account. The purpose is recorded in the event
@@ -63,6 +64,13 @@ public static class UserSecurityEventTypes
     /// confirm anything. The reason is recorded in the event details.
     /// </summary>
     public const string VerificationTokenInvalidated = "VerificationTokenInvalidated";
+
+    /// <summary>
+    /// The one-time out-of-band SuperAdmin bootstrap created the first login-capable
+    /// SuperAdmin account. The event carries no credential, no hash and no role change
+    /// details beyond the fact of the creation.
+    /// </summary>
+    public const string SuperAdminBootstrapped = "SuperAdminBootstrapped";
 
     private static readonly HashSet<string> Known = new(StringComparer.Ordinal)
     {
@@ -80,8 +88,10 @@ public static class UserSecurityEventTypes
         AdminActivated,
         AdminPasswordSet,
         AccountApproved,
+        AccountApprovalRejected,
         VerificationTokenIssued,
         VerificationTokenInvalidated,
+        SuperAdminBootstrapped,
     };
 
     /// <summary>

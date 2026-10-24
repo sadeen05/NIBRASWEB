@@ -20,6 +20,12 @@ public partial class LandAssessment
     public int LandId { get; set; }
 
     /// <summary>Actor taken from the authenticated token, never from the request.</summary>
+    public int? CriterionId { get; set; }
+
+    public decimal? AreaDonumSnapshot { get; set; }
+
+    public virtual LandCriterion? Criterion { get; set; }
+
     public int AssessedById { get; set; }
 
     public DateTime AssessedAt { get; set; }

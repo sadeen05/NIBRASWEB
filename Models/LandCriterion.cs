@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 
 namespace NIBRAS.Models;
@@ -16,6 +16,12 @@ public partial class LandCriterion
     public decimal? MinSolarIrradiance { get; set; }
 
     public decimal? MinElevationM { get; set; }
+
+    public int? PreviousCriterionId { get; set; }
+
+    public string? UpdatedByNameSnapshot { get; set; }
+
+    public string? UpdatedByRoleSnapshot { get; set; }
 
     public int UpdatedById { get; set; }
 
