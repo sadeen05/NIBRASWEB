@@ -1,4 +1,4 @@
-# Step 5 - 5.9 Parallel admin approval (BR-O6 concurrency)
+﻿# Step 5 - 5.9 Parallel admin approval (BR-O6 concurrency)
 #
 # Purpose: prove that two overlapping ApproveOffer calls on two different 6 MW offers
 # connected to the SAME 10 MW grid cannot both succeed and cannot oversubscribe the grid.
@@ -11,8 +11,8 @@
 #     No JWT forgery, no secrets printed.
 #   - Creates a FRESH 10 MW grid, two Verified lands on it, two 6 MW offers, landlord
 #     accepts both (-> PendingAdminApproval).
-#   - Fires the two admin-approve requests concurrently from two parallel PowerShell jobs
-#     (separate processes, genuinely overlapping HTTP; normal Invoke-WebRequest auth).
+#   - Fires the two admin-approve requests concurrently from in-process HttpClient tasks
+#     (genuinely overlapping HTTP; normal Bearer auth; the token never leaves this process).
 #   - Asserts exactly one 200 and one 409, then verifies the database: active reserved
 #     capacity on the grid = 6 MW (<= 10), exactly one Accepted offer, one winner land
 #     UnderContract, loser offer still PendingAdminApproval, loser land still Verified,
@@ -23,12 +23,6 @@
 # Usage:   powershell -File docs/tests/scripts/parallel-approval.ps1
 # Requires: the harness-owned instance (a dedicated port) against the disposable database.
 
-# BLOCKED (F1 isolation): this suite hands a session JWT to a PowerShell job, and Windows
-# PowerShell 5.1 serialises the job state - the argument included - into a temporary file.
-# The suite stays blocked until the token is handed to the child process through the
-# environment (which is inherited, not serialised) instead of through the argument list.
-# See docs/tests/DISPOSABLE_DB_PREFLIGHT.md, section 11.
-throw 'BLOCKED: the session JWT is still passed to a PowerShell job; the safe concurrency handling is not implemented yet.'
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'verification_helpers.ps1')
 # The email verification helpers: the token is read from the development outbox and
@@ -36,6 +30,8 @@ $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Net.Http
 # The suite owns its instance: the harness starts it on the dedicated port, with the
 # explicit disposable connection string, and proves that it owns the port.
+$harness = $null
+try {
 $harness = Start-TestApiInstance
 $base = Initialize-TestApi
 $pw = if ($env:NIBRAS_TEST_PASSWORD) { $env:NIBRAS_TEST_PASSWORD } else { 'T5t!N1' + [guid]::NewGuid().ToString('N').Substring(0,10) } # runtime-generated credential, never a literal
@@ -91,7 +87,7 @@ $admin = ($r.Body | ConvertFrom-Json).token
 $laEmail = "s5p-$stamp-la@example.test"; $i1Email = "s5p-$stamp-i1@example.test"; $i2Email = "s5p-$stamp-i2@example.test"
 $baseline = New-OutboxBaseline
 $r = Auth 'POST' '/api/auth/register' @{ fullName = 'P Landlord'; email = $laEmail; phone = (New-Phone); password = $pw; roleId = 1 }
-if ($r.Status -ne 200) { Write-Output 'BLOCKED: landlord register failed'; exit 3 }
+if ($r.Status -ne 201) { Write-Output 'BLOCKED: landlord register failed'; exit 3 }
   $v = Confirm-VerifiedAccount -Email $laEmail -Baseline $baseline
 if ($v.Status -ne 204) { throw "the verification of $laEmail failed ($($v.Status))" }
 $r = Auth 'POST' '/api/auth/login' @{ email = $laEmail; password = $pw }
@@ -131,7 +127,7 @@ $gridId = [int](($r.Body | ConvertFrom-Json).id)
 function Verify-Land([int]$landId, [string]$laTok, [string]$adminTok) {
   $docIds = @()
   foreach ($dt in 1..2) {
-    $r = Call 'POST' "/api/lands/$landId/documents" @{ documentTypeId = $dt; filePath = 'docs/titledeed-001.pdf' } $laTok
+    $r = Call 'POST' "/api/lands/$landId/documents/metadata" @{ documentTypeId = $dt; filePath = 'docs/titledeed-001.pdf' } $laTok
     if ($r.Status -ne 201) { throw "land $landId document upload ($dt) failed: $($r.Status)" }
     $docIds += [int](($r.Body | ConvertFrom-Json).id)
   }
@@ -171,27 +167,14 @@ foreach ($o in @($offer1, $offer2)) {
 }
 Write-Output "offers $offer1 and $offer2 both PendingAdminApproval (6 MW each)"
 
-# ---- concurrent approvals (two parallel PowerShell jobs = two processes, genuinely
-# overlapping HTTP requests; normal Bearer auth via the real admin token) ----
-$jobScript = {
-  param($baseUrl, $token, $path)
-  $h = @{ Authorization = 'Bearer ' + $token }
-  try {
-    $r = Invoke-WebRequest -Uri ($baseUrl + $path) -Method Post -Headers $h -UseBasicParsing -ErrorAction Stop
-    return [int]$r.StatusCode
-  } catch {
-    $resp = $_.Exception.Response
-    if ($null -eq $resp) { throw }
-    return [int]$resp.StatusCode
-  }
-}
-$job1 = Start-Job -ScriptBlock $jobScript -ArgumentList $base, $admin, "/api/offers/$offer1/admin-approve"
-$job2 = Start-Job -ScriptBlock $jobScript -ArgumentList $base, $admin, "/api/offers/$offer2/admin-approve"
-$null = Wait-Job $job1, $job2 -Timeout 90
-$s1a = Receive-Job $job1
-$s2a = Receive-Job $job2
-Remove-Job $job1, $job2 -Force
-$s1 = [int]$s1a; $s2 = [int]$s2a
+# ---- concurrent approvals: two in-process HttpClient requests, started before either answer
+# is awaited. No child process and no job state: the admin token never leaves this process. ----
+$approvals = Invoke-ConcurrentApiRequests -Requests @(
+  @{ Method = 'POST'; Path = "/api/offers/$offer1/admin-approve"; BearerToken = $admin },
+  @{ Method = 'POST'; Path = "/api/offers/$offer2/admin-approve"; BearerToken = $admin }
+) -TimeoutSeconds 90
+$s1 = [int]$approvals[0].Status
+$s2 = [int]$approvals[1].Status
 $sorted = @($s1, $s2) | Sort-Object
 Assert 'exactly one approval succeeds (200) and one fails (409)' '200 409' ($sorted -join ' ')
 
@@ -214,3 +197,7 @@ if ($fails.Count -gt 0) {
 }
 Write-Output 'PARALLEL APPROVAL PASS (one 200, one 409; grid not oversubscribed)'
 Write-Output 'Fixtures intentionally left in the database for inspection (no auto-cleanup).'
+}
+finally {
+  Complete-TestApiCleanup -Identity $harness
+}

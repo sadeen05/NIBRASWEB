@@ -25,7 +25,9 @@
 #   Development, NEBRASDB_Step1). The method, path, body and expected status are the
 #   same; the driver is the evidence. Final driver run (stamp 013150354):
 #   91 PASS / 0 FAIL. The parallel-approval scenario is executed separately by
-#   docs/tests/parallel-approval.ps1 (final run stamp 014108617: 7 PASS / 0 FAIL).
+#   docs/tests/scripts/parallel-approval.ps1 (final run stamp 014108617: 7 PASS / 0 FAIL).
+#   The obsolete root wrapper docs/tests/parallel-approval.ps1 was archived and removed on
+#   24 October 2026 and is not a supported command path.
 # - Identity is taken from the JWT only (ICurrentUser). Routes/bodies carry NO actor
 #   ids. Requests below therefore have no user ids in URLs or bodies.
 # - Fixture ids quoted below are the ones from the last full driver run:
@@ -500,8 +502,8 @@ Content-Type: application/json
 
 ### ============ T14 / 5.9 parallel admin approval ============
 
-# docs/tests/parallel-approval.ps1 fires two admin-approve POSTs concurrently
-# (two PowerShell jobs, two processes, real overlapping HTTP, normal Bearer auth) at
+# docs/tests/scripts/parallel-approval.ps1 fires two admin-approve POSTs concurrently
+# (in-process HttpClient tasks, real overlapping HTTP, normal Bearer auth) at
 # two different 6 MW offers on a FRESH 10 MW grid (run stamp 014108617:
 # grid 10, lands 201/202, offers 30/31). Final result (7 PASS / 0 FAIL):
 #   PASS  exactly one approval 200 and one 409       (act=200 409)

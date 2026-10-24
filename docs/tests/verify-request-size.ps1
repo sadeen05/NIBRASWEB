@@ -9,18 +9,20 @@
     application responds with HTTP 413 Payload Too Large instead of 500.
 
     The request uses an explicit Content-Length and never chunked transfer
-    encoding, so it exercises the real Kestrel request-size enforcement.
+    encoding, so it exercises the real Kestrel request-size enforcement. It
+    sends Expect: 100-continue so the 413 can be observed before the full body
+    is uploaded when Kestrel closes the connection.
 
     This script requires an already-running application instance. It does not
     start the application and performs no database access.
 
-    Safety: use only a disposable test database (for example
-    NEBRASDB_Step3_Test on your local SQL Server instance) and the read-only login endpoint.
+    Safety: use only the disposable test database
+    SADEEN\SQLEXPRESS / NIBRAS_F1_Verify and the read-only login endpoint.
     The login endpoint is rate limited (auth policy, default 10/min), so avoid
     running this in a tight loop.
 
 .PARAMETER BaseUrl
-    Base URL of the running application. Default: http://localhost:5181
+    Base URL of the running application. Default: http://localhost:5199
 
 .PARAMETER Path
     Target request path. Default: /api/auth/login (read-only, creates no data).
@@ -36,7 +38,7 @@
 #>
 [CmdletBinding()]
 param(
-    [string] $BaseUrl = 'http://localhost:5181',
+    [string] $BaseUrl = 'http://localhost:5199',
     [string] $Path = '/api/auth/login',
     [int]    $Bytes = 2097152,
     [int]    $ExpectedStatus = 413
@@ -65,7 +67,7 @@ $content.Headers.ContentType = [System.Net.Http.Headers.MediaTypeHeaderValue]::n
 $uri = ($BaseUrl.TrimEnd('/')) + $Path
 $request = [System.Net.Http.HttpRequestMessage]::new([System.Net.Http.HttpMethod]::Post, $uri)
 $request.Content = $content
-$request.Headers.ExpectContinue = $false
+$request.Headers.ExpectContinue = $true
 
 $declaredLength = $content.Headers.ContentLength
 $isChunked = $content.Headers.TransferEncodingChunked
@@ -83,9 +85,13 @@ if ($declaredLength -ne $Bytes -or [bool]$isChunked) {
 $client = [System.Net.Http.HttpClient]::new()
 $client.Timeout = [TimeSpan]::FromSeconds(60)
 try {
-    $response = $client.SendAsync($request).Result
+    $response = $client.SendAsync($request).GetAwaiter().GetResult()
     $actualStatus = [int]$response.StatusCode
-    $responseText = $response.Content.ReadAsStringAsync().Result
+    $responseText = if ($null -ne $response.Content) {
+        $response.Content.ReadAsStringAsync().GetAwaiter().GetResult()
+    } else {
+        ''
+    }
 
     $errorCode = $null
     try {

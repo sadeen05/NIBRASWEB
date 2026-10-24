@@ -6,10 +6,16 @@ never printed) and **no machine-specific paths** (repo root is discovered by
 walking up from the script to `NibrasWeb.csproj`; logs and scratch output go to
 `%TEMP%`).
 
+> **Delivery-package note:** the protected `s4_preflight.ps1` is intentionally omitted from
+> `NIBRAS_Final_Clean.zip` and must never be copied, run or modified as part of a presentation.
+> The full `run_regression.ps1` manifest pins that protected file, so complete manifest runs are
+> performed in the controlled source repository, not from the delivery ZIP. The individual
+> suites and offline checks remain available for review.
+
 ## Prerequisites
 
-- A local SQL Server instance (the `$env:NIBRAS_SQL_SERVER` value, falling back to `$env:COMPUTERNAME\SQLEXPRESS`) reachable with Windows auth
-  (`Trusted_Connection=True`), database `NEBRASDB_Step1` already migrated/seeded.
+- The disposable SQL Server target `SADEEN\SQLEXPRESS` (or the local alias of the same instance) reachable with Windows auth
+  (`Trusted_Connection=True`), database `NIBRAS_F1_Verify` already migrated/seeded. The harness refuses every other target.
 - `appsettings.json` ships an empty `ConnectionStrings:DefaultConnection` placeholder and no server
   name, so no usable connection string is stored in the repository. The test harness (or the
   environment you run the app in) must supply the real target; `s4_app.ps1` sets
@@ -24,16 +30,16 @@ walking up from the script to `NibrasWeb.csproj`; logs and scratch output go to
 
 | Variable | Required | Meaning |
 | --- | --- | --- |
-| `ConnectionStrings__DefaultConnection` | yes (supplied by the harness) | The DB connection string for the app started via `s4_app.ps1`. `appsettings.json` ships an empty `DefaultConnection` placeholder, so no usable value is stored in the repository and the harness supplies it (a caller-set value wins). Defaults to `Server=$env:NIBRAS_SQL_SERVER;Database=NEBRASDB_Step1;...`, where the server comes from `$env:NIBRAS_SQL_SERVER` (falling back to `$env:COMPUTERNAME\SQLEXPRESS`) and the database remains `NEBRASDB_Step1`. |
+| `ConnectionStrings__DefaultConnection` | yes (supplied by the harness) | The DB connection string for the app started via `s4_app.ps1`. `appsettings.json` ships an empty `DefaultConnection` placeholder, so no usable value is stored in the repository and the harness supplies it. The suites are fail-closed to the disposable target `SADEEN\SQLEXPRESS / NIBRAS_F1_Verify`; any other database, including shared/production names, is refused. |
 | `RateLimit__AuthPerMinute` | set by `s4_app.ps1` | Auth rate limit for the app process. `Start-S4App -AuthPerMinute N` sets it. |
 | `NIBRAS_TEST_PASSWORD` | optional | Shared password for script-created test users. If unset, each script generates a random one at run time. |
-| `ASPNETCORE_URLS` / `ASPNETCORE_ENVIRONMENT` | set by `s4_app.ps1` | `http://localhost:5181`, `Development`. |
+| `ASPNETCORE_URLS` / `ASPNETCORE_ENVIRONMENT` | set by `s4_app.ps1` | `http://localhost:5199`, `Development`. |
 
 ## Important rules
 
 1. **One fresh app start per suite.** Each suite must run against a freshly
-   started app (`Start-S4App` kills any existing listener on the port first), so
-   the fixed-window rate limiter starts from a full window.
+   started app (`Start-S4App` refuses to start while the dedicated port is
+   occupied), so the fixed-window rate limiter starts from a full window.
 2. **Restart between suites** — do not run two suites back-to-back against the
    same app process; stop it (`Stop-S4App`) and start a new one.
 3. Functional suites run with `-AuthPerMinute 1000` (never throttled). Only
@@ -62,37 +68,37 @@ Set-Location <repo>
 . .\docs\tests\scripts\s4_app.ps1
 
 # 1) Step-3 functional suite (no rate-limit boundary here anymore)
-Start-S4App -Port 5181 -AuthPerMinute 1000
+Start-S4App -Port 5199 -AuthPerMinute 1000
 & .\docs\tests\scripts\step3_suite.ps1            # exit 0 = all pass
 Stop-S4App
 
 # 2) Step-4 main suite (includes the A2 admin cases S4-50..S4-63)
-Start-S4App -Port 5181 -AuthPerMinute 1000
+Start-S4App -Port 5199 -AuthPerMinute 1000
 & .\docs\tests\scripts\s4_tests.ps1
 Stop-S4App
 
 # 3) Step-4 admin suite
-Start-S4App -Port 5181 -AuthPerMinute 1000
+Start-S4App -Port 5199 -AuthPerMinute 1000
 & .\docs\tests\scripts\s4_admin.ps1
 Stop-S4App
 
 # 4) Step-4 regression suite
-Start-S4App -Port 5181 -AuthPerMinute 1000
+Start-S4App -Port 5199 -AuthPerMinute 1000
 & .\docs\tests\scripts\s4_regression.ps1
 Stop-S4App
 
 # 5) Step-5 offers suite
-Start-S4App -Port 5181 -AuthPerMinute 1000
+Start-S4App -Port 5199 -AuthPerMinute 1000
 & .\docs\tests\scripts\s5_offers.ps1
 Stop-S4App
 
 # 6) Step-5 parallel approval race
-Start-S4App -Port 5181 -AuthPerMinute 1000
+Start-S4App -Port 5199 -AuthPerMinute 1000
 & .\docs\tests\scripts\parallel-approval.ps1
 Stop-S4App
 
 # 7) Step-3 rate-limit boundary (SMALL limit, fresh window)
-Start-S4App -Port 5181 -AuthPerMinute 5
+Start-S4App -Port 5199 -AuthPerMinute 5
 & .\docs\tests\scripts\step3_ratelimit.ps1
 Stop-S4App
 

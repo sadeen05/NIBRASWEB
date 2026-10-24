@@ -1,10 +1,12 @@
-$ErrorActionPreference = 'Stop'
+﻿$ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'verification_helpers.ps1')
 # The email verification helpers: the token is read from the development outbox and
 # redeemed through the real endpoints - no bypass, no direct state update.
 Add-Type -AssemblyName System.Net.Http
 # The suite owns its instance: the harness starts it on the dedicated port, with the
 # explicit disposable connection string, and proves that it owns the port.
+$harness = $null
+try {
 $harness = Start-TestApiInstance
 $base = Initialize-TestApi
 $pw = if ($env:NIBRAS_TEST_PASSWORD) { $env:NIBRAS_TEST_PASSWORD } else { 'T5t!N1' + [guid]::NewGuid().ToString('N').Substring(0,10) } # runtime-generated credential, never a literal
@@ -72,9 +74,9 @@ Write-Output ''
 Write-Output '== SEC-13 / SEC-17: control characters in filePath =='
 $r = Call 'POST' '/api/lands' (LandBody "CX-$stamp" "PX-$stamp") $tok
 $land = [int]($r.Body | ConvertFrom-Json).id
-$r = Call 'POST' "/api/lands/$land/documents" @{ documentTypeId = 2; filePath = ('docs/a' + [char]1 + '.pdf') } $tok
+$r = Call 'POST' "/api/lands/$land/documents/metadata" @{ documentTypeId = 2; filePath = ('docs/a' + [char]1 + '.pdf') } $tok
 Check 'X-01' 'filePath with U+0001' 400 $r.Status
-$r = Call 'POST' "/api/lands/$land/documents" @{ documentTypeId = 2; filePath = ("docs/a" + [char]9 + "b.pdf") } $tok
+$r = Call 'POST' "/api/lands/$land/documents/metadata" @{ documentTypeId = 2; filePath = ("docs/a" + [char]9 + "b.pdf") } $tok
 Check 'X-02' 'filePath with tab (SEC-13 lists control characters)' 400 $r.Status
 
 Write-Output ''
@@ -122,3 +124,8 @@ $pass = @($rows | Where-Object { $_.Result -eq 'PASS' }).Count
 $fail = @($rows | Where-Object { $_.Result -eq 'FAIL' }).Count
 Write-Output ''
 Write-Output "REVIEW2 TOTAL PASS=$pass FAIL=$fail"
+if ($fail -gt 0) { exit 1 }
+}
+finally {
+  Complete-TestApiCleanup -Identity $harness
+}

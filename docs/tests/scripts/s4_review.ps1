@@ -5,6 +5,8 @@ $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Net.Http
 # The suite owns its instance: the harness starts it on the dedicated port, with the
 # explicit disposable connection string, and proves that it owns the port.
+$harness = $null
+try {
 $harness = Start-TestApiInstance
 $base = Initialize-TestApi
 $pw = if ($env:NIBRAS_TEST_PASSWORD) { $env:NIBRAS_TEST_PASSWORD } else { 'T5t!N1' + [guid]::NewGuid().ToString('N').Substring(0,10) } # runtime-generated credential, never a literal
@@ -138,7 +140,7 @@ $landBody = LandBody "DOC-$stamp" "PD-$stamp"
 $r = Call 'POST' '/api/lands' $landBody $aTok
 $docLand = [int]($r.Body | ConvertFrom-Json).id
 $dbodies = @(); for ($i = 1; $i -le 5; $i++) { $dbodies += ,@{ documentTypeId = 2; filePath = "docs/race-$i.pdf" } }
-$res = Send-Parallel 'POST' "/api/lands/$docLand/documents" $dbodies $aTok
+$res = Send-Parallel 'POST' "/api/lands/$docLand/documents/metadata" $dbodies $aTok
 $dcodes = @($res | ForEach-Object { $_.Status })
 Write-Output ("parallel upload codes: " + ($dcodes -join ','))
 Check 'V-12' 'doc race: all five uploads 201' 5 @($dcodes | Where-Object { $_ -eq 201 }).Count
@@ -151,3 +153,8 @@ $pass = @($rows | Where-Object { $_.Result -eq 'PASS' }).Count
 $fail = @($rows | Where-Object { $_.Result -eq 'FAIL' }).Count
 Write-Output ''
 Write-Output "REVIEW TOTAL PASS=$pass FAIL=$fail"
+if ($fail -gt 0) { exit 1 }
+}
+finally {
+  Complete-TestApiCleanup -Identity $harness
+}

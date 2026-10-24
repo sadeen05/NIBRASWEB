@@ -1,4 +1,4 @@
-# NIBRAS Phase-2 change-request / evidence-visibility suite (PREPARED — Phase D only).
+﻿# NIBRAS Phase-2 change-request / evidence-visibility suite (PREPARED â€” Phase D only).
 #
 # Run ONLY after 20261018090000_Phase2_LandCorrectionAndChangeRequests has been applied and
 # explicitly approved (see docs/tests/PHASE2_MATRIX.md), against the confirmed target
@@ -17,6 +17,8 @@ $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Net.Http | Out-Null   # Send-ParallelPost (concurrency section)
 # The suite owns its instance: the harness starts it on the dedicated port, with the
 # explicit disposable connection string, and proves that it owns the port.
+$harness = $null
+try {
 $harness = Start-TestApiInstance
 $base = Initialize-TestApi
 $pw = if ($env:NIBRAS_TEST_PASSWORD) { $env:NIBRAS_TEST_PASSWORD } else { 'T5t!N1' + [guid]::NewGuid().ToString('N').Substring(0,10) } # runtime-generated credential, never a literal
@@ -137,7 +139,7 @@ function Assess-Land([int]$LandId) {
 function Verify-Land([int]$LandId, [string]$OwnerToken) {
   $docIds = @()
   foreach ($dt in 1..2) {
-    $r = Call 'POST' "/api/lands/$LandId/documents" @{ documentTypeId = $dt; filePath = "docs/p2-$stamp-$dt.pdf" } $OwnerToken
+    $r = Call 'POST' "/api/lands/$LandId/documents/metadata" @{ documentTypeId = $dt; filePath = "docs/p2-$stamp-$dt.pdf" } $OwnerToken
     if ($r.Status -ne 201) { throw "document upload ($dt) failed: $($r.Status) $($r.Body)" }
     $docIds += [int](($r.Body | ConvertFrom-Json).id)
   }
@@ -186,21 +188,21 @@ $r = Call 'POST' '/api/auth/register' @{ fullName = 'P2 Landlord A'; email = $la
 
   $v = Confirm-VerifiedAccount -Email $laEmail -Baseline $baseline
 if ($v.Status -ne 204) { throw "the verification of $laEmail failed ($($v.Status))" }
-if ($r.Status -ne 200) { throw "landlord A register failed: $($r.Status)" }
+if ($r.Status -ne 201) { throw "landlord A register failed: $($r.Status)" }
 $laId = [int](($r.Body | ConvertFrom-Json).id)
 $baseline = New-OutboxBaseline
 $r = Call 'POST' '/api/auth/register' @{ fullName = 'P2 Landlord B'; email = $lbEmail; phone = (New-Phone); password = $pw; roleId = 1 }
 
   $v = Confirm-VerifiedAccount -Email $lbEmail -Baseline $baseline
 if ($v.Status -ne 204) { throw "the verification of $lbEmail failed ($($v.Status))" }
-if ($r.Status -ne 200) { throw "landlord B register failed: $($r.Status)" }
+if ($r.Status -ne 201) { throw "landlord B register failed: $($r.Status)" }
 $lbId = [int](($r.Body | ConvertFrom-Json).id)
 $baseline = New-OutboxBaseline
 $r = Call 'POST' '/api/auth/register' @{ fullName = 'P2 Investor'; email = $invEmail; phone = (New-Phone); password = $pw; roleId = 2; companyName = 'P2 Co'; companyRegistrationNumber = "P2-REG-$stamp" }
 
   $v = Confirm-VerifiedAccount -Email $invEmail -Baseline $baseline
 if ($v.Status -ne 204) { throw "the verification of $invEmail failed ($($v.Status))" }
-if ($r.Status -ne 200) { throw "investor register failed: $($r.Status)" }
+if ($r.Status -ne 201) { throw "investor register failed: $($r.Status)" }
 $invId = [int](($r.Body | ConvertFrom-Json).id)
 $r = Call 'POST' "/api/users/$invId/approve" $null $saTok
 if ($r.Status -ne 204) { throw "investor approve failed: $($r.Status)" }
@@ -338,13 +340,13 @@ Check 'P2-M-02a' 'rejection while outstanding -> 200; flag cleared' '200|0' ("$(
 Check 'P2-M-02b' 'B stays invisible (evidence outstanding)' 403 (Call 'GET' "/api/lands/$bId" $null $invTok).Status
 
 # J-03/04: correction upload only for the outstanding type; SuperAdmin re-approval.
-$r = Call 'POST' "/api/lands/$bId/documents" @{ documentTypeId = 1; filePath = "docs/p2-b-title-correction-$stamp.pdf" } $laTok
+$r = Call 'POST' "/api/lands/$bId/documents/metadata" @{ documentTypeId = 1; filePath = "docs/p2-b-title-correction-$stamp.pdf" } $laTok
 Check 'P2-J-03' 'correction upload for the outstanding type -> 201' 201 $r.Status
 $bDoc1v2 = [int](($r.Body | ConvertFrom-Json).id)
 Check 'P2-J-03b' 'correction is a new Pending version (v2)' '2|Pending' (Sql "SELECT CAST(VERSION AS varchar(3)) + '|' + STATUS FROM LAND_DOCUMENTS WHERE ID = $bDoc1v2;")
 $r = Call 'PUT' "/api/lands/$bId/documents/$bDoc1v2/review" @{ approved = $true } $saTok
 Check 'P2-J-05b' 'SuperAdmin approves the corrected version -> 200' 200 $r.Status
-$r = Call 'POST' "/api/lands/$bId/documents" @{ documentTypeId = 1; filePath = "docs/p2-b-extra-$stamp.pdf" } $laTok
+$r = Call 'POST' "/api/lands/$bId/documents/metadata" @{ documentTypeId = 1; filePath = "docs/p2-b-extra-$stamp.pdf" } $laTok
 Check 'P2-J-04' 'upload for a type whose latest is approved -> 409' 409 $r.Status
 Check 'P2-J-04b' 'message names the correction restriction' 'True' ([string]($r.Body -match 'only the document types whose latest version is not approved'))
 
@@ -366,14 +368,24 @@ Check 'P2-J-05' 'regular Admin re-review on an approved land -> 403' 403 $r.Stat
 # recorded"): FK_LANDS_VERIFIED_CRITERION forbids pointing it at a non-existent row, and both
 # guards treat a missing pin and a missing row identically (LandService lines 1095/1133).
 $pinB = Sql "SELECT CAST(VERIFIED_AGAINST_CRITERION_ID AS varchar(10)) FROM LANDS WHERE ID = $bId;"
-SqlExec "UPDATE LANDS SET VERIFIED_AGAINST_CRITERION_ID = NULL WHERE ID = $bId;"
-$r = Call 'PUT' "/api/lands/$bId/documents/$bDoc2v1/review" @{ approved = $true } $saTok
-Check 'P2-I-03a' 're-approval with an unrecorded pin -> 409' 409 $r.Status
-Check 'P2-I-03b2' 'message names the missing criteria basis' 'True' ([string]($r.Body -match 'criteria version this land was approved against is unavailable'))
-$r = Call 'PUT' "/api/lands/$bId/documents/$bDoc2v1/review" @{ approved = $false; note = 'P2 recheck' } $saTok
-Check 'P2-I-03b' 'rejection is unaffected by the pin -> 200' 200 $r.Status
-SqlExec "UPDATE LANDS SET VERIFIED_AGAINST_CRITERION_ID = $pinB WHERE ID = $bId;"
-$r = Call 'POST' "/api/lands/$bId/documents" @{ documentTypeId = 2; filePath = "docs/p2-b-enc-correction-$stamp.pdf" } $laTok
+if ([string]::IsNullOrWhiteSpace($pinB) -or $pinB -eq 'NULL') { throw 'P2 setup: land B has no criterion pin to restore' }
+$pinSql = [string]$pinB
+try {
+  SqlExec "UPDATE LANDS SET VERIFIED_AGAINST_CRITERION_ID = NULL WHERE ID = $bId;"
+  $r = Call 'PUT' "/api/lands/$bId/documents/$bDoc2v1/review" @{ approved = $true } $saTok
+  Check 'P2-I-03a' 're-approval with an unrecorded pin -> 409' 409 $r.Status
+  Check 'P2-I-03b2' 'message names the missing criteria basis' 'True' ([string]($r.Body -match 'criteria version this land was approved against is unavailable'))
+  $r = Call 'PUT' "/api/lands/$bId/documents/$bDoc2v1/review" @{ approved = $false; note = 'P2 recheck' } $saTok
+  Check 'P2-I-03b' 'rejection is unaffected by the pin -> 200' 200 $r.Status
+}
+finally {
+  # This pin is the fixture's approval basis. Restore it even when an assertion or
+  # request throws; the independent read below proves the restoration took effect.
+  SqlExec "UPDATE LANDS SET VERIFIED_AGAINST_CRITERION_ID = $pinSql WHERE ID = $bId;"
+}
+$pinAfter = Sql "SELECT CAST(VERIFIED_AGAINST_CRITERION_ID AS varchar(10)) FROM LANDS WHERE ID = $bId;"
+if ($pinAfter -ne $pinB) { throw "fixture pin restoration failed: expected '$pinB', got '$pinAfter'" }
+$r = Call 'POST' "/api/lands/$bId/documents/metadata" @{ documentTypeId = 2; filePath = "docs/p2-b-enc-correction-$stamp.pdf" } $laTok
 Check 'P2-I-03c' 'corrected upload for the rejected type -> 201' 201 $r.Status
 $bDoc2v2 = [int](($r.Body | ConvertFrom-Json).id)
 $r = Call 'PUT' "/api/lands/$bId/documents/$bDoc2v2/review" @{ approved = $true } $saTok
@@ -392,14 +404,20 @@ Check 'P2-I-01b' 'message names the pinned minimum' 'True' ([string]($r.Body -ma
 $r = Decide $crB3 $false 'P2 reject after the refused approval'
 Check 'P2-I-01c' 'rejection still possible after the refusal -> 200' 200 $r.Status
 Check 'P2-M-01b' 'investor sees B again after that rejection' 200 (Call 'GET' "/api/lands/$bId" $null $invTok).Status
-SqlExec "UPDATE LANDS SET VERIFIED_AGAINST_CRITERION_ID = NULL WHERE ID = $bId;"
-$crB4 = Submit-Cr (Cr-Body $bId "P2-B-$stamp" "PB-$stamp" ([decimal]30) 'P2 unrecorded pin' 'P2 unrecorded pin description') $laTok
-$r = Decide $crB4 $true 'P2 approve under an unrecorded pin'
-Check 'P2-I-02a' 'approve with an unrecorded pin -> 409' 409 $r.Status
-Check 'P2-I-02b2' 'message names the unavailable criteria version' 'True' ([string]($r.Body -match 'criteria version this land was approved against is unavailable'))
-$r = Decide $crB4 $false 'P2 reject under an unrecorded pin'
-Check 'P2-I-02b' 'rejection still possible -> 200' 200 $r.Status
-SqlExec "UPDATE LANDS SET VERIFIED_AGAINST_CRITERION_ID = $pinB WHERE ID = $bId;"
+try {
+  SqlExec "UPDATE LANDS SET VERIFIED_AGAINST_CRITERION_ID = NULL WHERE ID = $bId;"
+  $crB4 = Submit-Cr (Cr-Body $bId "P2-B-$stamp" "PB-$stamp" ([decimal]30) 'P2 unrecorded pin' 'P2 unrecorded pin description') $laTok
+  $r = Decide $crB4 $true 'P2 approve under an unrecorded pin'
+  Check 'P2-I-02a' 'approve with an unrecorded pin -> 409' 409 $r.Status
+  Check 'P2-I-02b2' 'message names the unavailable criteria version' 'True' ([string]($r.Body -match 'criteria version this land was approved against is unavailable'))
+  $r = Decide $crB4 $false 'P2 reject under an unrecorded pin'
+  Check 'P2-I-02b' 'rejection still possible -> 200' 200 $r.Status
+}
+finally {
+  SqlExec "UPDATE LANDS SET VERIFIED_AGAINST_CRITERION_ID = $pinSql WHERE ID = $bId;"
+}
+$pinFinal = Sql "SELECT CAST(VERIFIED_AGAINST_CRITERION_ID AS varchar(10)) FROM LANDS WHERE ID = $bId;"
+if ($pinFinal -ne $pinB) { throw "fixture pin restoration failed: expected '$pinB', got '$pinFinal'" }
 
 Write-Output ''
 Write-Output '== P: change-request concurrency (land C) =='
@@ -441,3 +459,7 @@ $fail = @($rows | Where-Object { $_.Result -eq 'FAIL' }).Count
 Write-Output ''
 Write-Output "PHASE2 TOTAL PASS=$pass FAIL=$fail"
 if ($fail -gt 0) { exit 1 }
+}
+finally {
+  Complete-TestApiCleanup -Identity $harness
+}

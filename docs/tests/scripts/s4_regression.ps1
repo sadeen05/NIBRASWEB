@@ -5,6 +5,8 @@ $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Net.Http
 # The suite owns its instance: the harness starts it on the dedicated port, with the
 # explicit disposable connection string, and proves that it owns the port.
+$harness = $null
+try {
 $harness = Start-TestApiInstance
 $base = Initialize-TestApi
 $pw = if ($env:NIBRAS_TEST_PASSWORD) { $env:NIBRAS_TEST_PASSWORD } else { 'T5t!N1' + [guid]::NewGuid().ToString('N').Substring(0,10) } # runtime-generated credential, never a literal
@@ -128,7 +130,7 @@ $client.Dispose()
 
 Write-Output ''
 Write-Output '== file path (SEC-13): drive letters (new rule) =='
-$docs = "/api/lands/$l1/documents"
+$docs = "/api/lands/$l1/documents/metadata"
 foreach ($c in @(
   @{ id = 'R-11'; p = 'C:\Windows\win.ini' },
   @{ id = 'R-12'; p = 'c:/windows/win.ini' },
@@ -214,7 +216,7 @@ for ($round = 1; $round -le 3; $round++) {
   $tasks = New-Object System.Collections.ArrayList
   for ($i = 1; $i -le 5; $i++) {
     $json = ConvertTo-Json -InputObject @{ documentTypeId = 1; filePath = "docs/concurrent-$round-$i.pdf" } -Depth 5 -Compress
-    $req = New-Object System.Net.Http.HttpRequestMessage -ArgumentList ([System.Net.Http.HttpMethod]::Post), ($base + "/api/lands/$h1land/documents")
+    $req = New-Object System.Net.Http.HttpRequestMessage -ArgumentList ([System.Net.Http.HttpMethod]::Post), ($base + "/api/lands/$h1land/documents/metadata")
     $req.Headers.Authorization = New-Object System.Net.Http.Headers.AuthenticationHeaderValue -ArgumentList 'Bearer', $tok
     $req.Content = New-Object System.Net.Http.StringContent -ArgumentList $json, ([System.Text.Encoding]::UTF8), 'application/json'
     [void]$tasks.Add($client.SendAsync($req))
@@ -262,3 +264,7 @@ $fail = @($rows | Where-Object { $_.Result -eq 'FAIL' }).Count
 Write-Output ''
 Write-Output "REGRESSION TOTAL PASS=$pass FAIL=$fail"
 if ($fail -gt 0) { exit 1 }
+}
+finally {
+  Complete-TestApiCleanup -Identity $harness
+}

@@ -1,4 +1,4 @@
-# Step 7 - grid-capacity reservation surface (never prints credentials or tokens).
+﻿# Step 7 - grid-capacity reservation surface (never prints credentials or tokens).
 #
 # Covers the approved reservation scope decisions:
 #   * POST /api/GridCapacityReservations/{id}/release exists, is Admin/SuperAdmin only,
@@ -13,12 +13,8 @@
 # is deferred to a separate, separately-approved increment.
 #
 # Starts its own app once on the authorized test database, like s6_contracts.ps1.
-# BLOCKED (F1 isolation): this suite hands a session JWT to a PowerShell job, and Windows
-# PowerShell 5.1 serialises the job state - the argument included - into a temporary file.
-# The suite stays blocked until the token is handed to the child process through the
-# environment (which is inherited, not serialised) instead of through the argument list.
-# See docs/tests/DISPOSABLE_DB_PREFLIGHT.md, section 11.
-throw 'BLOCKED: the session JWT is still passed to a PowerShell job; the safe concurrency handling is not implemented yet.'
+# The concurrency blocks use in-process concurrent HttpClient requests: no session JWT is
+# passed to a PowerShell job or a child process.
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'verification_helpers.ps1')
 # The email verification helpers: the token is read from the development outbox and
@@ -64,7 +60,7 @@ function Reg([string]$FullName, [string]$Email, [int]$RoleId) {
   if ($RoleId -eq 2) { $body.companyName = 'S7R Co'; $body.companyRegistrationNumber = "S7R-REG-$stamp" }
   $baseline = New-OutboxBaseline
   $r = Call 'POST' '/api/auth/register' $body
-  if ($r.Status -ne 200) { throw "register failed ($($r.Status))" }
+  if ($r.Status -ne 201) { throw "register failed ($($r.Status))" }
   # The account can only sign in after its address was confirmed.
   $v = Confirm-VerifiedAccount -Email $Email -Baseline $baseline
   if ($v.Status -ne 204) { throw "the verification of $Email failed ($($v.Status))" }
@@ -73,7 +69,7 @@ function Reg([string]$FullName, [string]$Email, [int]$RoleId) {
 function Verify-Land([int]$landId, [string]$laTok, [string]$adminTok) {
   $docIds = @()
   foreach ($dt in 1..2) {
-    $r = Call 'POST' "/api/lands/$landId/documents" @{ documentTypeId = $dt; filePath = 'docs/s7r-deed.pdf' } $laTok
+    $r = Call 'POST' "/api/lands/$landId/documents/metadata" @{ documentTypeId = $dt; filePath = 'docs/s7r-deed.pdf' } $laTok
     if ($r.Status -ne 201) { throw "land $landId document upload ($dt) failed: $($r.Status)" }
     $docIds += [int](($r.Body | ConvertFrom-Json).id)
   }
@@ -118,6 +114,8 @@ if ($target -ne $db) { Write-Output "BLOCKED: expected $db but connected to '$ta
 Check 'S7R-00' 'database target is the configured disposable database' $db $target
 
 . (Join-Path $PSScriptRoot 's4_app.ps1')
+$app = $null
+try {
 $app = Start-S4App  -AuthPerMinute 1000
 # The base URL comes from the harness-owned instance, and the gate proves that
 # the instance is the one the harness started - before anything is written.
@@ -125,7 +123,6 @@ $base = Initialize-TestApi
 # The instance that was just started is proved to write into the disposable database.
 Assert-TestInstanceIdentity | Out-Null
 
-try {
   $repoRoot = $PSScriptRoot
   while ($repoRoot -and -not (Test-Path (Join-Path $repoRoot 'NibrasWeb.csproj'))) { $repoRoot = Split-Path $repoRoot -Parent }
   if (-not $repoRoot) { Write-Output 'BLOCKED: NibrasWeb.csproj not found above the script directory'; exit 2 }
@@ -249,40 +246,38 @@ if (-not $adminEmail -or -not $adminPass) { Write-Output 'BLOCKED: NIBRAS_TEST_S
   # Allowed path for an ENDED contract: construct the (otherwise unreachable) state where the
   # contract has ended but its hold was not released by the workflow, then release manually.
   # Direct SQL is used only to build this test-only state, mirroring the s6 suite's forced-expiry setup.
+  $relAtBefore = Sql "SELECT CONVERT(varchar(33), RELEASED_AT, 126) FROM GRID_CAPACITY_RESERVATIONS WHERE ID = $($h.Reservation);"
+  $relReasonBefore = Sql "SELECT ISNULL(RELEASE_REASON, N'') FROM GRID_CAPACITY_RESERVATIONS WHERE ID = $($h.Reservation);"
+  $originalReleaseState = Sql "SELECT CAST(CASE WHEN RELEASED_AT IS NULL THEN 0 ELSE 1 END AS varchar(1)) + '|' + ISNULL(RELEASE_REASON, N'') FROM GRID_CAPACITY_RESERVATIONS WHERE ID = $($h.Reservation);"
+  $relAtRestore = if ([string]::IsNullOrWhiteSpace($relAtBefore)) { 'NULL' } else { "CONVERT(datetime2, '$relAtBefore', 126)" }
+  $relReasonRestore = if ([string]::IsNullOrEmpty($relReasonBefore)) { 'NULL' } else { "N'" + $relReasonBefore.Replace("'", "''") + "'" }
   $null = Sql "SET QUOTED_IDENTIFIER ON; SET ANSI_NULLS ON; UPDATE GRID_CAPACITY_RESERVATIONS SET RELEASED_AT = NULL, RELEASE_REASON = NULL WHERE ID = $($h.Reservation);"
-  Check 'S7R-51' 'ended contract + unreleased hold is releasable' 200 (Call 'POST' "/api/GridCapacityReservations/$($h.Reservation)/release" @{ reason = 'manual after ended contract' } $admin).Status
-  Check 'S7R-52' 'allowed release records the manual reason' 'manual after ended contract' (Sql "SELECT RELEASE_REASON FROM GRID_CAPACITY_RESERVATIONS WHERE ID = $($h.Reservation);")
+  $clearedState = Sql "SELECT CAST(CASE WHEN RELEASED_AT IS NULL THEN 0 ELSE 1 END AS varchar(1)) + '|' + ISNULL(RELEASE_REASON, N'') FROM GRID_CAPACITY_RESERVATIONS WHERE ID = $($h.Reservation);"
+  if ($clearedState -ne '0|') { throw "S7R setup: could not clear the ended-contract release state (got '$clearedState')" }
+  try {
+    Check 'S7R-51' 'ended contract + unreleased hold is releasable' 200 (Call 'POST' "/api/GridCapacityReservations/$($h.Reservation)/release" @{ reason = 'manual after ended contract' } $admin).Status
+    Check 'S7R-52' 'allowed release records the manual reason' 'manual after ended contract' (Sql "SELECT RELEASE_REASON FROM GRID_CAPACITY_RESERVATIONS WHERE ID = $($h.Reservation);")
+  }
+  finally {
+    # If the manual release did not produce the expected terminal state, put the workflow's
+    # original release evidence back. The independent read below proves the final state.
+    $afterAttempt = Sql "SELECT CAST(CASE WHEN RELEASED_AT IS NULL THEN 0 ELSE 1 END AS varchar(1)) + '|' + ISNULL(RELEASE_REASON, N'') FROM GRID_CAPACITY_RESERVATIONS WHERE ID = $($h.Reservation);"
+    if ($afterAttempt -ne '1|manual after ended contract') {
+      $null = Sql "SET QUOTED_IDENTIFIER ON; SET ANSI_NULLS ON; UPDATE GRID_CAPACITY_RESERVATIONS SET RELEASED_AT = $relAtRestore, RELEASE_REASON = $relReasonRestore WHERE ID = $($h.Reservation);"
+    }
+  }
+  $finalReleaseState = Sql "SELECT CAST(CASE WHEN RELEASED_AT IS NULL THEN 0 ELSE 1 END AS varchar(1)) + '|' + ISNULL(RELEASE_REASON, N'') FROM GRID_CAPACITY_RESERVATIONS WHERE ID = $($h.Reservation);"
+  if ($finalReleaseState -ne '1|manual after ended contract' -and $finalReleaseState -ne $originalReleaseState) {
+    throw "S7R fixture restore failed: final release state '$finalReleaseState' is neither the manual result nor the original state '$originalReleaseState'"
+  }
 
   # ---------- F1/F2: concurrency hardening ----------
   Write-Output ''
   Write-Output '== concurrency: release vs release, release vs contract creation =='
 
-  # Real overlapping HTTP from separate PowerShell processes (same approach as the s6 M-1 block
-  # and parallel-approval.ps1). Every job waits for ONE shared start instant so the calls hit the
-  # API together instead of relying on process-startup jitter.
-  $jobPost = {
-    param($baseUrl, $token, $path, $body, $startMs)
-    if ($startMs) { while ([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() -lt [long]$startMs) { Start-Sleep -Milliseconds 5 } }
-    $h = @{ Authorization = 'Bearer ' + $token }
-    $p = @{ Uri = ($baseUrl + $path); Method = 'Post'; Headers = $h; UseBasicParsing = $true; ErrorAction = 'Stop' }
-    if ($body) { $p.Body = $body; $p.ContentType = 'application/json' }
-    try { $r = Invoke-WebRequest @p; return [pscustomobject]@{ Status = [int]$r.StatusCode; Body = [string]$r.Content } }
-    catch {
-      $resp = $_.Exception.Response
-      if ($null -eq $resp) { throw }
-      $t = (New-Object System.IO.StreamReader($resp.GetResponseStream())).ReadToEnd()
-      return [pscustomobject]@{ Status = [int]$resp.StatusCode; Body = $t }
-    }
-  }
-  function Receive-Race($jobs) {
-    $out = @()
-    foreach ($j in $jobs) {
-      $o = @(Receive-Job $j); Remove-Job $j -Force
-      if ($o.Count -eq 0) { throw 'race job produced no result' }
-      $out += $o[-1]
-    }
-    return $out
-  }
+  # Real overlapping HTTP from in-process HttpClient tasks (same approach as the s6 M-1 block
+  # and parallel-approval.ps1). Every request waits for ONE shared start instant so the calls
+  # hit the API together instead of relying on request-construction jitter.
   # The API may serialise an in-memory Utc value with a trailing 'Z' and the same instant read
   # back from the database without one, so normalise before comparing instants.
   function Release-Instant([string]$Body) {
@@ -295,12 +290,16 @@ if (-not $adminEmail -or -not $adminPass) { Write-Output 'BLOCKED: NIBRAS_TEST_S
   $hRR = New-ApprovedHold 'RR' $fx.PrimaryRegionId $laTok $ivTok $admin
   $rrReasons = @('race release A', 'race release B', 'race release C')
   $raceMs = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() + 4000
-  $rrJobs = @()
+  $rrRequests = @()
   foreach ($rsn in $rrReasons) {
-    $rrJobs += Start-Job -ScriptBlock $jobPost -ArgumentList $base, $admin, "/api/GridCapacityReservations/$($hRR.Reservation)/release", (ConvertTo-Json -InputObject @{ reason = $rsn } -Compress), $raceMs
+    $rrRequests += @{
+      Method = 'POST'
+      Path = "/api/GridCapacityReservations/$($hRR.Reservation)/release"
+      Json = (ConvertTo-Json -InputObject @{ reason = $rsn } -Compress)
+      BearerToken = $admin
+    }
   }
-  $null = Wait-Job $rrJobs -Timeout 60
-  $rrRes = Receive-Race $rrJobs
+  $rrRes = Invoke-ConcurrentApiRequests -Requests $rrRequests -StartAtUnixMs $raceMs -TimeoutSeconds 60
   Check 'S7R-60' 'overlapping releases all return 200 (one writes, rest idempotent)' '200 200 200' (@($rrRes | ForEach-Object { [int]$_.Status }) -join ' ')
 
   $rrTimes = @($rrRes | Where-Object { [int]$_.Status -eq 200 } | ForEach-Object { Release-Instant $_.Body })
@@ -321,10 +320,10 @@ if (-not $adminEmail -or -not $adminPass) { Write-Output 'BLOCKED: NIBRAS_TEST_S
   # linked to a live contract.
   $hRC = New-ApprovedHold 'RC' $fx.PrimaryRegionId $laTok $ivTok $admin
   $raceMs = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() + 4000
-  $jRel = Start-Job -ScriptBlock $jobPost -ArgumentList $base, $admin, "/api/GridCapacityReservations/$($hRC.Reservation)/release", (ConvertTo-Json -InputObject @{ reason = 'race release vs create' } -Compress), $raceMs
-  $jCre = Start-Job -ScriptBlock $jobPost -ArgumentList $base, $admin, '/api/contracts', (ConvertTo-Json -InputObject @{ offerId = $hRC.Offer } -Compress), $raceMs
-  $null = Wait-Job $jRel, $jCre -Timeout 60
-  $rcRes = Receive-Race @($jRel, $jCre)
+  $rcRes = Invoke-ConcurrentApiRequests -Requests @(
+    @{ Method = 'POST'; Path = "/api/GridCapacityReservations/$($hRC.Reservation)/release"; Json = (ConvertTo-Json -InputObject @{ reason = 'race release vs create' } -Compress); BearerToken = $admin },
+    @{ Method = 'POST'; Path = '/api/contracts'; Json = (ConvertTo-Json -InputObject @{ offerId = $hRC.Offer } -Compress); BearerToken = $admin }
+  ) -StartAtUnixMs $raceMs -TimeoutSeconds 60
   $relSt = [int]$rcRes[0].Status
   $creSt = [int]$rcRes[1].Status
   Check 'S7R-70' 'release vs create: exactly one side wins (200 xor 201)' 'True' ([string]((($relSt -eq 200) -and ($creSt -eq 409)) -or (($relSt -eq 409) -and ($creSt -eq 201))))
@@ -334,12 +333,14 @@ if (-not $adminEmail -or -not $adminPass) { Write-Output 'BLOCKED: NIBRAS_TEST_S
   $holdRel = Sql "SELECT CAST(CASE WHEN RELEASED_AT IS NULL THEN 0 ELSE 1 END AS varchar(2)) FROM GRID_CAPACITY_RESERVATIONS WHERE ID = $($hRC.Reservation);"
   $holdCon = Sql "SELECT CAST(CASE WHEN CONTRACT_ID IS NULL THEN 0 ELSE 1 END AS varchar(2)) FROM GRID_CAPACITY_RESERVATIONS WHERE ID = $($hRC.Reservation);"
   Check 'S7R-73' 'the persisted hold matches the winning call' $expectHold ("released=$holdRel,linked=$holdCon")
-}
-finally { Stop-S4App $app }
 
-$pass = @($rows | Where-Object { $_.Result -eq 'PASS' }).Count
-$fail = @($rows | Where-Object { $_.Result -eq 'FAIL' }).Count
-Write-Output ''
-Write-Output "S7R RESERVATIONS TOTAL PASS=$pass FAIL=$fail"
+  $pass = @($rows | Where-Object { $_.Result -eq 'PASS' }).Count
+  $fail = @($rows | Where-Object { $_.Result -eq 'FAIL' }).Count
+  Write-Output ''
+  Write-Output "S7R RESERVATIONS TOTAL PASS=$pass FAIL=$fail"
+}
+finally {
+  Complete-TestApiCleanup -Identity $app
+}
 if ($fail -gt 0) { exit 1 }
 exit 0

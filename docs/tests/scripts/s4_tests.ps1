@@ -1,5 +1,86 @@
-$ErrorActionPreference = 'Stop'
+﻿$ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'verification_helpers.ps1')
+
+$harness = $null
+$runStartedUtc = [DateTime]::UtcNow
+$suiteExitCode = 0
+$cleanupProblems = New-Object System.Collections.Generic.List[string]
+
+function Stop-S4Run {
+  param([int]$Code, [string]$Message)
+  if ($Message) { Write-Output $Message }
+  $exception = New-Object System.Exception("S4 run stopped with exit code $Code")
+  $exception.Data['S4ExitCode'] = $Code
+  throw $exception
+}
+
+function Stop-S4Api {
+  # Stops only the PID recorded by the harness, and only while that PID still owns the
+  # harness port. Foreign listeners are reported, never killed. The return value is a list
+  # of cleanup problems; an empty list means port release and identity removal were verified.
+  param($Identity)
+
+  $problems = New-Object System.Collections.Generic.List[string]
+  if ($null -eq $Identity) {
+    [void]$problems.Add('no harness identity was recorded')
+    return $problems.ToArray()
+  }
+
+  try {
+    Stop-TestApiInstance -Identity $Identity
+  }
+  catch {
+    [void]$problems.Add(('Stop-TestApiInstance failed: {0}' -f $_.Exception.Message))
+  }
+
+  $port = [int]$Identity.Port
+  $identityPath = Join-Path ([IO.Path]::GetTempPath()) 'nibras-f1-api-identity.json'
+  $deadline = [DateTime]::UtcNow.AddSeconds(5)
+  $identityPresent = $true
+  $listeners = @()
+  $apiProcess = $null
+  $portCheckError = $null
+
+  # Observe only. Stop-TestApiInstance already performed the ownership check; this loop waits
+  # for the exact process and its listener to disappear, without ever killing another PID.
+  do {
+    $identityPresent = Test-Path -LiteralPath $identityPath
+    $listeners = @()
+    try {
+      $listeners = @(Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction Stop)
+    }
+    catch {
+      if ($_.Exception.Message -notmatch 'No matching|not found' -and $_.FullyQualifiedErrorId -notmatch 'NotFound|NoMatching') {
+        $portCheckError = $_.Exception.Message
+      }
+    }
+
+    $apiProcess = Get-Process -Id ([int]$Identity.Pid) -ErrorAction SilentlyContinue
+    $stillPresent = $identityPresent -or ($listeners.Count -gt 0) -or ($null -ne $apiProcess) -or ($null -ne $portCheckError)
+    if (-not $stillPresent) { return $problems.ToArray() }
+    if ($null -ne $portCheckError) { break }
+    if ([DateTime]::UtcNow -ge $deadline) { break }
+    Start-Sleep -Milliseconds 250
+  } while ($true)
+
+  if ($identityPresent) {
+    [void]$problems.Add('the API identity file still exists after cleanup')
+  }
+  if ($listeners.Count -gt 0) {
+    $owners = @($listeners | ForEach-Object { [int]$_.OwningProcess } | Sort-Object -Unique)
+    [void]$problems.Add(("port {0} still has listener process(es) {1}" -f $port, ($owners -join ',')))
+  }
+  if ($null -ne $apiProcess) {
+    [void]$problems.Add(("API process {0} is still alive" -f $Identity.Pid))
+  }
+  if ($null -ne $portCheckError) {
+    [void]$problems.Add(('port cleanup check failed: {0}' -f $portCheckError))
+  }
+
+  return $problems.ToArray()
+}
+
+try {
 # The email verification helpers: the token is read from the development outbox and
 # redeemed through the real endpoints - no bypass, no direct state update.
 # The suite owns its instance: the harness starts it on the dedicated port, with the
@@ -134,10 +215,10 @@ Write-Output '== 4.4 submit, documents, ownership (landlord A and B) =='
 $r = Call 'POST' "/api/lands/$landId/submit" $null $aTok
 Check 'S4-09' 'submit with no required-type document' 409 $r.Status
 
-$r = Call 'POST' "/api/lands/$landId/documents" @{ documentTypeId = 1; filePath = 'docs/titledeed-001.pdf' } $aTok
+$r = Call 'POST' "/api/lands/$landId/documents/metadata" @{ documentTypeId = 1; filePath = 'docs/titledeed-001.pdf' } $aTok
 Check 'S4-10' 'upload TitleDeed (required type) 201' 201 $r.Status
 $docId = [int]($r.Body | ConvertFrom-Json).id
-$r = Call 'POST' "/api/lands/$landId/documents" @{ documentTypeId = 1; filePath = 'docs/titledeed-002.pdf' } $aTok
+$r = Call 'POST' "/api/lands/$landId/documents/metadata" @{ documentTypeId = 1; filePath = 'docs/titledeed-002.pdf' } $aTok
 Check 'S4-11' 'second TitleDeed upload gets Version 2' 2 (($r.Body | ConvertFrom-Json).version)
 
 $r = Call 'POST' "/api/lands/$landId/submit" $null $aTok
@@ -150,7 +231,7 @@ $r = Call 'PUT' "/api/lands/$landId" $upd $bTok
 Check 'S4-14' 'landlord B PUTs A''s land' 403 $r.Status
 $r = Call 'POST' "/api/lands/$landId/submit" $null $bTok
 Check 'S4-15' 'landlord B submits A''s land' 403 $r.Status
-$r = Call 'POST' "/api/lands/$landId/documents" @{ documentTypeId = 2; filePath = 'docs/x.pdf' } $bTok
+$r = Call 'POST' "/api/lands/$landId/documents/metadata" @{ documentTypeId = 2; filePath = 'docs/x.pdf' } $bTok
 Check 'S4-16' 'landlord B uploads to A''s land' 403 $r.Status
 $r = Call 'GET' "/api/lands/$landId/documents" $null $bTok
 Check 'S4-17' 'landlord B lists A''s documents' 403 $r.Status
@@ -165,14 +246,14 @@ $bad = @(
   @{ id = 'S4-22'; path = ('a' * 501); name = '501-character path' }
 )
 foreach ($b in $bad) {
-  $r = Call 'POST' "/api/lands/$landId/documents" @{ documentTypeId = 2; filePath = $b.path } $aTok
+  $r = Call 'POST' "/api/lands/$landId/documents/metadata" @{ documentTypeId = 2; filePath = $b.path } $aTok
   Check $b.id ("filePath rejected: " + $b.name) 400 $r.Status
 }
-$r = Call 'POST' "/api/lands/$landId/documents" @{ documentTypeId = 2; filePath = 'docs/encumbrance-001.pdf' } $aTok
+$r = Call 'POST' "/api/lands/$landId/documents/metadata" @{ documentTypeId = 2; filePath = 'docs/encumbrance-001.pdf' } $aTok
 Check 'S4-23' 'upload while PendingVerification is blocked (submitted evidence is frozen)' 409 $r.Status
 $cnt = Sql "SELECT COUNT(*) FROM LAND_DOCUMENTS WHERE LAND_ID = $landId;"
 Check 'S4-24' 'DB: rejected paths and the blocked upload created no rows (2 Draft uploads only)' 2 $cnt
-$r = Call 'POST' "/api/lands/$ignoredId/documents" @{ documentTypeId = 2; filePath = 'docs/encumbrance-001.pdf' } $aTok
+$r = Call 'POST' "/api/lands/$ignoredId/documents/metadata" @{ documentTypeId = 2; filePath = 'docs/encumbrance-001.pdf' } $aTok
 Check 'S4-23b' 'same valid relative path is accepted while the land is Draft' 201 $r.Status
 
 Write-Output ''
@@ -244,18 +325,18 @@ Write-Output '== A2: admin verification paths via a disposable Admin (SuperAdmin
 # SuperAdmin credentials: dedicated disposable-environment variables, never printed.
 $repoRoot = $PSScriptRoot
 while ($repoRoot -and -not (Test-Path (Join-Path $repoRoot 'NibrasWeb.csproj'))) { $repoRoot = Split-Path $repoRoot -Parent }
-if (-not $repoRoot) { Write-Output 'FATAL: NibrasWeb.csproj not found above the script directory'; exit 2 }
+if (-not $repoRoot) { Stop-S4Run -Code 2 -Message 'FATAL: NibrasWeb.csproj not found above the script directory' }
 $sec = @{}
 # The SuperAdmin credentials come from the dedicated disposable-environment variables.
 # The user secrets are never enumerated: the suite reads exactly the two values it needs,
 # and it never prints them.
 $saEmail = $env:NIBRAS_TEST_SUPERADMIN_EMAIL
 $saPass = $env:NIBRAS_TEST_SUPERADMIN_PASSWORD
-if (-not $saEmail -or -not $saPass) { Write-Output 'BLOCKED: NIBRAS_TEST_SUPERADMIN_EMAIL / NIBRAS_TEST_SUPERADMIN_PASSWORD are not set'; exit 2 }
+if (-not $saEmail -or -not $saPass) { Stop-S4Run -Code 2 -Message 'BLOCKED: NIBRAS_TEST_SUPERADMIN_EMAIL / NIBRAS_TEST_SUPERADMIN_PASSWORD are not set' }
 
 $r = Call 'POST' '/api/auth/login' @{ email = $saEmail; password = $saPass }
 Check 'A2-01' 'seeded SuperAdmin logs in (credentials never printed)' 200 $r.Status
-if ($r.Status -ne 200) { Write-Output 'cannot continue without SuperAdmin'; exit 3 }
+if ($r.Status -ne 200) { Stop-S4Run -Code 3 -Message 'cannot continue without SuperAdmin' }
 $saTok = ($r.Body | ConvertFrom-Json).token
 
 $admEmail = "s4-adm-$stamp@example.test"
@@ -274,10 +355,10 @@ $x = $good.Clone(); $x.parcelNumber = "PX-$stamp"; $x.landNumber = "LX-$stamp"
 $r = Call 'POST' '/api/lands' $x $aTok
 Check 'A2-04' 'create land X (Draft)' 201 $r.Status
 $xId = [int]($r.Body | ConvertFrom-Json).id
-$r = Call 'POST' "/api/lands/$xId/documents" @{ documentTypeId = 1; filePath = "docs/x-title-$stamp.pdf" } $aTok
+$r = Call 'POST' "/api/lands/$xId/documents/metadata" @{ documentTypeId = 1; filePath = "docs/x-title-$stamp.pdf" } $aTok
 Check 'A2-05' 'upload TitleDeed on X' 201 $r.Status
 $xDoc1 = [int]($r.Body | ConvertFrom-Json).id
-$r = Call 'POST' "/api/lands/$xId/documents" @{ documentTypeId = 2; filePath = "docs/x-enc-$stamp.pdf" } $aTok
+$r = Call 'POST' "/api/lands/$xId/documents/metadata" @{ documentTypeId = 2; filePath = "docs/x-enc-$stamp.pdf" } $aTok
 Check 'A2-06' 'upload EncumbranceStatement on X' 201 $r.Status
 $xDoc2 = [int]($r.Body | ConvertFrom-Json).id
 $r = Call 'POST' "/api/lands/$xId/submit" $null $aTok
@@ -328,10 +409,10 @@ $y = $good.Clone(); $y.parcelNumber = "PY-$stamp"; $y.landNumber = "LY-$stamp"
 $r = Call 'POST' '/api/lands' $y $aTok
 Check 'A2-08' 'create land Y (Draft)' 201 $r.Status
 $yId = [int]($r.Body | ConvertFrom-Json).id
-$r = Call 'POST' "/api/lands/$yId/documents" @{ documentTypeId = 1; filePath = "docs/y-title-$stamp.pdf" } $aTok
+$r = Call 'POST' "/api/lands/$yId/documents/metadata" @{ documentTypeId = 1; filePath = "docs/y-title-$stamp.pdf" } $aTok
 Check 'A2-09' 'upload TitleDeed on Y' 201 $r.Status
 $yDoc1 = [int]($r.Body | ConvertFrom-Json).id
-$r = Call 'POST' "/api/lands/$yId/documents" @{ documentTypeId = 2; filePath = "docs/y-enc-$stamp.pdf" } $aTok
+$r = Call 'POST' "/api/lands/$yId/documents/metadata" @{ documentTypeId = 2; filePath = "docs/y-enc-$stamp.pdf" } $aTok
 Check 'A2-10' 'upload EncumbranceStatement on Y' 201 $r.Status
 $yDoc2 = [int]($r.Body | ConvertFrom-Json).id
 $r = Call 'POST' "/api/lands/$yId/submit" $null $aTok
@@ -391,7 +472,7 @@ $z = $good.Clone(); $z.parcelNumber = "PZ-$stamp"; $z.landNumber = "LZ-$stamp"
 $r = Call 'POST' '/api/lands' $z $aTok
 Check 'A2-14' 'create land Z (Draft)' 201 $r.Status
 $zId = [int]($r.Body | ConvertFrom-Json).id
-$r = Call 'POST' "/api/lands/$zId/documents" @{ documentTypeId = 1; filePath = "docs/z-title-$stamp.pdf" } $aTok
+$r = Call 'POST' "/api/lands/$zId/documents/metadata" @{ documentTypeId = 1; filePath = "docs/z-title-$stamp.pdf" } $aTok
 Check 'A2-15' 'upload TitleDeed on Z (single type)' 201 $r.Status
 $r = Call 'POST' "/api/lands/$zId/submit" $null $aTok
 Check 'A2-16' 'submit Z -> PendingVerification' 200 $r.Status
@@ -402,8 +483,13 @@ if ($r.Status -eq 200) { $zSeen = @(($r.Body | ConvertFrom-Json).items | Where-O
 Check 'S4-55' 'admin ?status=PendingVerification contains Z' '200|True' ("$($r.Status)|$zSeen")
 
 # --- S4-57: versioned criteria; S4-57b/57d double as the A1 regression guards ---
-$r = Call 'POST' '/api/criteria' @{ minAreaDonum = 20; maxSlopePct = 10; maxGridDistanceKm = 15; minSolarIrradiance = 5; minElevationM = $null; reason = 'Step5 A2: seed-equivalent thresholds' } $admTok
-Check 'S4-57a' 'admin creates criteria version 2 -> 201' 201 $r.Status
+$criteriaBefore = Call 'GET' '/api/criteria/current' $null $saTok
+if ($criteriaBefore.Status -ne 200) { throw 'Current criteria unavailable before SuperAdmin replacement' }
+$criteriaBody = @{ expectedCurrentId = [int](($criteriaBefore.Body | ConvertFrom-Json).id); minAreaDonum = 20; maxSlopePct = 10; maxGridDistanceKm = 15; minSolarIrradiance = 5; minElevationM = $null; reason = 'Step5 A2: seed-equivalent thresholds' }
+$r = Call 'POST' '/api/criteria' $criteriaBody $admTok
+Check 'S4-57a-admin' 'regular Admin cannot replace criteria -> 403' 403 $r.Status
+$r = Call 'POST' '/api/criteria' $criteriaBody $saTok
+Check 'S4-57a' 'SuperAdmin creates criteria replacement -> 201' 201 $r.Status
 $v2 = [int]($r.Body | ConvertFrom-Json).id
 $curNow = (Call 'GET' '/api/criteria/current' $null $admTok).Body | ConvertFrom-Json
 Check 'S4-57b' 'A1 guard: new version becomes current immediately' $v2 ([int]$curNow.id)
@@ -471,4 +557,74 @@ $fail = @($rows | Where-Object { $_.Result -eq 'FAIL' }).Count
 $blk = @($rows | Where-Object { $_.Result -eq 'BLOCKED' }).Count
 Write-Output ''
 Write-Output "TOTAL PASS=$pass FAIL=$fail BLOCKED=$blk"
-if ($fail -gt 0 -or $blk -gt 0) { exit 1 }
+if ($fail -gt 0 -or $blk -gt 0) { $suiteExitCode = 1 }
+}
+catch {
+  $exception = $_.Exception
+  if ($null -ne $exception.Data -and $exception.Data.Contains('S4ExitCode')) {
+    $suiteExitCode = [int]$exception.Data['S4ExitCode']
+  }
+  else {
+    $suiteExitCode = 1
+    Write-Output ("FATAL: " + $exception.Message)
+  }
+}
+finally {
+  $cleanupIdentity = $harness
+
+  # If Start-TestApiInstance threw after launching the API but before returning the identity,
+  # recover only an identity file created by this run. A stale identity is reported and left
+  # alone; Stop-TestApiInstance still proves the PID owns the recorded port before stopping it.
+  if ($null -eq $cleanupIdentity) {
+    $identityPath = Join-Path ([IO.Path]::GetTempPath()) 'nibras-f1-api-identity.json'
+    if (Test-Path -LiteralPath $identityPath) {
+      try {
+        $candidate = Get-Content -LiteralPath $identityPath -Raw | ConvertFrom-Json
+        if (-not $candidate -or [int]$candidate.Pid -le 0 -or [int]$candidate.Port -le 0 -or [string]::IsNullOrWhiteSpace([string]$candidate.StartedAt)) {
+          [void]$cleanupProblems.Add('the API identity file is incomplete after the startup failure')
+        }
+        else {
+          $candidateStarted = [DateTime]::Parse(
+            [string]$candidate.StartedAt,
+            [Globalization.CultureInfo]::InvariantCulture,
+            [Globalization.DateTimeStyles]::RoundtripKind)
+          if ($candidateStarted -ge $runStartedUtc) {
+            $cleanupIdentity = $candidate
+          }
+          else {
+            [void]$cleanupProblems.Add('the API identity file predates this run; it was left untouched')
+          }
+        }
+      }
+      catch {
+        [void]$cleanupProblems.Add(('the API identity file could not be recovered after the startup failure: ' + $_.Exception.Message))
+      }
+    }
+  }
+
+  if ($null -ne $cleanupIdentity) {
+    try {
+      $cleanupProblems = @(Stop-S4Api -Identity $cleanupIdentity)
+    }
+    catch {
+      $cleanupProblems = @('cleanup helper failed: ' + $_.Exception.Message)
+    }
+
+    if ($cleanupProblems.Count -gt 0) {
+      foreach ($problem in $cleanupProblems) {
+        Write-Output ("WARNING: cleanup failed: " + $problem)
+      }
+      $suiteExitCode = 1
+    }
+    else {
+      Write-Output ("CLEANUP-OK api_pid={0} port={1}" -f $cleanupIdentity.Pid, $cleanupIdentity.Port)
+    }
+  }
+  elseif ($cleanupProblems.Count -gt 0) {
+    foreach ($problem in $cleanupProblems) {
+      Write-Output ("WARNING: cleanup failed: " + $problem)
+    }
+    $suiteExitCode = 1
+  }
+}
+exit $suiteExitCode

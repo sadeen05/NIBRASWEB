@@ -1,9 +1,7 @@
-# BLOCKED (F1 isolation): this suite hands a session JWT to a PowerShell job, and Windows
-# PowerShell 5.1 serialises the job state - the argument included - into a temporary file.
-# The suite stays blocked until the token is handed to the child process through the
-# environment (which is inherited, not serialised) instead of through the argument list.
-# See docs/tests/DISPOSABLE_DB_PREFLIGHT.md, section 11.
-throw 'BLOCKED: the session JWT is still passed to a PowerShell job; the safe concurrency handling is not implemented yet.'
+﻿# Step 5 - offers acceptance suite (never prints credentials or tokens).
+#
+# The concurrency blocks use in-process concurrent HttpClient requests: no session JWT is
+# passed to a PowerShell job or a child process.
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'verification_helpers.ps1')
 # The email verification helpers: the token is read from the development outbox and
@@ -11,6 +9,8 @@ $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Net.Http
 # The suite owns its instance: the harness starts it on the dedicated port, with the
 # explicit disposable connection string, and proves that it owns the port.
+$harness = $null
+try {
 $harness = Start-TestApiInstance
 $base = Initialize-TestApi
 $pw = if ($env:NIBRAS_TEST_PASSWORD) { $env:NIBRAS_TEST_PASSWORD } else { 'T5t!N1' + [guid]::NewGuid().ToString('N').Substring(0,10) } # runtime-generated credential, never a literal
@@ -23,6 +23,7 @@ $db = (Get-TestTarget).Database
 # The running instance is proved to write into the disposable database before anything is written.
 Assert-TestInstanceIdentity | Out-Null
 $rows = New-Object System.Collections.ArrayList
+$blocked = 0
 $global:AuthCalls = 0
 
 function New-Phone { '9' + ('{0:D9}' -f (Get-Random -Minimum 100000000 -Maximum 999999999)) }
@@ -64,7 +65,7 @@ function Reg([string]$FullName, [string]$Email, [int]$RoleId) {
   if ($RoleId -eq 2) { $body.companyName = 'S5 Co'; $body.companyRegistrationNumber = "S5-REG-$stamp" }
   $baseline = New-OutboxBaseline
   $r = Auth 'POST' '/api/auth/register' $body
-  if ($r.Status -ne 200) { throw "register failed ($($r.Status)): $($r.Body)" }
+  if ($r.Status -ne 201) { throw "register failed ($($r.Status)): $($r.Body)" }
   # The account can only sign in after its address was confirmed.
   $v = Confirm-VerifiedAccount -Email $Email -Baseline $baseline
   if ($v.Status -ne 204) { throw "the verification of $Email failed ($($v.Status))" }
@@ -73,7 +74,7 @@ function Reg([string]$FullName, [string]$Email, [int]$RoleId) {
 function Verify-Land([int]$landId, [string]$laTok, [string]$adminTok) {
   $docIds = @()
   foreach ($dt in 1..2) {
-    $r = Call 'POST' "/api/lands/$landId/documents" @{ documentTypeId = $dt; filePath = 'docs/titledeed-001.pdf' } $laTok
+    $r = Call 'POST' "/api/lands/$landId/documents/metadata" @{ documentTypeId = $dt; filePath = 'docs/titledeed-001.pdf' } $laTok
     if ($r.Status -ne 201) { throw "land $landId document upload ($dt) failed: $($r.Status)" }
     $docIds += [int](($r.Body | ConvertFrom-Json).id)
   }
@@ -316,14 +317,6 @@ Write-Output '== F-3: freeze race (admin approval vs competing withdraw) =='
 $r = Call 'POST' '/api/grids' @{ regionId = $fx.PrimaryRegionId; name = "S5-F3G-$stamp"; capacityMw = 50; status = 'Operational' } $admin
 Check 'S5-54-0' 'admin creates a dedicated grid for the F-3/F-2 fixtures' 201 $r.Status
 $gF3 = [int](($r.Body | ConvertFrom-Json).id)
-$jobScript = {
-  param($baseUrl, $token, $path, $method, $body)
-  $h = @{ Authorization = 'Bearer ' + $token }
-  $p = @{ Uri = ($baseUrl + $path); Method = $method; Headers = $h; UseBasicParsing = $true; ErrorAction = 'Stop' }
-  if ($body) { $p.Body = $body; $p.ContentType = 'application/json' }
-  try { $r = Invoke-WebRequest @p; return [int]$r.StatusCode }
-  catch { $resp = $_.Exception.Response; if ($null -eq $resp) { throw }; return [int]$resp.StatusCode }
-}
 $L3 = Create-Land "S5-L3-$stamp" "S5P-L3-$stamp" $gF3 $laTok $admin
 $r = Call 'POST' '/api/offers' @{ landId = $L3; requiredCapacityMw = 1; connectionMechanism = 1; landlordSharePct = 30 } $i1Tok
 Check 'S5-54a' 'i1 creates offer A on L3' 201 $r.Status
@@ -333,11 +326,12 @@ Check 'S5-54b' 'i2 creates offer B on L3 (competitor stays PendingLandlordRespon
 $oR2 = [int](($r.Body | ConvertFrom-Json).id)
 $r = Call 'POST' "/api/offers/$oR1/accept" $null $laTok
 Check 'S5-54c' 'landlord accepts A -> PendingAdminApproval' 200 $r.Status
-$jobA = Start-Job -ScriptBlock $jobScript -ArgumentList $base, $admin, "/api/offers/$oR1/admin-approve", 'Post', $null
-$jobB = Start-Job -ScriptBlock $jobScript -ArgumentList $base, $i2Tok, "/api/offers/$oR2/withdraw", 'Post', $null
-$null = Wait-Job $jobA, $jobB -Timeout 90
-$sA = [int](Receive-Job $jobA); $sB = [int](Receive-Job $jobB)
-Remove-Job $jobA, $jobB -Force
+$race = Invoke-ConcurrentApiRequests -Requests @(
+  @{ Method = 'POST'; Path = "/api/offers/$oR1/admin-approve"; BearerToken = $admin },
+  @{ Method = 'POST'; Path = "/api/offers/$oR2/withdraw"; BearerToken = $i2Tok }
+) -TimeoutSeconds 90
+$sA = [int]$race[0].Status
+$sB = [int]$race[1].Status
 Check 'S5-54d' 'admin approval of A succeeds (no 500)' 200 $sA
 Check 'S5-54e' 'competing withdraw is 200 (ran before approval) or 409 (frozen), never 500' 'True' ([string]($sB -eq 200 -or $sB -eq 409))
 $stR2 = Sql "SELECT CAST(STATUS_ID AS varchar(2)) FROM OFFERS WHERE ID = $oR2;"
@@ -364,11 +358,12 @@ $hasIdx = Sql "SELECT CAST(COUNT(*) AS varchar(2)) FROM sys.indexes WHERE name =
 if ($hasIdx -eq '1') {
   $L4 = Create-Land "S5-L4-$stamp" "S5P-L4-$stamp" $gF3 $laTok $admin
   $body = (ConvertTo-Json -InputObject @{ landId = $L4; requiredCapacityMw = 1; connectionMechanism = 1; landlordSharePct = 30 } -Compress)
-  $job1 = Start-Job -ScriptBlock $jobScript -ArgumentList $base, $i1Tok, '/api/offers', 'Post', $body
-  $job2 = Start-Job -ScriptBlock $jobScript -ArgumentList $base, $i1Tok, '/api/offers', 'Post', $body
-  $null = Wait-Job $job1, $job2 -Timeout 90
-  $c1 = [int](Receive-Job $job1); $c2 = [int](Receive-Job $job2)
-  Remove-Job $job1, $job2 -Force
+  $dup = Invoke-ConcurrentApiRequests -Requests @(
+    @{ Method = 'POST'; Path = '/api/offers'; Json = $body; BearerToken = $i1Tok },
+    @{ Method = 'POST'; Path = '/api/offers'; Json = $body; BearerToken = $i1Tok }
+  ) -TimeoutSeconds 90
+  $c1 = [int]$dup[0].Status
+  $c2 = [int]$dup[1].Status
   $codes = ((@($c1, $c2) | Sort-Object) -join ' ')
   Check 'S5-55a' 'concurrent duplicate create: exactly one 201 and one 409 (no 500)' '201 409' $codes
   $cnt = Sql "SELECT CAST(COUNT(*) AS varchar(2)) FROM OFFERS WHERE LAND_ID = $L4 AND INVESTOR_ID = $i1Id AND STATUS_ID IN (1,2,3,4);"
@@ -376,6 +371,7 @@ if ($hasIdx -eq '1') {
   $tot = Sql "SELECT CAST(COUNT(*) AS varchar(2)) FROM OFFERS WHERE LAND_ID = $L4 AND INVESTOR_ID = $i1Id;"
   Check 'S5-55c' 'no orphan/partial offer rows after the failed request' 1 $tot
 } else {
+  $blocked++
   Write-Output 'BLOCKED S5-55: UX_OFFERS_ACTIVE_INVESTOR_LAND absent (migration Step5_OffersActiveInvestorLandUnique not applied)'
 }
 
@@ -403,11 +399,12 @@ $oM2 = [int](($r.Body | ConvertFrom-Json).id)
 $r = Call 'POST' "/api/offers/$oM2/accept" $null $laTok
 Check 'S5-56g' 'landlord accepts A on L6' 200 $r.Status
 $bodyM = (ConvertTo-Json -InputObject @{ landId = $L6; requiredCapacityMw = 1; connectionMechanism = 1; landlordSharePct = 20 } -Compress)
-$jobApp = Start-Job -ScriptBlock $jobScript -ArgumentList $base, $admin, "/api/offers/$oM2/admin-approve", 'Post', $null
-$jobCre = Start-Job -ScriptBlock $jobScript -ArgumentList $base, $i2Tok, '/api/offers', 'Post', $bodyM
-$null = Wait-Job $jobApp, $jobCre -Timeout 90
-$sApp = [int](Receive-Job $jobApp); $sCre = [int](Receive-Job $jobCre)
-Remove-Job $jobApp, $jobCre -Force
+$raceM = Invoke-ConcurrentApiRequests -Requests @(
+  @{ Method = 'POST'; Path = "/api/offers/$oM2/admin-approve"; BearerToken = $admin },
+  @{ Method = 'POST'; Path = '/api/offers'; Json = $bodyM; BearerToken = $i2Tok }
+) -TimeoutSeconds 90
+$sApp = [int]$raceM[0].Status
+$sCre = [int]$raceM[1].Status
 Check 'S5-56h' 'race: approval succeeds (no 500)' 200 $sApp
 Check 'S5-56i' 'race: competing create is 201 (before approval) or 409 (after), never 500' 'True' ([string]($sCre -eq 201 -or $sCre -eq 409))
 $landM2 = Sql "SELECT CAST(LAND_STATUS_ID AS varchar(2)) FROM LANDS WHERE ID = $L6;"
@@ -537,5 +534,10 @@ Check 'S5-98' 'admin GET my (all offers)' 200 $r.Status
 Write-Output ''
 $pass = @($rows | Where-Object { $_.Result -eq 'PASS' }).Count
 $fail = @($rows | Where-Object { $_.Result -eq 'FAIL' }).Count
-Write-Output ("S5 TOTAL PASS=$pass FAIL=$fail (auth calls used: $global:AuthCalls)")
+Write-Output ("S5 TOTAL PASS=$pass FAIL=$fail BLOCKED=$blocked (auth calls used: $global:AuthCalls)")
 if ($fail -gt 0) { exit 1 }
+if ($blocked -gt 0) { exit 2 }
+}
+finally {
+  Complete-TestApiCleanup -Identity $harness
+}

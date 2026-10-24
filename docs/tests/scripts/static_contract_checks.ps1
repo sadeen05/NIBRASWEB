@@ -12,12 +12,17 @@
 
     Hard checks (exit 1 when violated):
       1. Every controller action declares an HTTP verb attribute (it is routable).
-      2. `[AllowAnonymous]` is used only by the two public auth endpoints
-         (POST /api/auth/register, POST /api/auth/login).
+      2. `[AllowAnonymous]` is used only by the closed public auth endpoint allow-list
+         (register, login, admin activation, registration verification, address-change
+         confirmation and resend).
       6. The test helpers never build an API URI by concatenating a command invocation
          (in PowerShell, "[Uri](Get-Base + $Path)" is a command call with "+" and $Path as
          arguments, so it targets the site root), and the five auth endpoints resolve to the
          exact absolute URLs when the base URL is a fake one (no HTTP, no database).
+      7. No test script uses `Start-Job`: Windows PowerShell 5.1 serialises the job state
+         (the argument list included) into a temporary file, so a session JWT in a job
+         argument would be written to disk. The concurrency suites use in-process HttpClient
+         requests instead.
 
     Informational checks (never change the exit code):
       3. Actions that rely on the global fallback authorization policy instead of a
@@ -96,12 +101,14 @@ foreach ($file in Get-ChildItem -Path $controllersDir -Filter '*.cs' | Sort-Obje
 }
 
 # Check 2: [AllowAnonymous] may only appear on the public auth endpoints.
-# The allow-list is explicit and closed: registration and login are anonymous, and the admin
-# activation endpoint is anonymous because the single-use invitation token is its only
-# credential (it is rate-limited with its own budget and answers a generic failure). Any other
-# anonymous endpoint still fails this check.
+# The allow-list is explicit and closed. Registration and login are anonymous; activation,
+# registration verification, address-change confirmation and resend are anonymous because a
+# single-use token (or a generic resend answer) is their only credential, and each has its own
+# rate-limit budget. Any other anonymous endpoint still fails this check.
 $allowedAnonymous = @{
-    'AuthController.cs' = @('Register', 'Login', 'ActivateAdmin', 'VerifyEmail', 'ResendVerification')
+    'AuthController.cs' = @(
+        'Register', 'Login', 'ActivateAdmin', 'VerifyEmail', 'ConfirmEmailChange', 'ResendVerification'
+    )
 }
 
 foreach ($file in Get-ChildItem -Path $controllersDir -Filter '*.cs') {
@@ -220,6 +227,36 @@ Write-Output "Check 6 (hard) API URI construction (fake base URL, no HTTP/databa
 Write-Output "  command-call concatenations: $($badCommandInvocations.Count)"
 Write-Output "  auth endpoint URLs checked : $($expectedUrls.Count) (+2 normalization cases)"
 
+# ---------------------------------------------------------------------------------------------
+# Check 7 (hard): a session JWT must never be handed to a PowerShell job. Windows PowerShell 5.1
+# serialises the job state - the argument list included - into a temporary file, so a token in a
+# job argument is written to disk outside the process. The concurrency suites use in-process
+# HttpClient requests; a Start-Job in a test script is refused until it is reviewed.
+$jobSites = New-Object System.Collections.Generic.List[string]
+$docsTestsRoot = Split-Path -Parent $PSScriptRoot
+$allTestScriptFiles = @(Get-ChildItem -LiteralPath $docsTestsRoot -Recurse -Filter '*.ps1' |
+        Where-Object { $_.FullName -ne $PSCommandPath })
+foreach ($scriptFile in $allTestScriptFiles) {
+    $tokens = $null
+    $parseErrors = $null
+    $scriptAst = [System.Management.Automation.Language.Parser]::ParseFile($scriptFile.FullName, [ref]$tokens, [ref]$parseErrors)
+    $jobs = $scriptAst.FindAll({
+            param($node)
+            if ($node -isnot [System.Management.Automation.Language.CommandAst]) { return $false }
+            return ($node.GetCommandName() -ieq 'Start-Job')
+        }, $true)
+    foreach ($job in $jobs) {
+        $relative = $scriptFile.FullName.Substring($docsTestsRoot.Length).TrimStart('\')
+        $jobSites.Add(("{0}:{1}" -f $relative, $job.Extent.StartLineNumber))
+    }
+}
+foreach ($site in $jobSites) {
+    $failures.Add("Start-Job is not allowed in the test scripts (a session JWT in a job argument is serialised to disk): $site")
+}
+
+Write-Output "Check 7 (hard) PowerShell job sites (a session JWT must never be serialised):"
+Write-Output "  Start-Job commands: $($jobSites.Count)"
+
 Write-Output ''
 if ($failures.Count -gt 0) {
     Write-Output "RESULT: FAIL ($($failures.Count) hard violation(s))"
@@ -227,5 +264,5 @@ if ($failures.Count -gt 0) {
     exit 1
 }
 
-Write-Output 'RESULT: PASS (hard checks 1-2 and 6; see the informational lists above)'
+Write-Output 'RESULT: PASS (hard checks 1-2, 6-7; see the informational lists above)'
 exit 0

@@ -169,7 +169,7 @@ referenced where applicable (run them in the documented order first).
 | --- | --- | --- |
 | P2-P-01 | two parallel submits on the same land | exactly one `201`, one `409`; exactly one pending row; no SQL text in any body |
 | P2-P-02 | two parallel decisions on the same request (two approve calls) | exactly one `200`, one `409` ("already decided by another reviewer" or "already been decided"); final status decided once; exactly one decision history row; no 500 |
-| P2-P-03 (existing races) | verify race, parcel race, upload versioning race, reservation races | `parallel-approval.ps1`, `s4_review.ps1`, `s4_regression.ps1`, `s7_reservations.ps1` |
+| P2-P-03 (existing races) | verify race, parcel race, upload versioning race, reservation races | `docs/tests/scripts/parallel-approval.ps1`, `s4_review.ps1`, `s4_regression.ps1`, `s7_reservations.ps1` |
 | P2-P-04 | upload racing the re-review of the same required type (SuperAdmin) | no lost approval: after the race the latest version's approval state and the land visibility are consistent (assert final visible state matches the latest version's status) |
 
 ### R. Rollback criteria (abort the Phase-D run immediately)
@@ -236,6 +236,6 @@ the §S step-2 invariants plus the regression snapshot (§Q item 7).
 
 - Script stdout (PASS/FAIL lines) + `$LASTEXITCODE`.
 - `sqlcmd` result sets for every DB assertion in this document.
-- App log (`%TEMP%\nibrasweb-test-logs\app_5181_*.log`) for any failure.
+- App log (`%TEMP%\nibrasweb-test-logs\app_5199_*.log`) for any failure.
 - After the run: the §S step-2 comparison and the outstanding-evidence count
   (must return to 0 after the fixtures are fully re-approved).

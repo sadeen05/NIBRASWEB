@@ -9,6 +9,8 @@ $sqlServer = (Get-TestTarget).Server
 $dbName = (Get-TestTarget).Database
 # The suite owns its instance: the harness starts it on the dedicated port, with the
 # explicit disposable connection string, and proves that it owns the port.
+$harness = $null
+try {
 $harness = Start-TestApiInstance
 $base = Initialize-TestApi
 $pw = if ($env:NIBRAS_TEST_PASSWORD) { $env:NIBRAS_TEST_PASSWORD } else { 'T5t!N1' + [guid]::NewGuid().ToString('N').Substring(0,10) } # runtime-generated credential, never a literal
@@ -46,7 +48,7 @@ function Register($Name, $Email, $RoleId, $Company = $null) {
   if ($Company) { $b.companyName = $Company; $b.companyRegistrationNumber = ('REG-' + $stamp + '-' + $RoleId) }
   $baseline = New-OutboxBaseline
   $r = Call 'POST' '/api/auth/register' $b
-  if ($r.Status -ne 200) { throw "register failed ($($r.Status))" }
+  if ($r.Status -ne 201) { throw "register failed ($($r.Status))" }
   # The account can only sign in after its address was confirmed.
   $v = Confirm-VerifiedAccount -Email $Email -Baseline $baseline
   if ($v.Status -ne 204) { throw "the verification of $Email failed ($($v.Status))" }
@@ -109,3 +111,13 @@ Write-Output ("extra: landlord A lists lands -> 200 expected, actual {0}; totalC
 
 Write-Output ("C4 approved investor lists lands (only Verified) -> BLOCKED: no approved Investor fixture; approving needs an Admin token, not available")
 Write-Output ("landId for DB checks: $landId")
+# C4 is evidence-only and remains non-green. Safe resolution requires an approved Investor
+# fixture created through the real approval flow (never a direct role/status update) and an
+# explicit acceptance decision for this checkpoint. Until then this suite must not be marked
+# PASS, even when C1/C2/C3/C5 are green.
+Write-Output 'CHECKPOINT A DISPOSITION: EVIDENCE-ONLY / NOT PASS because C4 is BLOCKED; explicit acceptance criteria are required.'
+}
+finally {
+  Complete-TestApiCleanup -Identity $harness
+}
+exit 2

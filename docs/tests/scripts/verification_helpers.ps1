@@ -123,8 +123,13 @@ function Start-TestApiInstance {
       string, and a proof that the process the harness started is the one that owns the port.
       A suite never talks to an instance it did not start.
   #>
+  param(
+    [ValidateSet('FileOutbox', 'Disabled')]
+    [string]$DeliveryMode = 'FileOutbox'
+  )
+
   . (Join-Path $PSScriptRoot 'test_harness.ps1')
-  return Start-TestApi
+  return Start-TestApi -DeliveryMode $DeliveryMode
 }
 
 function Initialize-TestApi {  <#
@@ -155,6 +160,116 @@ function Stop-TestApiInstance {
 
   . (Join-Path $PSScriptRoot 'test_harness.ps1')
   Stop-TestApi -Identity $Identity
+}
+
+function Get-VerificationApiIdentityFile {
+  # Resolve the harness function in the same local scope in which it is loaded.
+  . (Join-Path $PSScriptRoot 'test_harness.ps1')
+  return Get-TestApiIdentityFile
+}
+
+function Get-VerificationApiIdentity {
+  # Resolve the harness identity object in the same local scope in which it is loaded, so a
+  # caller can pass a real object to Complete-TestApiCleanup without a top-level scope error.
+  . (Join-Path $PSScriptRoot 'test_harness.ps1')
+  return Get-TestApiIdentity
+}
+
+function Complete-TestApiCleanup {
+  <#
+    .SYNOPSIS
+      Stops the harness-owned API and independently verifies that cleanup is complete.
+    .DESCRIPTION
+      Stop-TestApiInstance already enforces PID/port ownership before it stops anything. This
+      wrapper adds the missing proof: it waits for the recorded process, its listener and the
+      identity file to disappear, and it reports every remaining condition instead of
+      swallowing it. A cleanup problem is written as a WARNING (the runner treats that as NOT
+      PASS) and then thrown, so a suite cannot return 0 after a failed cleanup.
+
+      Only observation happens here. A foreign listener is never killed.
+  #>
+  param([object]$Identity)
+
+  if ($null -eq $Identity) {
+    throw 'API cleanup failed: no harness identity was recorded; cleanup cannot be verified.'
+  }
+  # Reject malformed identities before any shutdown or observation command is invoked.
+  if ([int]$Identity.Pid -le 0 -or [int]$Identity.Port -lt 1 -or [int]$Identity.Port -gt 65535) {
+    throw 'API cleanup failed: the harness identity has an invalid PID or port.'
+  }
+
+  $problems = New-Object System.Collections.Generic.List[string]
+  try {
+    Stop-TestApiInstance -Identity $Identity
+  }
+  catch {
+    [void]$problems.Add(('Stop-TestApiInstance failed: {0}' -f $_.Exception.Message))
+  }
+
+  $port = 0
+  try { $port = [int]$Identity.Port }
+  catch { [void]$problems.Add('the harness identity has no valid port') }
+
+  $identityPath = $null
+  try {
+    $identityPath = Get-VerificationApiIdentityFile
+  }
+  catch {
+    [void]$problems.Add(('the API identity file path could not be resolved: {0}' -f $_.Exception.Message))
+  }
+
+  $deadline = [DateTime]::UtcNow.AddSeconds(5)
+  $identityPresent = $true
+  $listeners = @()
+  $apiProcess = $null
+  $portCheckError = $null
+  $processCheckError = $null
+
+  do {
+    if ($identityPath) { $identityPresent = Test-Path -LiteralPath $identityPath }
+    $listeners = @()
+    if ($port -gt 0) {
+      try {
+        $listeners = @(Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction Stop)
+      }
+      catch {
+        if ($_.Exception.Message -notmatch 'No matching|not found' -and
+            $_.FullyQualifiedErrorId -notmatch 'NotFound|NoMatching') {
+          $portCheckError = $_.Exception.Message
+        }
+      }
+    }
+
+    try {
+      $apiProcess = Get-Process -Id ([int]$Identity.Pid) -ErrorAction Stop
+    }
+    catch {
+      $apiProcess = $null
+      if ($_.FullyQualifiedErrorId -notmatch '^NoProcessFoundForGivenId,') {
+        $processCheckError = $_.Exception.Message
+      }
+    }
+    $stillPresent = $identityPresent -or ($listeners.Count -gt 0) -or ($null -ne $apiProcess) -or ($null -ne $portCheckError) -or ($null -ne $processCheckError)
+    if (-not $stillPresent) { break }
+    if ($null -ne $portCheckError -or $null -ne $processCheckError) { break }
+    if ([DateTime]::UtcNow -ge $deadline) { break }
+    Start-Sleep -Milliseconds 250
+  } while ($true)
+
+  if ($identityPresent) { [void]$problems.Add('the API identity file still exists after cleanup') }
+  if ($listeners.Count -gt 0) {
+    $owners = @($listeners | ForEach-Object { [int]$_.OwningProcess } | Sort-Object -Unique)
+    [void]$problems.Add(("port {0} still has listener process(es) {1}" -f $port, ($owners -join ',')))
+  }
+  if ($null -ne $apiProcess) { [void]$problems.Add(("API process {0} is still alive" -f $Identity.Pid)) }
+  if ($null -ne $portCheckError) { [void]$problems.Add(('port cleanup check failed: {0}' -f $portCheckError)) }
+
+  if ($null -ne $processCheckError) { [void]$problems.Add(('process cleanup check failed: {0}' -f $processCheckError)) }
+
+  if ($problems.Count -gt 0) {
+    foreach ($problem in $problems) { Write-Output ('WARNING: cleanup: ' + $problem) }
+    throw ('API cleanup failed: ' + ($problems -join '; '))
+  }
 }
 
 function Get-VerificationOutboxPath {
@@ -300,6 +415,97 @@ function Invoke-VerificationApi {
     $body = $resp.Content.ReadAsStringAsync().Result
     return [pscustomobject]@{ Status = [int]$resp.StatusCode; Body = $body }
   } finally { $req.Dispose() }
+}
+
+function Invoke-ConcurrentApiRequests {
+  <#
+    .SYNOPSIS
+      Sends two or more HTTP requests that genuinely overlap, in this process.
+    .DESCRIPTION
+      The requests are started on one HttpClient before any answer is awaited, so the calls
+      overlap on the server without a child process, without Start-Job and without serialising
+      a session JWT. The token is used only in the Authorization header of its own request;
+      nothing is printed, logged or written to disk.
+
+      The result is returned in request order; each item carries the status and the body.
+      Transport failures throw (a race that never reached the server proves nothing); HTTP
+      error statuses are returned normally, exactly like the suites' Call helpers.
+
+      StartAtUnixMs optionally holds every request until one shared instant, so a race does
+      not depend on how fast the caller built the list.
+  #>
+  param(
+    [Parameter(Mandatory)][object[]]$Requests,
+    [long]$StartAtUnixMs = 0,
+    [int]$TimeoutSeconds = 90
+  )
+
+  if ($Requests.Count -lt 2) {
+    throw 'a concurrency check needs at least two requests; a single request is not a race.'
+  }
+
+  # .NET Framework defaults to two connections per endpoint. A three-way race would queue
+  # the third request behind the first two, so raise the limit for this test process only.
+  $limit = [Math]::Max([int][System.Net.ServicePointManager]::DefaultConnectionLimit, $Requests.Count)
+  [System.Net.ServicePointManager]::DefaultConnectionLimit = $limit
+
+  $client = New-Object System.Net.Http.HttpClient
+  $client.Timeout = [TimeSpan]::FromSeconds($TimeoutSeconds)
+  $messages = New-Object System.Collections.ArrayList
+  $tasks = New-Object System.Collections.ArrayList
+  try {
+    foreach ($spec in $Requests) {
+      $method = [string]$spec.Method
+      $path = [string]$spec.Path
+      if ([string]::IsNullOrWhiteSpace($method) -or [string]::IsNullOrWhiteSpace($path)) {
+        throw 'every concurrent request needs a method and a path.'
+      }
+      $message = New-Object System.Net.Http.HttpRequestMessage
+      $message.Method = New-Object System.Net.Http.HttpMethod($method)
+      $message.RequestUri = (Get-VerificationApiUri -Path $path)
+      if ($null -ne $spec.FileBytes) {
+        $multipart = New-Object System.Net.Http.MultipartFormDataContent
+        $message.Content = $multipart
+        $typeField = New-Object System.Net.Http.StringContent([string]$spec.DocumentTypeId)
+        [void]$multipart.Add($typeField, 'documentTypeId')
+        $fileContent = New-Object System.Net.Http.ByteArrayContent -ArgumentList (,[byte[]]$spec.FileBytes)
+        $fileContent.Headers.ContentType = [System.Net.Http.Headers.MediaTypeHeaderValue]::Parse('application/pdf')
+        [void]$multipart.Add($fileContent, 'file', [string]$spec.FileName)
+      }
+      elseif ($spec.Json) {
+        $message.Content = New-Object System.Net.Http.StringContent([string]$spec.Json, [System.Text.Encoding]::UTF8, 'application/json')
+      }
+      if ($spec.BearerToken) {
+        $message.Headers.Authorization = New-Object System.Net.Http.Headers.AuthenticationHeaderValue('Bearer', [string]$spec.BearerToken)
+      }
+      [void]$messages.Add($message)
+    }
+
+    if ($StartAtUnixMs -gt 0) {
+      while ([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() -lt $StartAtUnixMs) {
+        Start-Sleep -Milliseconds 5
+      }
+    }
+
+    # Start every send BEFORE awaiting the first answer: this is the overlap.
+    foreach ($message in $messages) {
+      [void]$tasks.Add($client.SendAsync($message))
+    }
+    [System.Threading.Tasks.Task]::WaitAll([System.Threading.Tasks.Task[]]$tasks.ToArray())
+
+    $results = @()
+    for ($i = 0; $i -lt $messages.Count; $i++) {
+      $response = $tasks[$i].Result
+      try {
+        $body = $response.Content.ReadAsStringAsync().Result
+        $results += [pscustomobject]@{ Status = [int]$response.StatusCode; Body = $body }
+      } finally { $response.Dispose() }
+    }
+    return ,$results
+  } finally {
+    foreach ($message in $messages) { $message.Dispose() }
+    $client.Dispose()
+  }
 }
 
 function Complete-EmailVerification {

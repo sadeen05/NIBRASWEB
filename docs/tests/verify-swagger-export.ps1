@@ -14,7 +14,8 @@
     not compared.
 
     By default the script starts and stops its own application instance on
-    port 5181 via `s4_app.ps1`, with both startup seeders forced to a no-op
+    the dedicated harness port (5199) via `s4_app.ps1`, with both startup seeders
+    forced to a no-op
     (`Seed__SuperAdminEmail` whitespace, `Seed__DemoData` unset), so the run
     performs no database writes. Pass -BaseUrl to reuse an already-running
     instance instead.
@@ -74,7 +75,7 @@ if (-not $BaseUrl) {
     $env:Seed__SuperAdminPassword = ' '
     Remove-Item Env:Seed__DemoData -ErrorAction SilentlyContinue
     . (Join-Path $repoRoot 'docs\tests\scripts\s4_app.ps1')
-    $app = Start-S4App -Port 5181 -AuthPerMinute 1000
+    $app = Start-S4App -AuthPerMinute 1000
     $ownsApp = $true
     $BaseUrl = "http://localhost:$($app.Port)"
 }

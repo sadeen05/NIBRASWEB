@@ -1,12 +1,8 @@
-# Step 6 - Contracts MVP acceptance suite (never prints credentials or tokens).
+﻿# Step 6 - Contracts MVP acceptance suite (never prints credentials or tokens).
 # Starts the app once with RateLimit__AuthPerMinute=1000, then drives the contract lifecycle
 # through the public API and asserts database state. Target database: the disposable one, resolved from the connection string.
-# BLOCKED (F1 isolation): this suite hands a session JWT to a PowerShell job, and Windows
-# PowerShell 5.1 serialises the job state - the argument included - into a temporary file.
-# The suite stays blocked until the token is handed to the child process through the
-# environment (which is inherited, not serialised) instead of through the argument list.
-# See docs/tests/DISPOSABLE_DB_PREFLIGHT.md, section 11.
-throw 'BLOCKED: the session JWT is still passed to a PowerShell job; the safe concurrency handling is not implemented yet.'
+# The concurrency blocks use in-process concurrent HttpClient requests: no session JWT is
+# passed to a PowerShell job or a child process.
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'verification_helpers.ps1')
 # The email verification helpers: the token is read from the development outbox and
@@ -51,7 +47,7 @@ function Reg([string]$FullName, [string]$Email, [int]$RoleId) {
   if ($RoleId -eq 2) { $body.companyName = 'S6 Co'; $body.companyRegistrationNumber = "S6-REG-$stamp" }
   $baseline = New-OutboxBaseline
   $r = Call 'POST' '/api/auth/register' $body
-  if ($r.Status -ne 200) { throw "register failed ($($r.Status))" }
+  if ($r.Status -ne 201) { throw "register failed ($($r.Status))" }
   # The account can only sign in after its address was confirmed.
   $v = Confirm-VerifiedAccount -Email $Email -Baseline $baseline
   if ($v.Status -ne 204) { throw "the verification of $Email failed ($($v.Status))" }
@@ -60,7 +56,7 @@ function Reg([string]$FullName, [string]$Email, [int]$RoleId) {
 function Verify-Land([int]$landId, [string]$laTok, [string]$adminTok) {
   $docIds = @()
   foreach ($dt in 1..2) {
-    $r = Call 'POST' "/api/lands/$landId/documents" @{ documentTypeId = $dt; filePath = 'docs/titledeed-001.pdf' } $laTok
+    $r = Call 'POST' "/api/lands/$landId/documents/metadata" @{ documentTypeId = $dt; filePath = 'docs/titledeed-001.pdf' } $laTok
     if ($r.Status -ne 201) { throw "land $landId document upload ($dt) failed: $($r.Status)" }
     $docIds += [int](($r.Body | ConvertFrom-Json).id)
   }
@@ -102,6 +98,8 @@ Check 'S6-00' 'database target is the configured disposable database' $db $targe
 
 # --- start the app once for this run ---
 . (Join-Path $PSScriptRoot 's4_app.ps1')
+$app = $null
+try {
 $app = Start-S4App  -AuthPerMinute 1000
 # The base URL comes from the harness-owned instance, and the gate proves that
 # the instance is the one the harness started - before anything is written.
@@ -110,7 +108,6 @@ $base = Initialize-TestApi
 Assert-TestInstanceIdentity | Out-Null
 
 $pass = 0; $fail = 0
-try {
 # --- seed SuperAdmin credentials: dedicated disposable-environment variables, never printed ---
   $repoRoot = $PSScriptRoot
   while ($repoRoot -and -not (Test-Path (Join-Path $repoRoot 'NibrasWeb.csproj'))) { $repoRoot = Split-Path $repoRoot -Parent }
@@ -133,7 +130,19 @@ if (-not $adminEmail -or -not $adminPass) { Write-Output 'BLOCKED: NIBRAS_TEST_S
   $lbId = Reg 'S6 Landlord B' $lbEmail 1; $lbTok = Login $lbEmail $pw
   $i1Id = Reg 'S6 Investor 1' $i1Email 2; $r = Call 'POST' "/api/users/$i1Id/approve" $null $admin; if ($r.Status -ne 204) { throw "approve i1 failed" }; $i1Tok = Login $i1Email $pw
   $i2Id = Reg 'S6 Investor 2' $i2Email 2; $r = Call 'POST' "/api/users/$i2Id/approve" $null $admin; if ($r.Status -ne 204) { throw "approve i2 failed" }; $i2Tok = Login $i2Email $pw
-  Write-Output "users: la=$laId lb=$lbId i1=$i1Id i2=$i2Id"
+  # A regular Admin is needed to prove that the SuperAdmin-only escalation decision is not
+  # available to an Admin. The invitation is created by the SuperAdmin and activated through
+  # the real endpoint with a token read from the disposable outbox.
+  $admEmail = "s6-$stamp-adm@example.test"
+  $admBaseline = New-OutboxBaseline
+  $r = Call 'POST' '/api/users' @{ fullName = 'S6 Admin'; email = $admEmail; phone = (New-Phone); password = $pw; roleId = 3 } $admin
+  if ($r.Status -ne 201) { throw "admin create failed ($($r.Status))" }
+  $admActivation = Get-VerificationTokenFromOutbox -Email $admEmail -Baseline $admBaseline -SubjectLike '*activation*'
+  $r = Complete-AdminActivation -Token $admActivation -Password $pw
+  if ($r.Status -ne 204) { throw "admin activation failed ($($r.Status))" }
+  $adminTok = Login $admEmail $pw
+  Check 'S6-01a' 'disposable regular Admin activated and signs in' 200 200
+  Write-Output "users: la=$laId lb=$lbId i1=$i1Id i2=$i2Id adm=created"
 
   # Shared, idempotent test fixtures: resolve the test region/grid IDs by name (never
   # assume numeric IDs). Created only when missing; nothing is deleted or overwritten.
@@ -345,8 +354,10 @@ if (-not $adminEmail -or -not $adminPass) { Write-Output 'BLOCKED: NIBRAS_TEST_S
   # ================= Criteria compatibility =================
   Write-Output ''
   Write-Output '== Criteria compatibility =='
-  $r = Call 'POST' '/api/criteria' @{ minAreaDonum = 20; maxSlopePct = 8; maxGridDistanceKm = 15; minSolarIrradiance = 5; minElevationM = $null; reason = 'S6 stricter criterion' } $admin
-  Check 'S6-80' 'admin adds a stricter criterion -> 201' 201 $r.Status
+  $criteriaBefore = Call 'GET' '/api/criteria/current' $null $admin
+  if ($criteriaBefore.Status -ne 200) { throw 'Current criteria unavailable before SuperAdmin replacement' }
+  $r = Call 'POST' '/api/criteria' @{ expectedCurrentId = [int](($criteriaBefore.Body | ConvertFrom-Json).id); minAreaDonum = 20; maxSlopePct = 8; maxGridDistanceKm = 15; minSolarIrradiance = 5; minElevationM = $null; reason = 'S6 stricter criterion' } $admin
+  Check 'S6-80' 'SuperAdmin adds a stricter criterion -> 201' 201 $r.Status
   $r = Call 'POST' "/api/contracts/$c3/sign" $null $laTok
   Check 'S6-81' 'C3 landlord signs after criterion change' 200 $r.Status
   $r = Call 'POST' "/api/contracts/$c3/review" @{ approve = $true } $admin
@@ -356,24 +367,17 @@ if (-not $adminEmail -or -not $adminPass) { Write-Output 'BLOCKED: NIBRAS_TEST_S
   # ================= M-1: concurrent operations on the same contract =================
   Write-Output ''
   Write-Output '== M-1: concurrent operations on the same contract =='
-  $jobPost = {
-    param($baseUrl, $token, $path, $body)
-    $h = @{ Authorization = 'Bearer ' + $token }
-    $p = @{ Uri = ($baseUrl + $path); Method = 'Post'; Headers = $h; UseBasicParsing = $true; ErrorAction = 'Stop' }
-    if ($body) { $p.Body = $body; $p.ContentType = 'application/json' }
-    try { $r = Invoke-WebRequest @p; return [int]$r.StatusCode }
-    catch { $resp = $_.Exception.Response; if ($null -eq $resp) { throw }; return [int]$resp.StatusCode }
-  }
-
   # C4: two concurrent investor signatures
   $L5 = Create-Land "S6-L5-$stamp" "S6P-L5-$stamp" $grid $laTok $admin
   $o5 = Accept-Approve $L5 $i1Tok
   $r = Call 'POST' '/api/contracts' @{ offerId = $o5 } $admin
   $c4 = [int](($r.Body | ConvertFrom-Json).id)
-  $j1 = Start-Job -ScriptBlock $jobPost -ArgumentList $base, $i1Tok, "/api/contracts/$c4/sign", $null
-  $j2 = Start-Job -ScriptBlock $jobPost -ArgumentList $base, $i1Tok, "/api/contracts/$c4/sign", $null
-  $null = Wait-Job $j1, $j2 -Timeout 60
-  $sg1 = [int](Receive-Job $j1); $sg2 = [int](Receive-Job $j2); Remove-Job $j1, $j2 -Force
+  $signRace = Invoke-ConcurrentApiRequests -Requests @(
+    @{ Method = 'POST'; Path = "/api/contracts/$c4/sign"; BearerToken = $i1Tok },
+    @{ Method = 'POST'; Path = "/api/contracts/$c4/sign"; BearerToken = $i1Tok }
+  ) -TimeoutSeconds 60
+  $sg1 = [int]$signRace[0].Status
+  $sg2 = [int]$signRace[1].Status
   Check 'S6-90' 'concurrent same-party sign: exactly one 200, one 409' '200 409' ((@($sg1, $sg2) | Sort-Object) -join ' ')
   $signCount = Sql "SELECT CAST(COUNT(*) AS varchar(2)) FROM CONTRACTS WHERE ID = $c4 AND INVESTOR_SIGNED_AT IS NOT NULL;"
   Check 'S6-91' 'exactly one investor signature persisted' 1 $signCount
@@ -382,10 +386,12 @@ if (-not $adminEmail -or -not $adminPass) { Write-Output 'BLOCKED: NIBRAS_TEST_S
   $r = Call 'POST' "/api/contracts/$c4/sign" $null $laTok
   Check 'S6-92' 'C4 landlord signs' 200 $r.Status
   $reviewBody = (ConvertTo-Json -InputObject @{ approve = $true } -Compress)
-  $j1 = Start-Job -ScriptBlock $jobPost -ArgumentList $base, $admin, "/api/contracts/$c4/review", $reviewBody
-  $j2 = Start-Job -ScriptBlock $jobPost -ArgumentList $base, $admin, "/api/contracts/$c4/review", $reviewBody
-  $null = Wait-Job $j1, $j2 -Timeout 60
-  $rv1 = [int](Receive-Job $j1); $rv2 = [int](Receive-Job $j2); Remove-Job $j1, $j2 -Force
+  $reviewRace = Invoke-ConcurrentApiRequests -Requests @(
+    @{ Method = 'POST'; Path = "/api/contracts/$c4/review"; Json = $reviewBody; BearerToken = $admin },
+    @{ Method = 'POST'; Path = "/api/contracts/$c4/review"; Json = $reviewBody; BearerToken = $admin }
+  ) -TimeoutSeconds 60
+  $rv1 = [int]$reviewRace[0].Status
+  $rv2 = [int]$reviewRace[1].Status
   Check 'S6-93' 'concurrent review: exactly one 200, one 409' '200 409' ((@($rv1, $rv2) | Sort-Object) -join ' ')
   $apprCount = Sql "SELECT CAST(COUNT(*) AS varchar(2)) FROM CONTRACT_REVIEWS WHERE CONTRACT_ID = $c4 AND DECISION = 'Approved';"
   Check 'S6-94' 'exactly one Approved review row persisted' 1 $apprCount
@@ -400,10 +406,12 @@ if (-not $adminEmail -or -not $adminPass) { Write-Output 'BLOCKED: NIBRAS_TEST_S
   $null = Call 'POST' "/api/contracts/$c6/sign" $null $i1Tok
   $null = Call 'POST' "/api/contracts/$c6/sign" $null $laTok
   $termBody = (ConvertTo-Json -InputObject @{ reason = 'race' } -Compress)
-  $jR = Start-Job -ScriptBlock $jobPost -ArgumentList $base, $admin, "/api/contracts/$c6/review", $reviewBody
-  $jT = Start-Job -ScriptBlock $jobPost -ArgumentList $base, $admin, "/api/contracts/$c6/terminate", $termBody
-  $null = Wait-Job $jR, $jT -Timeout 60
-  $sR = [int](Receive-Job $jR); $sT = [int](Receive-Job $jT); Remove-Job $jR, $jT -Force
+  $reviewTerminate = Invoke-ConcurrentApiRequests -Requests @(
+    @{ Method = 'POST'; Path = "/api/contracts/$c6/review"; Json = $reviewBody; BearerToken = $admin },
+    @{ Method = 'POST'; Path = "/api/contracts/$c6/terminate"; Json = $termBody; BearerToken = $admin }
+  ) -TimeoutSeconds 60
+  $sR = [int]$reviewTerminate[0].Status
+  $sT = [int]$reviewTerminate[1].Status
   Check 'S6-96' 'race: review(approve) succeeds (200)' 200 $sR
   Check 'S6-97' 'race: terminate is 200 (after approval) or 409 (before), never 500' 'True' ([string]($sT -eq 200 -or $sT -eq 409))
   $c6Status = Sql "SELECT CAST(STATUS_ID AS varchar(2)) FROM CONTRACTS WHERE ID = $c6;"
@@ -438,13 +446,25 @@ if (-not $adminEmail -or -not $adminPass) { Write-Output 'BLOCKED: NIBRAS_TEST_S
   # F1: an expired hold cannot become a contract
   $L8 = Create-Land "S6-L8-$stamp" "S6P-L8-$stamp" $grid $laTok $admin
   $o8 = Accept-Approve $L8 $i1Tok
-  # sqlcmd defaults QUOTED_IDENTIFIER/ANSI_NULLS OFF; this table requires them ON for DML.
-  $null = Sql "SET QUOTED_IDENTIFIER ON; SET ANSI_NULLS ON; UPDATE GRID_CAPACITY_RESERVATIONS SET EXPIRES_AT = DATEADD(day, -1, GETUTCDATE()) WHERE OFFER_ID = $o8;"
-  $expSet = Sql "SELECT CAST(COUNT(*) AS varchar(2)) FROM GRID_CAPACITY_RESERVATIONS WHERE OFFER_ID = $o8 AND EXPIRES_AT <= GETUTCDATE();"
-  if ($expSet -ne '1') { throw "F1 setup: failed to expire the reservation (count=$expSet)" }
-  $r = Call 'POST' '/api/contracts' @{ offerId = $o8 } $admin
-  Check 'S6-104' 'F1: expired reservation -> 409' 409 $r.Status
-  Check 'S6-105' 'F1: exact expiry message' 'The grid reservation for this offer has expired.' ([string](($r.Body | ConvertFrom-Json).detail))
+  $expOriginal = Sql "SELECT CONVERT(varchar(33), EXPIRES_AT, 126) FROM GRID_CAPACITY_RESERVATIONS WHERE OFFER_ID = $o8;"
+  if ([string]::IsNullOrWhiteSpace($expOriginal)) { throw 'F1 setup: the reservation has no original EXPIRES_AT to restore' }
+  $expRestore = "CONVERT(datetime2, '$expOriginal', 126)"
+  try {
+    # sqlcmd defaults QUOTED_IDENTIFIER/ANSI_NULLS OFF; this table requires them ON for DML.
+    $null = Sql "SET QUOTED_IDENTIFIER ON; SET ANSI_NULLS ON; UPDATE GRID_CAPACITY_RESERVATIONS SET EXPIRES_AT = DATEADD(day, -1, GETUTCDATE()) WHERE OFFER_ID = $o8;"
+    $expSet = Sql "SELECT CAST(COUNT(*) AS varchar(2)) FROM GRID_CAPACITY_RESERVATIONS WHERE OFFER_ID = $o8 AND EXPIRES_AT <= GETUTCDATE();"
+    if ($expSet -ne '1') { throw "F1 setup: failed to expire the reservation (count=$expSet)" }
+    $r = Call 'POST' '/api/contracts' @{ offerId = $o8 } $admin
+    Check 'S6-104' 'F1: expired reservation -> 409' 409 $r.Status
+    Check 'S6-105' 'F1: exact expiry message' 'The grid reservation for this offer has expired.' ([string](($r.Body | ConvertFrom-Json).detail))
+  }
+  finally {
+    # The forced expiry is test-only state. Restore the value captured before the UPDATE,
+    # even when setup or an assertion throws, then verify the restore independently below.
+    $null = Sql "SET QUOTED_IDENTIFIER ON; SET ANSI_NULLS ON; UPDATE GRID_CAPACITY_RESERVATIONS SET EXPIRES_AT = $expRestore WHERE OFFER_ID = $o8;"
+  }
+  $expRestored = Sql "SELECT CONVERT(varchar(33), EXPIRES_AT, 126) FROM GRID_CAPACITY_RESERVATIONS WHERE OFFER_ID = $o8;"
+  if ($expRestored -ne $expOriginal) { throw "F1 fixture restore failed: expected '$expOriginal', got '$expRestored'" }
 
   # F2: rejection is allowed while unsigned; approval still is not
   $L9 = Create-Land "S6-L9-$stamp" "S6P-L9-$stamp" $grid $laTok $admin
@@ -468,11 +488,361 @@ if (-not $adminEmail -or -not $adminPass) { Write-Output 'BLOCKED: NIBRAS_TEST_S
   $r = Call 'POST' "/api/contracts/$c9/review" @{ approve = $true } $admin
   Check 'S6-113' 'F2: review of a non-PendingSignatures contract -> 409' 409 $r.Status
 
+  # ================= Contract revision workflow =================
+  Write-Output ''
+  Write-Output '== Contract revision workflow =='
+
+  function Get-Contract-Dto([int]$ContractId) {
+    $r = Call 'GET' "/api/contracts/$ContractId" $null $admin
+    if ($r.Status -ne 200) { throw "read contract $ContractId failed ($($r.Status))" }
+    return ($r.Body | ConvertFrom-Json)
+  }
+  function Get-Drafts([int]$ContractId) {
+    $r = Call 'GET' "/api/contracts/$ContractId/versions" $null $admin
+    if ($r.Status -ne 200) { throw "read contract versions $ContractId failed ($($r.Status))" }
+    return @(($r.Body | ConvertFrom-Json) | Where-Object { $_.versionKind -eq 'Draft' } | Sort-Object versionNumber)
+  }
+  function Get-Draft([int]$ContractId, [int]$VersionNumber) {
+    $found = @(Get-Drafts $ContractId | Where-Object { [int]$_.versionNumber -eq $VersionNumber })
+    if ($found.Count -eq 0) { throw "draft v$VersionNumber for contract $ContractId not found" }
+    return $found[0]
+  }
+  function Get-Revision-List([int]$ContractId) {
+    $r = Call 'GET' "/api/contracts/$ContractId/revisions" $null $admin
+    if ($r.Status -ne 200) { throw "read contract revisions $ContractId failed ($($r.Status))" }
+    return @($r.Body | ConvertFrom-Json)
+  }
+  function Get-Revision-By-Id([int]$ContractId, [int]$RevisionId) {
+    $found = @(Get-Revision-List $ContractId | Where-Object { [int]$_.id -eq $RevisionId })
+    if ($found.Count -eq 0) { throw "revision $RevisionId for contract $ContractId not found" }
+    return $found[0]
+  }
+  function New-Revision-Body(
+    [int]$DraftId,
+    [string]$Reason,
+    [decimal]$LandlordSharePct,
+    [int]$DurationYears,
+    [string]$StartDate,
+    [decimal]$InstallationCost,
+    [decimal]$SolarCellCapacityKw,
+    [decimal]$ExpectedAnnualRevenue,
+    [decimal]$EffectiveCostPerKw,
+    [decimal]$PaybackPeriodMonths,
+    [int]$NoticePeriodDays) {
+    return @{
+      expectedDraftVersionId = $DraftId
+      reason = $Reason
+      landlordSharePct = $LandlordSharePct
+      durationYears = $DurationYears
+      startDate = $StartDate
+      installationCost = $InstallationCost
+      solarCellCapacityKw = $SolarCellCapacityKw
+      expectedAnnualRevenue = $ExpectedAnnualRevenue
+      effectiveCostPerKw = $EffectiveCostPerKw
+      paybackPeriodMonths = $PaybackPeriodMonths
+      noticePeriodDays = $NoticePeriodDays
+    }
+  }
+  function New-Revision-Contract([string]$Tag, [switch]$WithCompetitor) {
+    $land = Create-Land "S6-R$Tag-$stamp" "S6P-R$Tag-$stamp" $grid $laTok $admin
+    $competitor = 0
+    if ($WithCompetitor) {
+      $r = Call 'POST' '/api/offers' @{ landId = $land; requiredCapacityMw = 1; connectionMechanism = 1; landlordSharePct = 24 } $i2Tok
+      if ($r.Status -ne 201) { throw "revision fixture competitor $Tag failed ($($r.Status))" }
+      $competitor = [int](($r.Body | ConvertFrom-Json).id)
+    }
+    $offer = Accept-Approve $land $i1Tok
+    $r = Call 'POST' '/api/contracts' @{ offerId = $offer } $admin
+    if ($r.Status -ne 201) { throw "revision fixture contract $Tag failed ($($r.Status)) body=$($r.Body)" }
+    return [pscustomobject]@{
+      Land = [int]$land
+      Offer = [int]$offer
+      Contract = [int](($r.Body | ConvertFrom-Json).id)
+      Competitor = [int]$competitor
+    }
+  }
+
+  # --- Draft v1 -> v2 with a real signature invalidated by the approved revision ---
+  $f10 = New-Revision-Contract '10'
+  $c10 = [int]$f10.Contract; $L10 = [int]$f10.Land; $o10 = [int]$f10.Offer
+  $v1 = Get-Draft $c10 1
+  $dto10 = Get-Contract-Dto $c10
+  $oldAcceptedVersion = [int]$dto10.offerVersionId
+  $oldNotice = [int]$dto10.noticePeriodDays
+  $share1 = [decimal]$v1.terms.landlordSharePct
+  $duration1 = [int]$v1.terms.durationYears
+  $r = Call 'POST' "/api/contracts/$c10/sign" $null $i1Tok
+  Check 'S6-120' 'revision fixture: investor signs v1 before revision' 200 $r.Status
+  $sigBefore = Sql "SELECT CAST(COUNT(*) AS varchar(2)) FROM CONTRACT_VERSIONS WHERE CONTRACT_ID = $c10 AND EVENT_TYPE = 'Signed';"
+  $res10 = Sql "SELECT CAST(ID AS varchar(10)) FROM GRID_CAPACITY_RESERVATIONS WHERE CONTRACT_ID = $c10 AND RELEASED_AT IS NULL;"
+  $resCount10 = Sql "SELECT CAST(COUNT(*) AS varchar(2)) FROM GRID_CAPACITY_RESERVATIONS WHERE CONTRACT_ID = $c10;"
+  $ovCount10Before = Sql "SELECT CAST(COUNT(*) AS varchar(2)) FROM OFFER_VERSIONS WHERE OFFER_ID = $o10;"
+  $offerHist10Before = [int](Sql "SELECT CAST(COUNT(*) AS varchar(2)) FROM OFFER_NEGOTIATION_HISTORY WHERE OFFER_ID = $o10 AND ACTION_TYPE = 4;")
+
+  $revBody10 = New-Revision-Body -DraftId ([int]$v1.id) -Reason 'R10: revised v2 terms' `
+    -LandlordSharePct ($share1 + 1) -DurationYears ($duration1 + 1) -StartDate '2027-01-01' `
+    -InstallationCost 1000 -SolarCellCapacityKw 2 -ExpectedAnnualRevenue 5000 `
+    -EffectiveCostPerKw 0.5 -PaybackPeriodMonths 36 -NoticePeriodDays ($oldNotice + 30)
+
+  $r = Call 'GET' "/api/contracts/$c10/revisions"
+  Check 'S6-121' 'revisions anonymous -> 401' 401 $r.Status
+  $r = Call 'GET' "/api/contracts/$c10/revisions" $null $i2Tok
+  Check 'S6-122' 'revisions third-party -> 403' 403 $r.Status
+  $r = Call 'GET' "/api/contracts/$c10/revisions" $null $adminTok
+  Check 'S6-123' 'revisions regular Admin readable -> 200' 200 $r.Status
+  $r = Call 'POST' "/api/contracts/$c10/revisions" $revBody10
+  Check 'S6-124a' 'anonymous revision request -> 401' 401 $r.Status
+  $r = Call 'POST' "/api/contracts/$c10/revisions" $revBody10 $adminTok
+  Check 'S6-124' 'regular Admin cannot request revision -> 403' 403 $r.Status
+  $r = Call 'POST' "/api/contracts/$c10/revisions" $revBody10 $i2Tok
+  Check 'S6-125' 'third-party investor cannot request revision -> 403' 403 $r.Status
+
+  $r = Call 'POST' "/api/contracts/$c10/revisions" $revBody10 $laTok
+  Check 'S6-126' 'contract party requests revision -> 201' 201 $r.Status
+  $rev1 = $r.Body | ConvertFrom-Json
+  $rev1Id = [int]$rev1.id
+  Check 'S6-127' 'revision starts PendingPartyConsent' 'PendingPartyConsent' ([string]$rev1.status)
+  Check 'S6-127a' 'proposal snapshots proposer identity and UTC' '1' (Sql "SELECT CAST(COUNT(*) AS varchar(2)) FROM CONTRACT_REVISIONS WHERE ID = $rev1Id AND PROPOSED_BY_ID = $laId AND PROPOSED_BY_NAME_SNAPSHOT IS NOT NULL AND PROPOSED_AT IS NOT NULL;")
+  Check 'S6-128' 'revision records the exact base draft v1' 1 ([int]$rev1.baseDraftVersionNumber)
+  Check 'S6-129' 'proposal does not create a new draft yet' 1 (Sql "SELECT CAST(COUNT(*) AS varchar(2)) FROM CONTRACT_VERSIONS WHERE CONTRACT_ID = $c10 AND VERSION_KIND = 'Draft';")
+  Check 'S6-130' 'proposal does not create a new offer version yet' $ovCount10Before (Sql "SELECT CAST(COUNT(*) AS varchar(2)) FROM OFFER_VERSIONS WHERE OFFER_ID = $o10;")
+  Check 'S6-131' 'RevisionRequested event targets v1' '1' (Sql "SELECT CAST(COUNT(*) AS varchar(2)) FROM CONTRACT_VERSIONS WHERE CONTRACT_ID = $c10 AND EVENT_TYPE = 'RevisionRequested' AND TARGET_VERSION_ID = $([int]$v1.id);")
+  Check 'S6-132' 'proposal leaves the accepted offer version unchanged' $oldAcceptedVersion (Sql "SELECT CAST(OFFER_VERSION_ID AS varchar(10)) FROM CONTRACTS WHERE ID = $c10;")
+  Check 'S6-133' 'proposal leaves the previous signature intact' 'True' ([string]((Get-Contract-Dto $c10).investorSignedAt -ne $null))
+  $r = Call 'POST' "/api/contracts/$c10/sign" $null $laTok
+  Check 'S6-134' 'signing is blocked while a revision is open -> 409' 409 $r.Status
+  $r = Call 'POST' "/api/contracts/$c10/review" @{ approve = $true } $adminTok
+  Check 'S6-135' 'contract review is blocked while a revision is open -> 409' 409 $r.Status
+  $r = Call 'POST' "/api/contracts/$c10/revisions/$rev1Id/admin-decision" @{ expectedDraftVersionId = [int]$v1.id; decision = 'Approve' } $adminTok
+  Check 'S6-136' 'Admin cannot decide before both party consents -> 409' 409 $r.Status
+
+  $r = Call 'POST' "/api/contracts/$c10/revisions/$rev1Id/consent" @{ expectedDraftVersionId = [int]$v1.id; approved = $true } $adminTok
+  Check 'S6-137' 'Admin cannot give party consent -> 403' 403 $r.Status
+  $r = Call 'POST' "/api/contracts/$c10/revisions/$rev1Id/consent" @{ expectedDraftVersionId = [int]$v1.id; approved = $true } $i2Tok
+  Check 'S6-138' 'third-party investor cannot give consent -> 403' 403 $r.Status
+  $r = Call 'POST' "/api/contracts/$c10/revisions/$rev1Id/consent" @{ expectedDraftVersionId = [int]$v1.id; approved = $true } $laTok
+  Check 'S6-139' 'proposing landlord explicitly approves -> 200' 200 $r.Status
+  $revAfterOne = $r.Body | ConvertFrom-Json
+  Check 'S6-140' 'one consent keeps revision pending party consent' 'PendingPartyConsent' ([string]$revAfterOne.status)
+  $r = Call 'POST' "/api/contracts/$c10/revisions/$rev1Id/consent" @{ expectedDraftVersionId = [int]$v1.id; approved = $true } $laTok
+  Check 'S6-141' 'same party cannot consent twice -> 409' 409 $r.Status
+  $r = Call 'POST' "/api/contracts/$c10/revisions/$rev1Id/consent" @{ expectedDraftVersionId = [int]$v1.id; approved = $true } $i1Tok
+  Check 'S6-142' 'second party approves -> 200' 200 $r.Status
+  $revAfterTwo = $r.Body | ConvertFrom-Json
+  Check 'S6-143' 'both consents advance to PendingAdminReview' 'PendingAdminReview' ([string]$revAfterTwo.status)
+  Check 'S6-144' 'two explicit consent rows persisted' 2 ([int]@($revAfterTwo.consents).Count)
+  Check 'S6-144a' 'consents persist party, decision and UTC' '2' (Sql "SELECT CAST(COUNT(*) AS varchar(2)) FROM CONTRACT_REVISION_CONSENTS WHERE REVISION_ID = $rev1Id AND DECISION = 'Approved' AND CREATED_AT IS NOT NULL;")
+
+  $r = Call 'POST' "/api/contracts/$c10/revisions/$rev1Id/admin-decision" @{ expectedDraftVersionId = 2147000000; decision = 'Approve' } $adminTok
+  Check 'S6-145' 'stale draft id at Admin decision -> 409' 409 $r.Status
+  $r = Call 'POST' "/api/contracts/$c10/revisions/$rev1Id/admin-decision" @{ expectedDraftVersionId = [int]$v1.id; decision = 'Approve' } $i1Tok
+  Check 'S6-146' 'party cannot make the Admin decision -> 403' 403 $r.Status
+  $r = Call 'POST' "/api/contracts/$c10/revisions/$rev1Id/admin-decision" @{ expectedDraftVersionId = [int]$v1.id; decision = 'Approve' } $adminTok
+  Check 'S6-147' 'regular Admin approves the revision -> 200' 200 $r.Status
+  $revApproved = $r.Body | ConvertFrom-Json
+  Check 'S6-148' 'revision Approved after Admin decision' 'Approved' ([string]$revApproved.status)
+  Check 'S6-149' 'Admin approval creates Draft v2' 2 ([int]$revApproved.newDraftVersionNumber)
+  $v2 = Get-Draft $c10 2
+  Check 'S6-150' 'Draft v2 points to v1 as its previous draft' ([int]$v1.id) ([int]$v2.previousVersionId)
+  Check 'S6-151' 'Draft v2 carries the revision reason' 'R10: revised v2 terms' ([string]$v2.reason)
+  Check 'S6-152' 'Draft v2 contains the proposed landlord share' ([decimal]($share1 + 1)).ToString('0.####') ([decimal]$v2.terms.landlordSharePct).ToString('0.####')
+  $dto10V2 = Get-Contract-Dto $c10
+  Check 'S6-153' 'accepted offer version advances to the new version' ([int]$revApproved.newOfferVersionId) ([int]$dto10V2.offerVersionId)
+  Check 'S6-154' 'contract notice period advances with the new terms' ($oldNotice + 30) ([int]$dto10V2.noticePeriodDays)
+  Check 'S6-155' 'signature does not carry into Draft v2' 'True' ([string]($dto10V2.investorSignedAt -eq $null))
+  Check 'S6-156' 'old signature event remains in history' $sigBefore (Sql "SELECT CAST(COUNT(*) AS varchar(2)) FROM CONTRACT_VERSIONS WHERE CONTRACT_ID = $c10 AND EVENT_TYPE = 'Signed';")
+  Check 'S6-157' 'Draft v1 terms remain unchanged' ([decimal]$v1.terms.landlordSharePct).ToString('0.####') ([decimal](Get-Draft $c10 1).terms.landlordSharePct).ToString('0.####')
+  Check 'S6-158' 'DraftSuperseded event targets v1' '1' (Sql "SELECT CAST(COUNT(*) AS varchar(2)) FROM CONTRACT_VERSIONS WHERE CONTRACT_ID = $c10 AND EVENT_TYPE = 'DraftSuperseded' AND TARGET_VERSION_ID = $([int]$v1.id);")
+  Check 'S6-159' 'Admin revision review row recorded' '1' (Sql "SELECT CAST(COUNT(*) AS varchar(2)) FROM CONTRACT_REVIEWS WHERE CONTRACT_ID = $c10 AND DECISION = 'RevisionApproved';")
+  Check 'S6-159a' 'Admin decision records actor and UTC' '1' (Sql "SELECT CAST(COUNT(*) AS varchar(2)) FROM CONTRACT_REVISIONS WHERE ID = $rev1Id AND ADMIN_REVIEWED_BY_ID IS NOT NULL AND ADMIN_REVIEWED_AT IS NOT NULL AND ADMIN_DECISION = 'Approved';")
+  Check 'S6-159b' 'revision approval keeps contract pending and unreviewed' 'True' ([string](($dto10V2.status -eq 'PendingSignatures') -and ($dto10V2.adminReviewedAt -eq $null)))
+  Check 'S6-160' 'new accepted offer version is current' '1' (Sql "SELECT CAST(COUNT(*) AS varchar(2)) FROM OFFER_VERSIONS WHERE ID = $([int]$revApproved.newOfferVersionId) AND IS_CURRENT = 1;")
+  Check 'S6-161' 'old accepted offer version is preserved and not current' '1' (Sql "SELECT CAST(COUNT(*) AS varchar(2)) FROM OFFER_VERSIONS WHERE ID = $oldAcceptedVersion AND IS_CURRENT = 0;")
+  Check 'S6-162' 'ApprovedByAdmin offer history increments once' ([string]($offerHist10Before + 1)) (Sql "SELECT CAST(COUNT(*) AS varchar(2)) FROM OFFER_NEGOTIATION_HISTORY WHERE OFFER_ID = $o10 AND ACTION_TYPE = 4;")
+  Check 'S6-163' 'reservation id is unchanged by the revision' $res10 (Sql "SELECT CAST(ID AS varchar(10)) FROM GRID_CAPACITY_RESERVATIONS WHERE CONTRACT_ID = $c10 AND RELEASED_AT IS NULL;")
+  Check 'S6-164' 'no duplicate reservation after the revision' $resCount10 (Sql "SELECT CAST(COUNT(*) AS varchar(2)) FROM GRID_CAPACITY_RESERVATIONS WHERE CONTRACT_ID = $c10;")
+
+  # --- Draft v2 -> v3, then fully-signed protection ---
+  $dto10V2 = Get-Contract-Dto $c10
+  $share2 = [decimal]$dto10V2.landlordSharePct
+  $duration2 = [int]$dto10V2.durationYears
+  $notice2 = [int]$dto10V2.noticePeriodDays
+  $revBody11 = New-Revision-Body -DraftId ([int]$v2.id) -Reason 'R10: revised v3 terms' `
+    -LandlordSharePct ($share2 + 1) -DurationYears ($duration2 + 1) -StartDate '2027-06-01' `
+    -InstallationCost 1200 -SolarCellCapacityKw 3 -ExpectedAnnualRevenue 6000 `
+    -EffectiveCostPerKw 0.6 -PaybackPeriodMonths 42 -NoticePeriodDays ($notice2 + 15)
+  $r = Call 'POST' "/api/contracts/$c10/revisions" $revBody11 $i1Tok
+  Check 'S6-165' 'party requests Draft v3 -> 201' 201 $r.Status
+  $rev2 = $r.Body | ConvertFrom-Json
+  $rev2Id = [int]$rev2.id
+  Check 'S6-166' 'Draft v3 request is based on v2' 2 ([int]$rev2.baseDraftVersionNumber)
+  $r = Call 'POST' "/api/contracts/$c10/revisions/$rev2Id/superadmin-decision" @{ expectedDraftVersionId = [int]$v2.id; decision = 'Continue'; reason = 'No consent yet' } $admin
+  Check 'S6-167' 'SuperAdmin cannot decide a non-escalated revision -> 409' 409 $r.Status
+  $r = Call 'POST' "/api/contracts/$c10/revisions/$rev2Id/consent" @{ expectedDraftVersionId = [int]$v2.id; approved = $true } $i1Tok
+  Check 'S6-168' 'investor approves Draft v3 terms' 200 $r.Status
+  $r = Call 'POST' "/api/contracts/$c10/revisions/$rev2Id/consent" @{ expectedDraftVersionId = [int]$v2.id; approved = $true } $laTok
+  Check 'S6-169' 'landlord approves Draft v3 terms' 200 $r.Status
+  $r = Call 'POST' "/api/contracts/$c10/revisions/$rev2Id/admin-decision" @{ expectedDraftVersionId = [int]$v2.id; decision = 'Approve' } $adminTok
+  Check 'S6-170' 'Admin approves Draft v3 -> 200' 200 $r.Status
+  $rev3Approved = $r.Body | ConvertFrom-Json
+  Check 'S6-171' 'Admin approval creates Draft v3' 3 ([int]$rev3Approved.newDraftVersionNumber)
+  $v3 = Get-Draft $c10 3
+  Check 'S6-172' 'Draft v3 points to v2' ([int]$v2.id) ([int]$v3.previousVersionId)
+  Check 'S6-173' 'Draft v3 carries its own reason' 'R10: revised v3 terms' ([string]$v3.reason)
+  Check 'S6-174' 'Draft v3 contains the second revision share' ([decimal]($share2 + 1)).ToString('0.####') ([decimal]$v3.terms.landlordSharePct).ToString('0.####')
+  Check 'S6-175' 'Draft v2 remains unchanged' 'R10: revised v2 terms' ([string](Get-Draft $c10 2).reason)
+  $noOpBody = $revBody11.Clone()
+  $noOpBody['expectedDraftVersionId'] = [int]$v3.id
+  $r = Call 'POST' "/api/contracts/$c10/revisions" $noOpBody $i1Tok
+  Check 'S6-176' 'no-op revision terms are refused -> 409' 409 $r.Status
+  $r = Call 'POST' "/api/contracts/$c10/sign" $null $i1Tok
+  Check 'S6-177' 'investor signs Draft v3' 200 $r.Status
+  $r = Call 'POST' "/api/contracts/$c10/sign" $null $laTok
+  Check 'S6-178' 'landlord signs Draft v3' 200 $r.Status
+  $r = Call 'POST' "/api/contracts/$c10/revisions" $revBody11 $i1Tok
+  Check 'S6-179' 'revision after both signatures -> 409' 409 $r.Status
+  Check 'S6-180' 'fully-signed revision refusal is explicit' 'Fully signed contracts cannot be revised; use the amendment workflow.' ([string](($r.Body | ConvertFrom-Json).detail))
+  $r = Call 'POST' "/api/contracts/$c10/review" @{ approve = $true } $adminTok
+  Check 'S6-181' 'final contract approval -> 200' 200 $r.Status
+  Check 'S6-182' 'contract becomes Active after final review' 'Active' ([string](($r.Body | ConvertFrom-Json).status))
+  $r = Call 'POST' "/api/contracts/$c10/revisions" $revBody11 $i1Tok
+  Check 'S6-183' 'revision after finalisation -> 409' 409 $r.Status
+
+  # --- Admin escalation, regular-Admin restriction, SuperAdmin continuation ---
+  $f11 = New-Revision-Contract '11' -WithCompetitor
+  $c11 = [int]$f11.Contract; $L11 = [int]$f11.Land; $o11 = [int]$f11.Offer
+  $comp11Status = Sql "SELECT CAST(STATUS_ID AS varchar(2)) FROM OFFERS WHERE ID = $([int]$f11.Competitor);"
+  $v11 = Get-Draft $c11 1
+  $dto11 = Get-Contract-Dto $c11
+  $revBody12 = New-Revision-Body -DraftId ([int]$v11.id) -Reason 'R11: escalation path' `
+    -LandlordSharePct ([decimal]$dto11.landlordSharePct + 2) -DurationYears ([int]$dto11.durationYears + 2) -StartDate '2027-02-01' `
+    -InstallationCost 2000 -SolarCellCapacityKw 4 -ExpectedAnnualRevenue 7000 `
+    -EffectiveCostPerKw 0.7 -PaybackPeriodMonths 48 -NoticePeriodDays ([int]$dto11.noticePeriodDays + 20)
+  $r = Call 'POST' "/api/contracts/$c11/revisions" $revBody12 $i1Tok
+  Check 'S6-184' 'escalation fixture revision requested -> 201' 201 $r.Status
+  $rev11 = $r.Body | ConvertFrom-Json
+  $rev11Id = [int]$rev11.id
+  $r = Call 'POST' "/api/contracts/$c11/revisions/$rev11Id/consent" @{ expectedDraftVersionId = [int]$v11.id; approved = $true } $i1Tok
+  Check 'S6-185' 'one consent is not enough for escalation' 200 $r.Status
+  $r = Call 'POST' "/api/contracts/$c11/revisions/$rev11Id/admin-decision" @{ expectedDraftVersionId = [int]$v11.id; decision = 'Escalate'; reason = 'Needs SuperAdmin review' } $adminTok
+  Check 'S6-186' 'Admin escalation before both consents -> 409' 409 $r.Status
+  $r = Call 'POST' "/api/contracts/$c11/revisions/$rev11Id/consent" @{ expectedDraftVersionId = [int]$v11.id; approved = $true } $laTok
+  Check 'S6-187' 'second party approves escalation fixture' 200 $r.Status
+  $r = Call 'POST' "/api/contracts/$c11/revisions/$rev11Id/admin-decision" @{ expectedDraftVersionId = [int]$v11.id; decision = 'Escalate'; reason = '' } $adminTok
+  Check 'S6-187a' 'Admin escalation requires a reason -> 400' 400 $r.Status
+  $r = Call 'POST' "/api/contracts/$c11/revisions/$rev11Id/admin-decision" @{ expectedDraftVersionId = [int]$v11.id; decision = 'Escalate'; reason = 'Needs SuperAdmin review' } $adminTok
+  Check 'S6-188' 'regular Admin escalates -> 200' 200 $r.Status
+  $rev11Escalated = $r.Body | ConvertFrom-Json
+  Check 'S6-189' 'revision waits for SuperAdmin' 'PendingSuperAdminReview' ([string]$rev11Escalated.status)
+  Check 'S6-190' 'escalation reason is recorded' 'Needs SuperAdmin review' ([string]$rev11Escalated.escalationReason)
+  Check 'S6-190a' 'Admin escalation records actor and UTC' '1' (Sql "SELECT CAST(COUNT(*) AS varchar(2)) FROM CONTRACT_REVISIONS WHERE ID = $rev11Id AND ADMIN_REVIEWED_BY_ID IS NOT NULL AND ADMIN_REVIEWED_AT IS NOT NULL AND ADMIN_DECISION = 'Escalated';")
+  Check 'S6-190b' 'competing offer stays frozen during escalation' $comp11Status (Sql "SELECT CAST(STATUS_ID AS varchar(2)) FROM OFFERS WHERE ID = $([int]$f11.Competitor);")
+  Check 'S6-191' 'escalation leaves no new draft' 1 ([int](Sql "SELECT CAST(COUNT(*) AS varchar(2)) FROM CONTRACT_VERSIONS WHERE CONTRACT_ID = $c11 AND VERSION_KIND = 'Draft';"))
+  Check 'S6-192' 'escalation leaves reservation active' '1' (Sql "SELECT CAST(COUNT(*) AS varchar(2)) FROM GRID_CAPACITY_RESERVATIONS WHERE CONTRACT_ID = $c11 AND RELEASED_AT IS NULL;")
+  $r = Call 'POST' "/api/contracts/$c11/revisions/$rev11Id/superadmin-decision" @{ expectedDraftVersionId = [int]$v11.id; decision = 'Continue'; reason = 'Attempt by Admin' } $adminTok
+  Check 'S6-193' 'regular Admin cannot use SuperAdmin decision -> 403' 403 $r.Status
+  $r = Call 'POST' "/api/contracts/$c11/revisions/$rev11Id/superadmin-decision" @{ expectedDraftVersionId = [int]$v11.id; decision = 'Continue'; reason = 'Attempt by party' } $i1Tok
+  Check 'S6-194' 'party cannot use SuperAdmin decision -> 403' 403 $r.Status
+  $r = Call 'POST' "/api/contracts/$c11/revisions/$rev11Id/superadmin-decision" @{ expectedDraftVersionId = [int]$v11.id; decision = 'Continue'; reason = '' } $admin
+  Check 'S6-195' 'SuperAdmin continuation requires a reason -> 400' 400 $r.Status
+  $r = Call 'POST' "/api/contracts/$c11/revisions/$rev11Id/superadmin-decision" @{ expectedDraftVersionId = [int]$v11.id; decision = 'Continue'; reason = 'Continue after escalation review' } $admin
+  Check 'S6-196' 'SuperAdmin continues the revision -> 200' 200 $r.Status
+  $rev11Continued = $r.Body | ConvertFrom-Json
+  Check 'S6-197' 'continued revision is Approved' 'Approved' ([string]$rev11Continued.status)
+  Check 'S6-198' 'continuation creates Draft v2' 2 ([int]$rev11Continued.newDraftVersionNumber)
+  Check 'S6-199' 'continuation keeps the reservation active and unique' '1' (Sql "SELECT CAST(COUNT(*) AS varchar(2)) FROM GRID_CAPACITY_RESERVATIONS WHERE CONTRACT_ID = $c11 AND RELEASED_AT IS NULL;")
+  Check 'S6-200' 'escalation review row recorded' '1' (Sql "SELECT CAST(COUNT(*) AS varchar(2)) FROM CONTRACT_REVIEWS WHERE CONTRACT_ID = $c11 AND DECISION = 'RevisionEscalated';")
+  Check 'S6-201' 'continuation review row recorded' '1' (Sql "SELECT CAST(COUNT(*) AS varchar(2)) FROM CONTRACT_REVIEWS WHERE CONTRACT_ID = $c11 AND DECISION = 'RevisionContinued';")
+  Check 'S6-201a' 'continuation records SuperAdmin actor, decision and UTC' '1' (Sql "SELECT CAST(COUNT(*) AS varchar(2)) FROM CONTRACT_REVISIONS WHERE ID = $rev11Id AND SUPERADMIN_DECIDED_BY_ID IS NOT NULL AND SUPERADMIN_DECIDED_AT IS NOT NULL AND SUPERADMIN_DECISION = 'Continued' AND SUPERADMIN_REASON = N'Continue after escalation review';")
+  Check 'S6-201b' 'both party consents remained the basis of continuation' '2' (Sql "SELECT CAST(COUNT(*) AS varchar(2)) FROM CONTRACT_REVISION_CONSENTS WHERE REVISION_ID = $rev11Id AND DECISION = 'Approved';")
+  Check 'S6-201c' 'competing offer stays frozen after continuation' $comp11Status (Sql "SELECT CAST(STATUS_ID AS varchar(2)) FROM OFFERS WHERE ID = $([int]$f11.Competitor);")
+
+  # --- SuperAdmin cancellation uses the established rejection effects and preserves history ---
+  $f12 = New-Revision-Contract '12' -WithCompetitor
+  $c12 = [int]$f12.Contract; $L12 = [int]$f12.Land; $o12 = [int]$f12.Offer
+  $comp12Status = Sql "SELECT CAST(STATUS_ID AS varchar(2)) FROM OFFERS WHERE ID = $([int]$f12.Competitor);"
+  $v12 = Get-Draft $c12 1
+  $dto12 = Get-Contract-Dto $c12
+  $revBody13 = New-Revision-Body -DraftId ([int]$v12.id) -Reason 'R12: cancellation path' `
+    -LandlordSharePct ([decimal]$dto12.landlordSharePct + 3) -DurationYears ([int]$dto12.durationYears + 3) -StartDate '2027-03-01' `
+    -InstallationCost 3000 -SolarCellCapacityKw 5 -ExpectedAnnualRevenue 8000 `
+    -EffectiveCostPerKw 0.8 -PaybackPeriodMonths 54 -NoticePeriodDays ([int]$dto12.noticePeriodDays + 25)
+  $r = Call 'POST' "/api/contracts/$c12/revisions" $revBody13 $i1Tok
+  Check 'S6-202' 'cancellation fixture revision requested -> 201' 201 $r.Status
+  $rev12 = $r.Body | ConvertFrom-Json
+  $rev12Id = [int]$rev12.id
+  $null = Call 'POST' "/api/contracts/$c12/revisions/$rev12Id/consent" @{ expectedDraftVersionId = [int]$v12.id; approved = $true } $i1Tok
+  $null = Call 'POST' "/api/contracts/$c12/revisions/$rev12Id/consent" @{ expectedDraftVersionId = [int]$v12.id; approved = $true } $laTok
+  $r = Call 'POST' "/api/contracts/$c12/revisions/$rev12Id/admin-decision" @{ expectedDraftVersionId = [int]$v12.id; decision = 'Escalate'; reason = 'Cancellation review' } $adminTok
+  Check 'S6-203' 'cancellation fixture escalates -> 200' 200 $r.Status
+  $res12 = Sql "SELECT CAST(ID AS varchar(10)) FROM GRID_CAPACITY_RESERVATIONS WHERE CONTRACT_ID = $c12;"
+  $ovCount12 = Sql "SELECT CAST(COUNT(*) AS varchar(2)) FROM OFFER_VERSIONS WHERE OFFER_ID = $o12;"
+  $draftCount12 = Sql "SELECT CAST(COUNT(*) AS varchar(2)) FROM CONTRACT_VERSIONS WHERE CONTRACT_ID = $c12 AND VERSION_KIND = 'Draft';"
+  $accepted12 = Sql "SELECT CAST(ACCEPTED_VERSION_ID AS varchar(10)) FROM OFFERS WHERE ID = $o12;"
+  $r = Call 'POST' "/api/contracts/$c12/revisions/$rev12Id/superadmin-decision" @{ expectedDraftVersionId = [int]$v12.id; decision = 'Cancel'; reason = '' } $admin
+  Check 'S6-204' 'cancellation requires a reason -> 400' 400 $r.Status
+  Check 'S6-205' 'refused cancellation leaves contract pending' 'PendingSignatures' ([string](Get-Contract-Dto $c12).status)
+  Check 'S6-206' 'refused cancellation leaves reservation active' '0' (Sql "SELECT CAST(COUNT(*) AS varchar(2)) FROM GRID_CAPACITY_RESERVATIONS WHERE CONTRACT_ID = $c12 AND RELEASED_AT IS NOT NULL;")
+  $r = Call 'POST' "/api/contracts/$c12/revisions/$rev12Id/superadmin-decision" @{ expectedDraftVersionId = [int]$v12.id; decision = 'Cancel'; reason = 'SuperAdmin cancelled the pre-signing contract' } $admin
+  Check 'S6-207' 'SuperAdmin cancels the revision -> 200' 200 $r.Status
+  $rev12Cancelled = $r.Body | ConvertFrom-Json
+  Check 'S6-208' 'revision is Cancelled' 'Cancelled' ([string]$rev12Cancelled.status)
+  Check 'S6-209' 'contract is Cancelled' 'Cancelled' ([string](Get-Contract-Dto $c12).status)
+  Check 'S6-210' 'cancellation creates no new offer version' $ovCount12 (Sql "SELECT CAST(COUNT(*) AS varchar(2)) FROM OFFER_VERSIONS WHERE OFFER_ID = $o12;")
+  Check 'S6-211' 'cancellation creates no new draft' $draftCount12 (Sql "SELECT CAST(COUNT(*) AS varchar(2)) FROM CONTRACT_VERSIONS WHERE CONTRACT_ID = $c12 AND VERSION_KIND = 'Draft';")
+  Check 'S6-212' 'cancellation releases the same reservation' $res12 (Sql "SELECT CAST(ID AS varchar(10)) FROM GRID_CAPACITY_RESERVATIONS WHERE CONTRACT_ID = $c12 AND RELEASED_AT IS NOT NULL;")
+  Check 'S6-213' 'cancellation returns land to Verified(3)' '3' (Sql "SELECT CAST(LAND_STATUS_ID AS varchar(2)) FROM LANDS WHERE ID = $L12;")
+  Check 'S6-214' 'cancellation keeps the offer closed (9)' '9' (Sql "SELECT CAST(STATUS_ID AS varchar(2)) FROM OFFERS WHERE ID = $o12;")
+  Check 'S6-215' 'cancellation preserves Draft v1' '1' (Sql "SELECT CAST(COUNT(*) AS varchar(2)) FROM CONTRACT_VERSIONS WHERE CONTRACT_ID = $c12 AND VERSION_NUMBER = 1 AND VERSION_KIND = 'Draft';")
+  Check 'S6-216' 'cancellation review row recorded' '1' (Sql "SELECT CAST(COUNT(*) AS varchar(2)) FROM CONTRACT_REVIEWS WHERE CONTRACT_ID = $c12 AND DECISION = 'RevisionCancelled';")
+  Check 'S6-217' 'cancellation event targets Draft v1' '1' (Sql "SELECT CAST(COUNT(*) AS varchar(2)) FROM CONTRACT_VERSIONS WHERE CONTRACT_ID = $c12 AND EVENT_TYPE = 'RevisionCancelled' AND TARGET_VERSION_ID = $([int]$v12.id);")
+  Check 'S6-218' 'cancellation records the SuperAdmin reason' '1' (Sql "SELECT CAST(COUNT(*) AS varchar(2)) FROM CONTRACT_REVISIONS WHERE ID = $rev12Id AND SUPERADMIN_REASON = N'SuperAdmin cancelled the pre-signing contract' AND SUPERADMIN_DECIDED_AT IS NOT NULL AND CLOSED_AT IS NOT NULL;")
+  Check 'S6-218a' 'cancellation preserves the accepted offer version' $accepted12 (Sql "SELECT CAST(ACCEPTED_VERSION_ID AS varchar(10)) FROM OFFERS WHERE ID = $o12;")
+  Check 'S6-218b' 'cancellation preserves both consent rows' '2' (Sql "SELECT CAST(COUNT(*) AS varchar(2)) FROM CONTRACT_REVISION_CONSENTS WHERE REVISION_ID = $rev12Id AND DECISION = 'Approved';")
+  Check 'S6-218c' 'competing offer is not reopened by cancellation' $comp12Status (Sql "SELECT CAST(STATUS_ID AS varchar(2)) FROM OFFERS WHERE ID = $([int]$f12.Competitor);")
+  Check 'S6-218d' 'no competitor Reopened history is fabricated' '0' (Sql "SELECT CAST(COUNT(*) AS varchar(2)) FROM OFFER_NEGOTIATION_HISTORY WHERE OFFER_ID = $([int]$f12.Competitor) AND ACTION_TYPE = 7;")
+  $r = Call 'POST' "/api/contracts/$c12/revisions/$rev12Id/superadmin-decision" @{ expectedDraftVersionId = [int]$v12.id; decision = 'Cancel'; reason = 'Repeat' } $admin
+  Check 'S6-219' 'repeated cancellation decision -> 409' 409 $r.Status
+
+  # --- Stale/concurrent protection: one open revision and one consent per party ---
+  $f13 = New-Revision-Contract '13'
+  $c13 = [int]$f13.Contract; $L13 = [int]$f13.Land; $o13 = [int]$f13.Offer
+  $v13 = Get-Draft $c13 1
+  $dto13 = Get-Contract-Dto $c13
+  $raceBody13 = New-Revision-Body -DraftId ([int]$v13.id) -Reason 'R13: concurrent proposal' `
+    -LandlordSharePct ([decimal]$dto13.landlordSharePct + 4) -DurationYears ([int]$dto13.durationYears + 4) -StartDate '2027-04-01' `
+    -InstallationCost 4000 -SolarCellCapacityKw 6 -ExpectedAnnualRevenue 9000 `
+    -EffectiveCostPerKw 0.9 -PaybackPeriodMonths 60 -NoticePeriodDays ([int]$dto13.noticePeriodDays + 35)
+  $raceJson13 = ConvertTo-Json -InputObject $raceBody13 -Depth 6 -Compress
+  $propRace = Invoke-ConcurrentApiRequests -Requests @(
+    @{ Method = 'POST'; Path = "/api/contracts/$c13/revisions"; Json = $raceJson13; BearerToken = $i1Tok },
+    @{ Method = 'POST'; Path = "/api/contracts/$c13/revisions"; Json = $raceJson13; BearerToken = $i1Tok }
+  ) -TimeoutSeconds 60
+  $propStatuses = (@([int]$propRace[0].Status, [int]$propRace[1].Status) | Sort-Object) -join ' '
+  Check 'S6-220' 'concurrent proposals: exactly one 201, one 409' '201 409' $propStatuses
+  Check 'S6-221' 'exactly one open revision persisted' '1' (Sql "SELECT CAST(COUNT(*) AS varchar(2)) FROM CONTRACT_REVISIONS WHERE CONTRACT_ID = $c13 AND CLOSED_AT IS NULL;")
+  $rev13 = @(Get-Revision-List $c13)[0]
+  $rev13Id = [int]$rev13.id
+  $consentJson13 = ConvertTo-Json -InputObject @{ expectedDraftVersionId = [int]$v13.id; approved = $true } -Compress
+  $consentRace = Invoke-ConcurrentApiRequests -Requests @(
+    @{ Method = 'POST'; Path = "/api/contracts/$c13/revisions/$rev13Id/consent"; Json = $consentJson13; BearerToken = $i1Tok },
+    @{ Method = 'POST'; Path = "/api/contracts/$c13/revisions/$rev13Id/consent"; Json = $consentJson13; BearerToken = $i1Tok }
+  ) -TimeoutSeconds 60
+  $consentStatuses = (@([int]$consentRace[0].Status, [int]$consentRace[1].Status) | Sort-Object) -join ' '
+  Check 'S6-222' 'concurrent same-party consents: exactly one 200, one 409' '200 409' $consentStatuses
+  Check 'S6-223' 'exactly one consent row persisted for the party' '1' (Sql "SELECT CAST(COUNT(*) AS varchar(2)) FROM CONTRACT_REVISION_CONSENTS WHERE REVISION_ID = $rev13Id AND PARTY_USER_ID = $i1Id;")
+  $r = Call 'POST' "/api/contracts/$c13/revisions/$rev13Id/superadmin-decision" @{ expectedDraftVersionId = [int]$v13.id; decision = 'Continue'; reason = 'Attempt without both consents' } $admin
+  Check 'S6-223a' 'SuperAdmin cannot override a missing party consent -> 409' 409 $r.Status
+  $r = Call 'POST' "/api/contracts/$c13/revisions" $raceBody13 $i1Tok
+  Check 'S6-224' 'second revision while one is open -> 409' 409 $r.Status
+  Check 'S6-225' 'revision workflow created no duplicate reservation' '1' (Sql "SELECT CAST(COUNT(*) AS varchar(2)) FROM GRID_CAPACITY_RESERVATIONS WHERE CONTRACT_ID = $c13;")
+
   $pass = @($rows | Where-Object { $_.Result -eq 'PASS' }).Count
   $fail = @($rows | Where-Object { $_.Result -eq 'FAIL' }).Count
   Write-Output ''
   Write-Output ("S6 TOTAL PASS=$pass FAIL=$fail")
-} finally {
-  Stop-S4App -App $app
+}
+finally {
+  Complete-TestApiCleanup -Identity $app
 }
 if ($fail -gt 0) { exit 1 }

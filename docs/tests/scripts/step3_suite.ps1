@@ -9,17 +9,19 @@ Add-Type -AssemblyName System.Net.Http | Out-Null
 # The suite owns its instance: the harness starts it on the dedicated port, with the
 # explicit disposable connection string, and proves that it owns the port.
 $harness = Start-TestApiInstance
+# The suite owns its instance until the very end: the finally block stops ONLY the process
+# the harness started (its PID must still own the recorded port), even when an assertion
+# throws or a required SQL operation fails. A cleanup error is reported, never thrown over
+# the original test result.
+try {
 $base = Initialize-TestApi
 $stamp   = (Get-Date).ToUniversalTime().ToString('yyyyMMddHHmmss')
 $pw = if ($env:NIBRAS_TEST_PASSWORD) { $env:NIBRAS_TEST_PASSWORD } else { 'T5t!N1' + [guid]::NewGuid().ToString('N').Substring(0,10) } # runtime-generated credential, never a literal
 $sqlcmd  = 'sqlcmd'   # resolved from PATH
-$server  = (Get-TestTarget).Server
-. (Join-Path $PSScriptRoot 'test_target.ps1')
-# only the disposable database on the approved instance is accepted.
-# The target is resolved from the effective connection string and is fail-closed:
-$sqlServer = (Get-TestTarget).Server
 # The target is resolved from the effective connection string and is fail-closed:
 # only the disposable database is accepted, and a mismatch stops the run.
+. (Join-Path $PSScriptRoot 'test_target.ps1')
+$server  = (Get-TestTarget).Server
 $db      = (Get-TestTarget).Database
 # The running instance is proved to write into the disposable database before anything is written.
 Assert-TestInstanceIdentity | Out-Null
@@ -109,7 +111,7 @@ $reg = Call POST '/api/auth/register' $null (RegBody 'Step3 Landlord' $landlordE
 # The account can only sign in after its address was confirmed.
 $v = Confirm-VerifiedAccount -Email $landlordEmail -Baseline $baseline
 Assert 'confirm the registered Landlord (204)' 204 $v | Out-Null
-Assert 'register Landlord fixture (200)' 200 $reg | Out-Null
+Assert 'register Landlord fixture (201)' 201 $reg | Out-Null
 $landlordId = ($reg.Body | ConvertFrom-Json).id
 Assert 'duplicate register same email/phone (409)' 409 (Call POST '/api/auth/register' $null (RegBody 'Dup Landlord' $landlordEmail $landlordPhone 1 $pw $null $null $null)) | Out-Null
 $login = Call POST '/api/auth/login' $null ("{""email"":""$landlordEmail"",""password"":""$pw""}")
@@ -129,7 +131,7 @@ $invReg = Call POST '/api/auth/register' $null (RegBody 'Step3 Extra Investor' $
 # The account can only sign in after its address was confirmed.
 $v = Confirm-VerifiedAccount -Email $invEmail -Baseline $baseline
 Assert 'confirm the registered Investor (204)' 204 $v | Out-Null
-Assert 'register Investor + extra protected fields (200)' 200 $invReg | Out-Null
+Assert 'register Investor + extra protected fields (201)' 201 $invReg | Out-Null
 $invLogin = Call POST '/api/auth/login' $null ("{""email"":""$invEmail"",""password"":""$pw""}")
 Assert 'login Investor (proves not soft-deleted) (200)' 200 $invLogin | Out-Null
 $invToken = ($invLogin.Body | ConvertFrom-Json).token
@@ -150,7 +152,7 @@ $rcReg = Call POST '/api/auth/register' $null (RegBody 'Step3 RoleChange' $rcEma
 # The account can only sign in after its address was confirmed.
 $v = Confirm-VerifiedAccount -Email $rcEmail -Baseline $baseline
 Assert 'confirm the registered RoleChange Landlord (204)' 204 $v | Out-Null
-Assert 'register RoleChange landlord fixture (200)' 200 $rcReg | Out-Null
+Assert 'register RoleChange landlord fixture (201)' 201 $rcReg | Out-Null
 $rcLogin = Call POST '/api/auth/login' $null ("{""email"":""$rcEmail"",""password"":""$pw""}")
 Assert 'login RoleChange landlord (200)' 200 $rcLogin | Out-Null
 $rcToken = ($rcLogin.Body | ConvertFrom-Json).token
@@ -175,13 +177,15 @@ Assert 'query-string access_token (401)' 401 (Call GET ("/api/auth/me?access_tok
 # NOTE: the rate-limit boundary moved to the dedicated script step3_ratelimit.ps1,
 # which runs against a fresh app start with RateLimit__AuthPerMinute=5 (see README.md).
 
+# USERS has a filtered unique index (UX_USERS_PENDING_EMAIL), so its DML requires
+# QUOTED_IDENTIFIER ON. sqlcmd defaults it OFF; -I enables it (SQL Server error 1934 otherwise).
 function Invoke-SqlScalar {
   param([string]$Query)
   # Materialise the COMPLETE native output before filtering. Piping sqlcmd into
   # `Select-Object -First` closes its stdout early, and this sqlcmd build then exits -1 even
   # though the query succeeded; so collect all output, capture $LASTEXITCODE immediately
   # after sqlcmd finishes, and only then select the row in memory.
-  $raw = @(& $sqlcmd -S $server -d $db -E -b -h -1 -W -Q $Query 2>&1 | ForEach-Object { [string]$_ })
+  $raw = @(& $sqlcmd -S $server -d $db -E -b -I -h -1 -W -Q $Query 2>&1 | ForEach-Object { [string]$_ })
   $rc = $LASTEXITCODE
   $rows = @($raw | Where-Object { $_ -ne '' })
   return [pscustomobject]@{
@@ -194,57 +198,93 @@ function Invoke-SqlScalar {
 Log "==================== PHASE D (approved DB mutation: role change + restore) ===================="
 Log ("  target disposable row ID={0} (is_deleted/role checked via read-only query)" -f $rcId)
 
+if ($rcId -notmatch '^\d+$') {
+  $script:sqlFail++
+  Log ("  CRITICAL: disposable user ID is indeterminate ('{0}'); refusing mutation." -f $rcId)
+  throw 'the disposable user ID is indeterminate; the role-change mutation is not safe to attempt.'
+}
+
 $schemaQ = "SET NOCOUNT ON; SELECT ROLE_ID FROM USERS WHERE ID = $rcId;"
 $snapshot = Invoke-SqlScalar $schemaQ
-$before = $snapshot.Value
-if ($snapshot.ExitCode -ne 0) {
+$before = ([string]$snapshot.Value).Trim()
+if ($snapshot.ExitCode -ne 0 -or $before -notmatch '^\d+$') {
   $script:sqlFail++
-  Log ("  ERROR: ROLE_ID snapshot query failed (sqlcmd rc={0}): {1}" -f $snapshot.ExitCode, $snapshot.Output)
+  Log ("  CRITICAL: original ROLE_ID is indeterminate (sqlcmd rc={0}, value='{1}'): {2}; refusing mutation." -f $snapshot.ExitCode, $before, $snapshot.Output)
+  throw 'the original ROLE_ID is indeterminate; the role-change mutation is not safe to attempt.'
 }
 Log ("  snapshot: ROLE_ID before = {0}" -f $before)
 
 $meBefore = Call GET '/api/auth/me' $rcToken $null
 Assert 'role-change: /me before mutation (200)' 200 $meBefore | Out-Null
 
-$mutQ = "SET NOCOUNT ON; UPDATE USERS SET ROLE_ID = 2 WHERE ID = $rcId;"
-& $sqlcmd -S $server -d $db -E -b -h -1 -W -Q $mutQ | Out-Null
-$mutRc = $LASTEXITCODE
-if ($mutRc -eq 0) {
-  Log "  mutation applied: ROLE_ID 1 -> 2 (Investor)"
-} else {
-  $script:sqlFail++
-  Log ("  ERROR: ROLE_ID mutation failed (sqlcmd rc={0})" -f $mutRc)
-}
+# The mutation and every subsequent assertion are inside this inner try. The restore is in
+# the inner finally, so an exception or a terminating assertion cannot skip it. The outer
+# finally still runs later and stops the harness-owned API.
+$mutAttempted = $false
+$restoreRc = -1
+$restored = $null
+$restoredSnap = $null
+$restoreOk = $false
 
-$afterSnap = Invoke-SqlScalar $schemaQ
-$after = $afterSnap.Value
-if ($afterSnap.ExitCode -ne 0) {
-  $script:sqlFail++
-  Log ("  ERROR: post-mutation verify query failed (sqlcmd rc={0}): {1}" -f $afterSnap.ExitCode, $afterSnap.Output)
-}
-Log ("  verify: ROLE_ID after mutation = {0}" -f $after)
+try {
+  # Mark the attempt BEFORE invoking the UPDATE: even a failed or uncertain sqlcmd result
+  # leaves the disposable row eligible for restoration.
+  $mutAttempted = $true
+  $mutQ = "SET NOCOUNT ON; UPDATE USERS SET ROLE_ID = 2 WHERE ID = $rcId;"
+  $mutOut = @(& $sqlcmd -S $server -d $db -E -b -I -h -1 -W -Q $mutQ 2>&1 | ForEach-Object { [string]$_ })
+  $mutRc = $LASTEXITCODE
+  if ($mutRc -eq 0) {
+    Log "  mutation applied: ROLE_ID 1 -> 2 (Investor)"
+  } else {
+    $script:sqlFail++
+    Log ("  ERROR: ROLE_ID mutation failed (sqlcmd rc={0}): {1}" -f $mutRc, (($mutOut | Where-Object { $_ -ne '' }) -join ' '))
+  }
 
-$meAfter = Call GET '/api/auth/me' $rcToken $null
-Assert 'role-change: old token now 401' 401 $meAfter | Out-Null
+  $afterSnap = Invoke-SqlScalar $schemaQ
+  $after = $afterSnap.Value
+  if ($afterSnap.ExitCode -ne 0) {
+    $script:sqlFail++
+    Log ("  ERROR: post-mutation verify query failed (sqlcmd rc={0}): {1}" -f $afterSnap.ExitCode, $afterSnap.Output)
+  }
+  Log ("  verify: ROLE_ID after mutation = {0}" -f $after)
 
-$restoreQ = "SET NOCOUNT ON; UPDATE USERS SET ROLE_ID = $before WHERE ID = $rcId;"
-& $sqlcmd -S $server -d $db -E -b -h -1 -W -Q $restoreQ | Out-Null
-$restoreRc = $LASTEXITCODE
-if ($restoreRc -ne 0) {
-  $script:sqlFail++
-  Log ("  ERROR: RESTORE failed (sqlcmd rc={0}) - the disposable row may be left mutated" -f $restoreRc)
+  $meAfter = Call GET '/api/auth/me' $rcToken $null
+  Assert 'role-change: old token now 401' 401 $meAfter | Out-Null
 }
-$restoredSnap = Invoke-SqlScalar $schemaQ
-$restored = $restoredSnap.Value
-if ($restoredSnap.ExitCode -ne 0) {
-  $script:sqlFail++
-  Log ("  ERROR: restore verification query failed (sqlcmd rc={0}): {1}" -f $restoredSnap.ExitCode, $restoredSnap.Output)
+finally {
+  if ($mutAttempted) {
+    try {
+      $restoreQ = "SET NOCOUNT ON; UPDATE USERS SET ROLE_ID = $before WHERE ID = $rcId;"
+      $restoreOut = @(& $sqlcmd -S $server -d $db -E -b -I -h -1 -W -Q $restoreQ 2>&1 | ForEach-Object { [string]$_ })
+      $restoreRc = $LASTEXITCODE
+      if ($restoreRc -ne 0) {
+        $script:sqlFail++
+        Log ("  CRITICAL: RESTORE failed (sqlcmd rc={0}): {1} - the disposable row may be left mutated" -f $restoreRc, (($restoreOut | Where-Object { $_ -ne '' }) -join ' '))
+      }
+
+      $restoredSnap = Invoke-SqlScalar $schemaQ
+      $restored = ([string]$restoredSnap.Value).Trim()
+      if ($restoredSnap.ExitCode -ne 0) {
+        $script:sqlFail++
+        Log ("  CRITICAL: restore verification query failed (sqlcmd rc={0}): {1}" -f $restoredSnap.ExitCode, $restoredSnap.Output)
+      }
+      $restoreOk = ($restored -eq $before) -and ($restoreRc -eq 0) -and ($restoredSnap.ExitCode -eq 0)
+      if ($restoreOk) {
+        Log ("  restore applied: ROLE_ID -> {0}" -f $restored)
+      } else {
+        $script:sqlFail++
+        Log ("  CRITICAL: final ROLE_ID verification failed: expected={0} restored={1} restore_rc={2} verify_rc={3}" -f $before, $restored, $restoreRc, $restoredSnap.ExitCode)
+      }
+    } catch {
+      $script:sqlFail++
+      $restoreOk = $false
+      Log ("  CRITICAL: role restoration threw before it could be verified: {0}" -f $_.Exception.Message)
+    }
+  }
 }
-Log ("  restore applied: ROLE_ID -> {0}" -f $restored)
 
 $meRestored = Call GET '/api/auth/me' $rcToken $null
 Assert 'role-change: /me after restore (200)' 200 $meRestored | Out-Null
-$restoreOk = ($restored -eq $before) -and ($restoreRc -eq 0) -and ($restoredSnap.ExitCode -eq 0)
 if ($restoreOk) { $script:pass++ } else { $script:fail++ }
 $restoreTag = if ($restoreOk) { 'PASS' } else { 'FAIL' }
 Log ("  restore verification: before={0} restored={1} -> {2}" -f $before,$restored,$restoreTag)
@@ -254,6 +294,27 @@ Log ("PASS={0}  FAIL={1}" -f $script:pass,$script:fail)
 Log ("REQUIRED-SQL-FAILURES={0}" -f $script:sqlFail)
 $script:lines | Set-Content (Join-Path ([IO.Path]::GetTempPath()) 'step3_suite_results.txt')
 $global:suiteFail = $script:fail + $script:sqlFail
+}
+finally {
+  # The API is stopped through the harness, so only the process this suite started can be
+  # stopped, and only while it still owns the port recorded in the identity file. The
+  # protected run credentials are never rotated or removed here.
+  try {
+    Stop-TestApiInstance -Identity $harness
+    $deadline = (Get-Date).AddSeconds(10)
+    while ((Get-Date) -lt $deadline -and
+           @(Get-NetTCPConnection -LocalPort ([int]$harness.Port) -State Listen -ErrorAction SilentlyContinue).Count -gt 0) {
+      Start-Sleep -Milliseconds 250
+    }
+    $left = @(Get-NetTCPConnection -LocalPort ([int]$harness.Port) -State Listen -ErrorAction SilentlyContinue).Count
+    Write-Host ("--- cleanup: harness-owned PID {0} stopped; port {1} listeners={2} ---" -f $harness.Pid, $harness.Port, $left)
+    if ($left -ne 0) {
+      Write-Host ("WARNING: port {0} still has a listener after the cleanup; the run result is kept." -f $harness.Port)
+    }
+  } catch {
+    Write-Host ("WARNING: the harness-owned API cleanup reported an error (the test result is kept): {0}" -f $_.Exception.Message)
+  }
+}
 # Explicit, Windows PowerShell 5.1-compatible exit: 0 only when every test passed AND every
 # required SQL operation (snapshot, mutation, restore, restore verification) succeeded.
 if ($script:fail -gt 0 -or $script:sqlFail -gt 0) { exit 1 } else { exit 0 }

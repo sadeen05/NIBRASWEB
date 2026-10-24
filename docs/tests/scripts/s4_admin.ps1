@@ -1,10 +1,12 @@
-$ErrorActionPreference = 'Stop'
+﻿$ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'verification_helpers.ps1')
 # The email verification helpers: the token is read from the development outbox and
 # redeemed through the real endpoints - no bypass, no direct state update.
 Add-Type -AssemblyName System.Net.Http
 # The suite owns its instance: the harness starts it on the dedicated port, with the
 # explicit disposable connection string, and proves that it owns the port.
+$harness = $null
+try {
 $harness = Start-TestApiInstance
 $base = Initialize-TestApi
 $pw = if ($env:NIBRAS_TEST_PASSWORD) { $env:NIBRAS_TEST_PASSWORD } else { 'T5t!N1' + [guid]::NewGuid().ToString('N').Substring(0,10) } # runtime-generated credential, never a literal
@@ -80,7 +82,7 @@ $r = Call 'POST' '/api/auth/register' @{ fullName = 'Admin-Test Investor'; email
 
   $v = Confirm-VerifiedAccount -Email $invEmail -Baseline $baseline
 if ($v.Status -ne 204) { throw "the verification of $invEmail failed ($($v.Status))" }
-Check 'A-01' 'register investor (unapproved)' 200 $r.Status
+Check 'A-01' 'register investor (unapproved)' 201 $r.Status
 $invId = ($r.Body | ConvertFrom-Json).id
 $inv = (Call 'POST' '/api/auth/login' @{ email = $invEmail; password = $pw } | ForEach-Object { ($_.Body | ConvertFrom-Json).token })
 
@@ -95,10 +97,10 @@ $r = Call 'POST' '/api/lands' (New-Land "ADM-L1-$stamp" "PA1-$stamp" 5) $la
 Check 'A-02' 'create L1' 201 $r.Status
 $l1 = ($r.Body | ConvertFrom-Json).id
 Assess-Land $l1 5 $admin
-$r = Call 'POST' "/api/lands/$l1/documents" @{ documentTypeId = 1; filePath = "docs/$stamp/title.pdf" } $la
+$r = Call 'POST' "/api/lands/$l1/documents/metadata" @{ documentTypeId = 1; filePath = "docs/$stamp/title.pdf" } $la
 Check 'A-03' 'upload required type 1 on L1' 201 $r.Status
 $l1d1 = ($r.Body | ConvertFrom-Json).id
-$r = Call 'POST' "/api/lands/$l1/documents" @{ documentTypeId = 2; filePath = "docs/$stamp/enc.pdf" } $la
+$r = Call 'POST' "/api/lands/$l1/documents/metadata" @{ documentTypeId = 2; filePath = "docs/$stamp/enc.pdf" } $la
 $l1d2 = ($r.Body | ConvertFrom-Json).id
 $r = Call 'POST' "/api/lands/$l1/submit" $null $la
 Check 'A-04' 'submit L1 -> PendingVerification' 200 $r.Status
@@ -106,9 +108,9 @@ Check 'A-04' 'submit L1 -> PendingVerification' 200 $r.Status
 $r = Call 'POST' '/api/lands' (New-Land "ADM-L2-$stamp" "PA2-$stamp" 5) $la
 $l2 = ($r.Body | ConvertFrom-Json).id
 Assess-Land $l2 5 $admin
-$r = Call 'POST' "/api/lands/$l2/documents" @{ documentTypeId = 1; filePath = "docs/$stamp/l2-title.pdf" } $la
+$r = Call 'POST' "/api/lands/$l2/documents/metadata" @{ documentTypeId = 1; filePath = "docs/$stamp/l2-title.pdf" } $la
 $l2d1 = ($r.Body | ConvertFrom-Json).id
-$r = Call 'POST' "/api/lands/$l2/documents" @{ documentTypeId = 2; filePath = "docs/$stamp/l2-enc.pdf" } $la
+$r = Call 'POST' "/api/lands/$l2/documents/metadata" @{ documentTypeId = 2; filePath = "docs/$stamp/l2-enc.pdf" } $la
 $l2d2 = ($r.Body | ConvertFrom-Json).id
 $r = Call 'POST' "/api/lands/$l2/submit" $null $la
 Check 'A-05' 'submit L2 -> PendingVerification' 200 $r.Status
@@ -119,11 +121,11 @@ Check 'A-08' 'admin approves the L2 encumbrance document' 200 $r.Status
 
 $r = Call 'POST' '/api/lands' (New-Land "ADM-L3-$stamp" "PA3-$stamp" 5) $la
 $l3 = ($r.Body | ConvertFrom-Json).id
-Call 'POST' "/api/lands/$l3/documents" @{ documentTypeId = 1; filePath = "docs/$stamp/l3-title.pdf" } $la | Out-Null
+Call 'POST' "/api/lands/$l3/documents/metadata" @{ documentTypeId = 1; filePath = "docs/$stamp/l3-title.pdf" } $la | Out-Null
 $r = Call 'POST' "/api/lands/$l3/submit" $null $la
 Check 'A-06' 'submit L3 -> PendingVerification' 200 $r.Status
 
-# Phase 1: an unassessed land cannot be verified — a missing measurement is never a pass.
+# Phase 1: an unassessed land cannot be verified â€” a missing measurement is never a pass.
 $r = Call 'POST' "/api/lands/$l3/verify" $null $admin
 Check 'A-06b' 'verify an unassessed land -> 409' 409 $r.Status
 Check 'A-06c' 'message names the incomplete technical assessment' 'True' ([string]($r.Body -match 'Technical assessment is incomplete'))
@@ -180,8 +182,10 @@ Check 'S4-52e' 'admin verifies L2 on the second cycle -> 200' 200 $r.Status
 
 Write-Output ''
 Write-Output '== SEC-06 versioned criteria (4.7) =='
-$r = Call 'POST' '/api/criteria' @{ minAreaDonum = 20; maxSlopePct = 8; maxGridDistanceKm = 15; minSolarIrradiance = 5; minElevationM = $null; reason = 'Step4 admin test v2' } $admin
-Check 'S4-57a' 'admin creates criteria version 2 -> 201' 201 $r.Status
+$criteriaBefore = Call 'GET' '/api/criteria/current' $null $admin
+if ($criteriaBefore.Status -ne 200) { throw 'Current criteria unavailable before SuperAdmin replacement' }
+$r = Call 'POST' '/api/criteria' @{ expectedCurrentId = [int](($criteriaBefore.Body | ConvertFrom-Json).id); minAreaDonum = 20; maxSlopePct = 8; maxGridDistanceKm = 15; minSolarIrradiance = 5; minElevationM = $null; reason = 'Step4 admin test v2' } $admin
+Check 'S4-57a' 'SuperAdmin creates criteria replacement -> 201' 201 $r.Status
 $v2 = ($r.Body | ConvertFrom-Json).id
 $r = Call 'GET' '/api/criteria/history' $null $admin
 Check 'S4-57b' 'admin lists criteria history (>= 2 versions)' 200 $r.Status
@@ -245,3 +249,7 @@ $fail = @($rows | Where-Object { $_.Result -eq 'FAIL' }).Count
 Write-Output ''
 Write-Output ("ADMIN TOTAL PASS=$pass FAIL=$fail")
 if ($fail -gt 0) { exit 1 }
+}
+finally {
+  Complete-TestApiCleanup -Identity $harness
+}

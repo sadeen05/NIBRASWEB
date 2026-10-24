@@ -216,7 +216,12 @@ function Start-TestApi {
   #>
   param(
     [int]$Port = 0,
-    [int]$AuthPerMinute = 1000
+    [int]$AuthPerMinute = 1000,
+    # FileOutbox is the only mode the token-reading suites can use. Disabled is accepted for
+    # the negative delivery test: it starts the same guarded instance but every send fails
+    # closed, so a suite can prove that a failed delivery changes no active address.
+    [ValidateSet('FileOutbox', 'Disabled')]
+    [string]$DeliveryMode = 'FileOutbox'
   )
 
   . (Join-Path $PSScriptRoot 'test_target.ps1')
@@ -237,7 +242,7 @@ function Start-TestApi {
   $env:ConnectionStrings__DefaultConnection = $target.ConnectionString
   # The application's own guard stays at its strictest: an empty list approves nothing.
   $env:Database__ApprovedProductionLikeTargets = ''
-  $env:Email__DeliveryMode = 'FileOutbox'
+  $env:Email__DeliveryMode = $DeliveryMode
   $env:Email__OutboxPath = $outbox
   $env:Email__FrontendBaseUrl = "http://127.0.0.1:$port"
   $env:RateLimit__AuthPerMinute = if ($env:NIBRAS_TEST_AUTH_PER_MINUTE) { $env:NIBRAS_TEST_AUTH_PER_MINUTE } else { [string]$AuthPerMinute }
@@ -285,10 +290,36 @@ function Start-TestApi {
   # harness only ever stops the process it started. The handler is registered immediately,
   # before any later step that could fail.
   $startedPid = $process.Id
+  $portForExit = [int]$port
   $identityFile = $script:TestApiIdentityFile
+  $outboxForExit = $outbox
   Register-EngineEvent -SourceIdentifier PowerShell.Exiting -Action {
-    Stop-Process -Id $startedPid -Force -ErrorAction SilentlyContinue
-    Remove-Item -LiteralPath $identityFile -Force -ErrorAction SilentlyContinue
+    # The exit handler is a last resort. It re-proves the same identity as Stop-TestApi:
+    # a reused PID is never killed unless it still owns the recorded port. If ownership
+    # cannot be proved, the identity file is left alone so the runner can fail closed.
+    $exitProcess = Get-Process -Id $startedPid -ErrorAction SilentlyContinue
+    $ownsPort = $false
+    if ($exitProcess) {
+      try {
+        $exitListeners = @(Get-NetTCPConnection -LocalPort $portForExit -State Listen -ErrorAction Stop)
+        $exitOwners = @($exitListeners | ForEach-Object { [int]$_.OwningProcess } | Sort-Object -Unique)
+        $ownsPort = ($exitOwners.Count -eq 1 -and $exitOwners[0] -eq $startedPid)
+      }
+      catch { $ownsPort = $false }
+      if ($ownsPort) { Stop-Process -Id $startedPid -Force -ErrorAction SilentlyContinue }
+    }
+    if ((-not $exitProcess) -or $ownsPort) {
+      Remove-Item -LiteralPath $identityFile -Force -ErrorAction SilentlyContinue
+    }
+    # Same safety as Stop-TestApi: remove only the per-run outbox, and only while it holds
+    # nothing but mail files. A foreign file means the directory is left alone.
+    if ((-not $exitProcess -or $ownsPort) -and $outboxForExit -and (Test-Path -LiteralPath $outboxForExit)) {
+      $foreign = @(Get-ChildItem -LiteralPath $outboxForExit -File -ErrorAction SilentlyContinue |
+                      Where-Object { $_.Name -notlike 'mail-*.json' })
+      if ($foreign.Count -eq 0) {
+        Remove-Item -LiteralPath $outboxForExit -Recurse -Force -ErrorAction SilentlyContinue
+      }
+    }
   } | Out-Null
 
   # Readiness is proved by the anonymous registration endpoint itself, never by a protected
