@@ -6,6 +6,19 @@ Requirements (v1, 9 Oct 2026)*, copied verbatim from the reviewer's document
 
 Backend: ASP.NET Core (.NET 10) + EF Core 10 + SQL Server. Frontend: React 19 + Vite 8.
 
+> **F1 increment addendum (21 Oct 2026).** The current isolated verification target is
+> `SADEEN\SQLEXPRESS / NIBRAS_F1_Verify`; `NEBRAS`, `NEBRASDB` and `NEBRASDB_Step1` are forbidden.
+> Historical evidence cited below that names an older target is kept as history and was **not**
+> rerun in this increment. The accepted C4/five-suite evidence remains under
+> `%TEMP%\nibras-regression-20261021-*`. The new row statuses for the address-change JWT binding,
+> approval attribution and private document store are in the updated SEC-03, SEC-08, SEC-13 and
+> SEC-14 rows; the detailed document-store contract is in
+> [`DOCUMENT_STORAGE.md`](DOCUMENT_STORAGE.md). A browser account E2E on 22 Oct 2026 covered
+> `/activate-admin`, `/verify-email`, `/confirm-email-change`, the address-change flow and the
+> document upload/download panel; the historical F1 release evidence is retained outside the
+> delivery repository (see the cleanup record in `NIBRAS_FILE_GUIDE.md`). Screenshots were not
+> captured because the browser tab was not visible.
+
 ## How to read the status column
 
 | Status | Meaning |
@@ -21,18 +34,18 @@ Backend: ASP.NET Core (.NET 10) + EF Core 10 + SQL Server. Frontend: React 19 + 
 | --- | --- | --- | --- | --- |
 | SEC-01 | Fallback policy = authenticated; anonymous only register + login | `Program.cs:102-107`; `AuthController.cs:22,37` | Live `swagger.json` sweep: 63 operations, 62 → 401, only `POST /api/auth/register` and `POST /api/auth/login` reachable (§2.1) | **VERIFIED NOW** |
 | SEC-02 | JWT validation (signature/issuer/audience/lifetime), alg pinned to HS256, ClockSkew ≤ 1 min, key ≥ 32 bytes from user-secrets, header only | `Program.cs:17-36,66-77`; `AuthService.cs:92-98` | Tampered signature / `alg:none` / query-string token / malformed header → 401 (§2.3). Expiry + issuer/audience negatives: `step3_suite.ps1` | **VERIFIED NOW** (4/6 dynamic; expiry & issuer/audience prior-step) |
-| SEC-03 | User must exist, not soft-deleted, DB role == role claim, else 401 | `Program.cs:78-100` (`OnTokenValidated`, `IgnoreQueryFilters`, `IsDeleted`, role equality) | `step3_suite.ps1` Phase D (deactivate user → old token 401; DB role change → old token 401) | VERIFIED (prior step) / STATIC |
+| SEC-03 | User must exist, not soft-deleted, DB role == role claim, **email == email claim**, **`EMAIL_VERIFIED_AT` epoch == `email_verified_at` claim**, and unverified accounts rejected, else 401 | `Program.cs:139-189` (`OnTokenValidated`, `IgnoreQueryFilters`, `IsDeleted`, role/email/epoch equality); `AuthService.cs:218-226` (claims); `EmailVerificationService.cs:441-529` (confirmation advances the epoch) | `step3_suite.ps1` Phase D (deactivate user → old token 401; DB role change → old token 401). Address-change stale-token path passed the focused suite (a pre-change JWT was rejected with 401). | VERIFIED (prior step) / **VERIFIED (focused suite, 22 Oct 2026)** |
 | SEC-04 | No cookies / no server session; fresh token every login; `Jwt:ExpiryMinutes = 120` | `Program.cs:60-101` (`SaveToken=false`); `appsettings.json` `Jwt.ExpiryMinutes=120`; `AuthService.cs:125-126` | No `AddSession`/cookie scheme anywhere; no `Set-Cookie` on any of the 63 responses (§2.1); expiry read from config | **VERIFIED NOW** (cookies/session) + STATIC (fresh-token-per-login needs a real login) |
 | SEC-05 | Login hardening: BCrypt ≥ 11, generic message + dummy-hash timing, password ≥ 10, rate limiter on login+register via `RateLimit:AuthPerMinute` → 429 | `AuthService.cs:13,74-83,52`; `PasswordPolicy.cs`; `Program.cs:39-52`; `appsettings.json:17` | `step3_ratelimit.ps1` (6th attempt → 429 with limit 5); BCrypt `workFactor: 12` | VERIFIED (prior step) — **deviation on the demo default, see §3.1** |
 | SEC-06 | Every non-public endpoint declares its roles **and** the service enforces ownership/participation via `ICurrentUser` | Controllers (`[Authorize]` class-level on Contracts/Criteria/DocumentTypes/Lands/Offers/Roles; role-scoped on Users/GridCapacityReservations; per-action on Grids/Regions); services: `LandService.cs:1214` (`EnsureOwner`; called at 152, 211, 244, 403, 415, 704), `OfferService.cs:69,78`, `ContractService.cs:57,300`, `UserService.cs:234-261` | No endpoint is reachable anonymously (§2.1); ownership 403/404 asserted by the step suites | **VERIFIED NOW** (authz surface) + prior (ownership) |
 | SEC-07 | No actor/privilege field from the client; entities never bound | `RegisterRequest.RoleId [Range(1,2)]` is the only permitted exception; all other request DTOs carry no `userId`/`adminId`/`IsApproved`/`Status` | **Fixed in this session:** `DTOs/AdminReviewRequest.cs` (declared `AdminId`) removed — dead code, 0 references. Sweep is now clean; mass-assignment negatives in the step suites | **VERIFIED NOW** |
-| SEC-08 | Register → Landlord/Investor only; Admin created by SuperAdmin only; no SuperAdmin creation/promotion via API; investor approval only Admin/SuperAdmin | `AuthService.cs:27-30`; `UserService.cs:129-134,234-244,246-262`; `UsersController.cs:11,44-48,54-64` | `step3_suite.ps1`, `s4_tests.ps1` (role matrix, one negative per row) | VERIFIED (prior step) / STATIC |
+| SEC-08 | Register → Landlord/Investor only; Admin created by SuperAdmin only; no SuperAdmin creation/promotion via API; investor approval only Admin/SuperAdmin; **approval requires a verified email and company details, records the acting admin, and appends durable history** | `AuthService.cs:27-30`; `UserService.cs:129-134,234-244,246-262,334-405` (`ApproveAsync`); `UsersController.cs:11,44-48,54-64`; `EmailVerificationService.cs` (verification state) | `step3_suite.ps1`, `s4_tests.ps1` (role matrix, one negative per row); the F1 focused suite covers unverified refusal, eligibility, actor attribution and re-approval, and passed 225/0. | VERIFIED (prior step) / **VERIFIED (focused suite)** |
 | SEC-09 | IDOR: a second user with the same role gets 403 or 404, consistently | Ownership checks in `LandService`/`OfferService`/`ContractService` via `ICurrentUser` | Step-4/5/6 suites (landlord B on A's land/documents; investor B on A's offers/contracts) | VERIFIED (prior step) / not re-run |
 | SEC-10 | Only Admin sees other users' email/phone and user lists; party views expose `FullName` only; no `PasswordHash` in any response DTO | `UsersController.cs:11` (Admin/SuperAdmin only); `ContractDto` exposes names only; no `PasswordHash` in `DTOs/` | `PasswordHash` grep over `DTOs/` and `Controllers/` → 0 hits | STATIC |
 | SEC-11 | LINQ or parameterized SQL only; filters bind to enums/whitelist | 7 `FromSqlInterpolated` uses, every one parameterized (`{id}`, `{offer.Id}`, `{offer.LandId}`, `{land.GridId}`) | Sweep: no `FromSqlRaw`/`ExecuteSqlRaw`/`SqlCommand`; only hit is the literal CSP string in `Program.cs:182` (§2.2). `s7_status_filter.ps1`: `?status=' OR 1=1--` → 400 | **VERIFIED NOW** |
 | SEC-12 | No `Process`, `Assembly.Load*`, scripting/Roslyn, reflection on user strings, `unsafe`, `stackalloc`, P/Invoke, `Marshal` | none | Sweep returns 0 real hits — the single match is the word `unsafe` inside `script-src 'self' 'unsafe-inline'` (§2.2) | **VERIFIED NOW** |
-| SEC-13 | No outbound HTTP; `FilePath` is stored text only (never opened/fetched/redirected); max 500; reject `://`, leading `\\`, `..`, control chars | `LandDocumentDtos.cs:10` (`[Required, NoControlCharacters, MaxLength(500), SafeRelativePath]`); `DTOs/ValidationAttributes.cs:53-70`; `LandService.cs:460` (the `FilePath` text is stored as-is, never opened) | No `HttpClient`/`WebClient`; no `File`/`Directory`/`StreamReader` use. Negative payloads (`http://169.254.169.254/`, `file:///c:/windows/win.ini`, `\\server\share`, `..\..\x`) → 400 in `s4_regression.ps1`/`s4_tests.ps1` | **VERIFIED NOW** (static) + prior (negatives) |
-| SEC-14 | `MaxLength` = DB column, `Range` on numbers, collections capped, Kestrel `MaxRequestBodySize` ≤ 1 MB, `pageSize` ≤ 50 | `Program.cs:12-15` (1 048 576); `UserService.cs:32-33`; DTO attributes | `verify-request-size.ps1` (2 MiB body → 413, fixed Content-Length); boundary cases in `s4_regression.ps1` | STATIC + prior |
+| SEC-13 | No outbound HTTP. **F1 exception:** new land documents store real bytes in a private, non-static local root and are opened only by an authenticated download route. The legacy metadata-only `FilePath` is still text only (never opened/fetched/redirected); max 500; reject `://`, leading `\\`, `..`, control chars. | `LandDocumentDtos.cs:10` (`[Required, NoControlCharacters, MaxLength(500), SafeRelativePath]`); `DTOs/ValidationAttributes.cs:53-70`; `Service/LandService.cs:437-603` (file stored before the transaction, deleted on failure; legacy text kept only in Development); `Service/DocumentStorageService.cs` (private root, signature check, SHA-256, path containment) | No `HttpClient`/`WebClient`; document file I/O is confined to `DocumentStorageService`; `App_Data` is Git-ignored and not static-served; legacy payloads (`http://169.254.169.254/`, `file:///c:/windows/win.ini`, `\\server\share`, `..\..\x`) → 400 in `s4_regression.ps1`/`s4_tests.ps1`. Real-store upload, download and cleanup passed the focused suite (225/0), including retained-file size/SHA verification. | **VERIFIED NOW** (no outbound HTTP) + prior (legacy negatives) / **VERIFIED for F1 store (disposable target)** |
+| SEC-14 | `MaxLength` = DB column, `Range` on numbers, collections capped, **global Kestrel `MaxRequestBodySize` ≤ 1 MiB**, `pageSize` ≤ 50. **Single-action exception:** the multipart document upload allows 11 MiB (10 MiB file + 1 MiB envelope); no other action is raised. | `Program.cs:18-21` (1 048 576); `Service/DocumentStorageOptions.cs` (`DefaultMaxFileSizeBytes=10 MiB`, `MaxUploadRequestBytes=11 MiB`), `Program.cs:220-226` (startup bound); `Controllers/LandsController.cs:107-113` (`[RequestSizeLimit]` / `[RequestFormLimits]`); `UserService.cs:32-33`; DTO attributes | `verify-request-size.ps1` (2 MiB body → 413, fixed Content-Length) passed on 22 Oct 2026; the focused suite exercised the per-action boundary at its 1 KiB configured cap; the 10 MiB default and 11 MiB envelope remain statically bounded. | STATIC + prior / **VERIFIED globally and at configured cap; STATIC for the 10 MiB default** |
 | SEC-15 | API headers on every response; HTTPS redirect + HSTS outside Development; Swagger UI Development only; CORS not enabled | `Program.cs:170-189` (headers + CSP), `:192-196` (Swagger, dev only), `:198-201` (HSTS, non-dev), `:203` (HTTPS redirect); no `AddCors` | Live assertions on a 401: `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, `Content-Security-Policy: default-src 'none'; frame-ancestors 'none'`; Swagger UI 200 in Development; HSTS absent in Development (§2.4) | **VERIFIED NOW** (HSTS/redirect are Production-only paths: STATIC only, §3.2) |
 | SEC-16 | Frontend: no `dangerouslySetInnerHTML`/`innerHTML`/`eval`/`new Function`/`document.write`; user text rendered as text, never into `href`/`src`; strict production CSP | **Fixed in this session:** `frontend/vite.config.ts` (`nibras-production-csp`) injects the CSP meta on `vite build` only; regression check `docs/tests/verify-frontend-csp.ps1` | Sweep 0 hits. Built page carries the policy byte-for-byte with 0 inline `<script>`; the production bundle loads and renders the full login layout with 26 runtime style tags and **no** CSP violation reports (§2.5) | **VERIFIED NOW** |
 | SEC-17 | Reject control characters (U+0000–U+001F, except tab/newline in free text); never reflect raw input in errors | `ValidationAttributes.cs:7-39` (`NoControlCharacters`, `NoControlCharactersExceptTabAndNewline`) applied across request DTOs | `step3_suite.ps1` / `s4_tests.ps1` negative cases | STATIC + prior |
@@ -119,8 +132,9 @@ private-key blocks and known token prefixes (`ghp_`, `sk-`, `AKIA`, `eyJ…`) �
 `appsettings.json` now ships an empty `ConnectionStrings:DefaultConnection` placeholder: the
 repository holds no usable connection string and no server name. The real target is supplied by the
 environment or the deployment configuration (`ConnectionStrings__DefaultConnection`), and
-`DatabaseTargetGuard` refuses the production-like database name at runtime unless it is explicitly
-approved through deployment configuration.
+`DatabaseTargetGuard` always refuses `NEBRAS` and `NEBRASDB_Step1`, and refuses the
+production-like name `NEBRASDB` at runtime unless it is explicitly approved through deployment
+configuration.
 
 ### 2.7 SEC-20 — dependencies
 
@@ -157,15 +171,16 @@ region equals the land's assigned region. Offer approval returns 409 when the la
 
 Checks run in this session (no database writes): `dotnet build` (0 errors; the 4 CS8618 warnings
 are pre-existing), `dotnet ef migrations has-pending-model-changes` ("No changes have been made to
-the model since the last migration"), `dotnet ef migrations script` (reviewed, **not applied**),
+the model since the last migration"), `dotnet ef migrations script` (reviewed; the additive
+migrations were subsequently applied to the disposable target, history 20),
 `npm run typecheck` / `npm run lint` / `npm run build` (all exit 0), and
 `verify-frontend-csp.ps1` (PASS - SEC-16 production CSP unchanged).
 
 RESOLVED in Phase D: `verify-swagger-export.ps1` was run against a live instance and reports PASS -
 `docs/api/swagger.json` was regenerated for the Phase-1/2 operations and schemas and now matches the
 live API surface - and every DB-writing suite listed in 3.2 was executed against the confirmed test
-target (results in 3.2). STILL BLOCKED pending a write-scope approval: `verify-request-size.ps1`
-(needs a live app).
+target (results in 3.2). `verify-request-size.ps1` passed against the live disposable app on port 5199: a 2 MiB fixed-length body returned HTTP 413 with `PAYLOAD_TOO_LARGE`.
+
 
 ### 2.11 Phase 2 - rejection corrections and approved-land change requests
 
@@ -296,6 +311,34 @@ suite (`s4_tests.ps1`, 114 checks) covers the status-6 routing (SuperAdmin token
 cycle, negative 403s for a regular Admin). The document-correction lifecycle now has an automated
 suite.
 
+### 2.12 Production-readiness hardening (22 Oct 2026)
+
+The safe startup/security defects found in the release handoff were addressed without touching a
+database or a production environment:
+
+- **SEC-15 / HTTPS and proxy:** `ForwardedHeaders` is now opt-in. `ReverseProxy:Enabled=false` by
+  default; when enabled, at least one explicit `KnownProxies`/`KnownNetworks` entry is mandatory.
+  Wildcard, any-address, prefix-0, malformed and empty entries are refused; framework loopback
+  defaults are cleared; only `X-Forwarded-For` and `X-Forwarded-Proto` are trusted, before HSTS,
+  HTTPS redirection and rate limiting. `KnownProxies` and `KnownNetworks` are explicit, not
+  derived from the request.
+- **SEC-15 / hosts:** outside Development, empty or wildcard `AllowedHosts` refuses startup. The
+  repository default is loopback-only; production must supply real host names. No CORS policy was
+  added, preserving same-origin by default.
+- **SEC-13 / document storage:** `DocumentStorageOptionsValidator` is startup-validated and
+  resolved before seeders or database access. Outside Development an empty, relative or
+  `wwwroot`-contained storage root refuses startup; Development keeps its fallback. The storage
+  service repeats the containment checks.
+- **SEC-08 / privileged provisioning:** outside Development, populated
+  `Seed:SuperAdminEmail`/`Seed:SuperAdminPassword` refuses startup. The Development seeder remains
+  Development-only. A separate, explicitly authorized one-time bootstrap is **proposed** in
+  `docs/PRODUCTION_READINESS_CHECKLIST.md` §7; it is not implemented and no production account was
+  created.
+- **Evidence:** Release build succeeded; static acceptance **140/0**; real Production-mode host
+  starts exited before listening for a missing storage root, an enabled proxy with no trust list,
+  wildcard `AllowedHosts`, and populated Development-only SuperAdmin seed credentials. No SQL or
+  SMTP mode was run for this hardening pass, and no deployment was performed.
+
 ## 3. Open items, deviations and risks
 
 ### 3.1 SEC-05 — demo rate-limit default (REQUIRES DECISION)
@@ -333,8 +376,6 @@ Still open — no execution evidence, deliberately not claimed:
 - **SEC-15 HSTS + HTTPS redirect**: code-verified only. A Production-mode launch is needed to
   observe them, but `Jwt:Key` lives in user-secrets (Development-only), so a Production run
   would require supplying the signing key through the environment — deliberately not done.
-- `verify-request-size.ps1` was **not** run in this work. `verify-swagger-export.ps1` **was** run and
-  reports PASS (the committed export matches the live API surface).
 
 - Phase 1: the suites listed above were updated for the governorate + admin-assessment contract and
   were executed in Phase D (results above). The `.http` files listed above were updated as well and
@@ -368,6 +409,45 @@ Still open — no execution evidence, deliberately not claimed:
   and make the rejected version un-reviewable - silently bypassing the recorded SuperAdmin
   decision. Making a type required and renaming it remain 200, and no rejection exists in the
   `S4-61a`/`S4-62a` flow, so those expectations are unchanged.
+  **The check and the write are one transaction against the re-review (closed in `step-7-hardening`).**
+  `UpdateAsync` now pins the `DOCUMENT_TYPES` row with `UPDLOCK, HOLDLOCK` inside its own transaction
+  (the `LockLandAsync` convention), and `LandService.ReviewDocumentAsync` takes the same lock on the
+  reviewed document's type after its `LANDS` lock (order never inverts: the update never takes a
+  `LANDS` lock). The re-review precondition was also tightened from "the land's evidence is
+  outstanding for some type" to "this document's type is itself in the outstanding set"
+  (`OutstandingRequiredDocumentTypeIdsAsync`), so a review can never write a decision the derived
+  evidence would ignore. Both interleavings therefore stay fail-closed: the review commits its
+  rejection first and the update refuses on the guard outcome, or the optional change commits first
+  and the re-review is refused because the type left the outstanding set. `VerifyAsync`
+  (`PendingVerification`) is unaffected in both directions: reading the required set before the
+  optional change only makes the evidence check stricter, and a new required type arriving after
+  that read leaves the land dynamically hidden (`LandEvidence`) rather than verified-and-exposed.
+  **Dynamically verified** in `LandRequirementConcurrencyAcceptance` (`--sql-acceptance`, prefix
+  `f1race-*` fixtures on `NIBRAS_F1_Verify`): both deterministic interleavings, a genuinely parallel
+  re-review/optional-change race showing exactly one winner and one controlled conflict with the
+  unsafe state (type optional + freshly rejected latest version) unreachable, the rollback of a
+  refused change (flag and name untouched), and the fail-safe complement (making a type required
+  re-derives the land hidden without rewriting its verification snapshot). Accepted residual: a
+  correction upload that loses to the optional change can insert a `Pending` version of the now
+  optional type; an optional type never gates visibility, so the land's exposure is unchanged and
+  any later re-requiring of the type re-derives the land hidden again.
+
+- **Unique-index violations on the account identity are classified, never unknowable (closed in
+  `step-7-hardening`).** `UserService.UpdateAsync` (the admin-managed profile path) now pre-checks a
+  changed phone against every row - active and soft-deleted, exactly like the address - and answers the
+  phone-specific conflict; in the race window the database unique index stays the authority, and the
+  catch after the rollback re-reads which of the two indexes was violated, so the caller is told
+  exactly which field to correct ("Phone already in use by another user." / "Email already in use by
+  another user.") with the previous neutral answer as the fail-closed remainder. No other account, its
+  ownership or its existence is revealed. A uniquely refused admin creation
+  (`UserService.CreateAsync`) now answers the same merged `DuplicateRegistrationException` the pre-checks
+  give instead of surfacing a server error, and self-registration keeps its deliberately merged answer
+  (no address/phone distinction - anti-enumeration), which is asserted unchanged.
+  **Dynamically verified** in `PhoneConflictAcceptance` (`--sql-acceptance`, disposable `NIBRAS_F1_Verify`):
+  the controlled phone conflict (active and soft-deleted owner), the preserved address-specific conflict,
+  two accounts racing the same phone number (exactly one winner, one phone-specific conflict, one owner
+  after the race), two admin creations of the same identity racing (the loser no longer a 500), and two
+  self-registrations racing the same phone (merged neutral conflict, one surviving account).
 - Contract creation re-checks the land's evidence (`ContractService.CreateAsync`; see §2.11), so a
   land that stopped having valid evidence after its offer was approved is not committed to a
   contract. Residual: the trigger is a `DOCUMENT_TYPES` write (creating or making a type required),
@@ -430,11 +510,17 @@ Still open — no execution evidence, deliberately not claimed:
   exists the chain cannot be cleaned up (the residue variant was not approved); the document-type
   pre-check always fires before the catch (only a concurrent upload could reach it); and
   `RolesController` exposes no delete route at all. **This is not a claim of full dynamic coverage.**
-- **Still OPEN - the upload-insert half of the same race.** The mirror race on the *insert* side is
-  not addressed: `UploadDocumentAsync` performs no FK catch, so an upload that loses to a concurrent
-  delete of its document type still surfaces a generic 500. It is deferred to the future **Real
-  Document Upload** phase, which will replace the stored path reference with a real upload and can
-  then settle the insert and delete sides together.
+- **The upload-insert half of the same race is closed in `step-7-hardening` (previously documented
+  as open).** `LandService.UploadDocumentCoreAsync` now inserts the `LAND_DOCUMENTS` row inside an
+  explicit transaction that re-locks the land row first (`LockLandAsync`), catches the SQL Server
+  foreign-key violation (error 547, `DatabaseErrors.IsForeignKeyViolation`) on its
+  `SaveChangesAsync` and answers `ValidationFailedException` ("The selected document type no longer
+  exists") when the document type was deleted between the lookup and the insert; the transaction
+  scope rolls the insert back and the `finally` block removes the file that was already written.
+  The successful delete path is unchanged: an upload that commits before the delete makes the
+  `DocumentTypeService.DeleteAsync` pre-check see the new row and refuse with the existing 409
+  message. The remaining window is only a `Pending` version of a deleted-type document never
+  surfacing at all - no state is created.
 - The investor list materialises the outstanding-evidence land ids as an `IN`/`NOT IN` list
   (`LandService.ApplyVisibilityAsync`). In the normal lifecycle that set is tiny, but making a new
   document type required across many verified lands grows it; if that operation is ever expected at
@@ -459,7 +545,7 @@ Checked into `docs/tests/`; each exits non-zero when the property it guards regr
 | --- | --- | --- |
 | `verify-frontend-csp.ps1` | SEC-16 production CSP present and byte-exact; no inline `<script>` in the built page | `npm` + `frontend/` (`-SkipBuild` reuses `dist/`) |
 | `verify-swagger-export.ps1` | `docs/api/swagger.json` matches the live API surface (Amendment A1) | starts its own app, or `-BaseUrl` |
-| `verify-request-size.ps1` | SEC-14 `MaxRequestBodySize` (2 MiB body → 413) | an already-running app |
+| `verify-request-size.ps1` | SEC-14 `MaxRequestBodySize` (2 MiB body → 413) | an already-running app; PASS 22 Oct 2026 |
 
 The three startup seeders never run in these checks: the app-based ones are started with
 `Seed__SuperAdminEmail` forced to whitespace and `Seed__DemoData` unset, so no write is

@@ -130,6 +130,161 @@
         }
       }
     },
+    "/api/auth/activate-admin": {
+      "post": {
+        "tags": [
+          "Auth"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ActivateAdminRequest"
+              }
+            },
+            "text/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ActivateAdminRequest"
+              }
+            },
+            "application/*+json": {
+              "schema": {
+                "$ref": "#/components/schemas/ActivateAdminRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/auth/verify-email": {
+      "post": {
+        "tags": [
+          "Auth"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VerifyEmailRequest"
+              }
+            },
+            "text/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VerifyEmailRequest"
+              }
+            },
+            "application/*+json": {
+              "schema": {
+                "$ref": "#/components/schemas/VerifyEmailRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/auth/change-email": {
+      "post": {
+        "tags": [
+          "Auth"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChangeEmailRequest"
+              }
+            },
+            "text/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChangeEmailRequest"
+              }
+            },
+            "application/*+json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChangeEmailRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/auth/confirm-email-change": {
+      "post": {
+        "tags": [
+          "Auth"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VerifyEmailRequest"
+              }
+            },
+            "text/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VerifyEmailRequest"
+              }
+            },
+            "application/*+json": {
+              "schema": {
+                "$ref": "#/components/schemas/VerifyEmailRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/auth/resend-verification": {
+      "post": {
+        "tags": [
+          "Auth"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResendVerificationRequest"
+              }
+            },
+            "text/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResendVerificationRequest"
+              }
+            },
+            "application/*+json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResendVerificationRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
     "/api/Contracts": {
       "get": {
         "tags": [
@@ -472,6 +627,365 @@
                   "items": {
                     "$ref": "#/components/schemas/ContractReviewDto"
                   }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/Contracts/{id}/versions": {
+      "get": {
+        "tags": [
+          "Contracts"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ContractVersionDto"
+                  }
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ContractVersionDto"
+                  }
+                }
+              },
+              "text/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ContractVersionDto"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/Contracts/{id}/revisions": {
+      "get": {
+        "tags": [
+          "Contracts"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ContractRevisionDto"
+                  }
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ContractRevisionDto"
+                  }
+                }
+              },
+              "text/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ContractRevisionDto"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Contracts"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateContractRevisionRequest"
+              }
+            },
+            "text/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateContractRevisionRequest"
+              }
+            },
+            "application/*+json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateContractRevisionRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContractRevisionDto"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContractRevisionDto"
+                }
+              },
+              "text/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContractRevisionDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/Contracts/{id}/revisions/{revisionId}/consent": {
+      "post": {
+        "tags": [
+          "Contracts"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "revisionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ContractRevisionConsentRequest"
+              }
+            },
+            "text/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ContractRevisionConsentRequest"
+              }
+            },
+            "application/*+json": {
+              "schema": {
+                "$ref": "#/components/schemas/ContractRevisionConsentRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContractRevisionDto"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContractRevisionDto"
+                }
+              },
+              "text/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContractRevisionDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/Contracts/{id}/revisions/{revisionId}/admin-decision": {
+      "post": {
+        "tags": [
+          "Contracts"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "revisionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ContractRevisionAdminDecisionRequest"
+              }
+            },
+            "text/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ContractRevisionAdminDecisionRequest"
+              }
+            },
+            "application/*+json": {
+              "schema": {
+                "$ref": "#/components/schemas/ContractRevisionAdminDecisionRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContractRevisionDto"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContractRevisionDto"
+                }
+              },
+              "text/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContractRevisionDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/Contracts/{id}/revisions/{revisionId}/superadmin-decision": {
+      "post": {
+        "tags": [
+          "Contracts"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "revisionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ContractRevisionSuperAdminDecisionRequest"
+              }
+            },
+            "text/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ContractRevisionSuperAdminDecisionRequest"
+              }
+            },
+            "application/*+json": {
+              "schema": {
+                "$ref": "#/components/schemas/ContractRevisionSuperAdminDecisionRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContractRevisionDto"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContractRevisionDto"
+                }
+              },
+              "text/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContractRevisionDto"
                 }
               }
             }
@@ -1768,19 +2282,33 @@
         ],
         "requestBody": {
           "content": {
-            "application/json": {
+            "multipart/form-data": {
               "schema": {
-                "$ref": "#/components/schemas/UploadLandDocumentRequest"
-              }
-            },
-            "text/json": {
-              "schema": {
-                "$ref": "#/components/schemas/UploadLandDocumentRequest"
-              }
-            },
-            "application/*+json": {
-              "schema": {
-                "$ref": "#/components/schemas/UploadLandDocumentRequest"
+                "required": [
+                  "DocumentTypeId",
+                  "File"
+                ],
+                "type": "object",
+                "properties": {
+                  "DocumentTypeId": {
+                    "maximum": 2147483647,
+                    "minimum": 1,
+                    "type": "integer",
+                    "format": "int32"
+                  },
+                  "File": {
+                    "type": "string",
+                    "format": "binary"
+                  }
+                }
+              },
+              "encoding": {
+                "DocumentTypeId": {
+                  "style": "form"
+                },
+                "File": {
+                  "style": "form"
+                }
               }
             }
           }
@@ -1852,6 +2380,87 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/api/Lands/{id}/documents/metadata": {
+      "post": {
+        "tags": [
+          "Lands"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UploadLandDocumentRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "$ref": "#/components/schemas/LandDocumentDto"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LandDocumentDto"
+                }
+              },
+              "text/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LandDocumentDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/Lands/{id}/documents/{documentId}/download": {
+      "get": {
+        "tags": [
+          "Lands"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "documentId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
           }
         }
       }
@@ -2551,6 +3160,55 @@
         }
       }
     },
+    "/api/Offers/{id}/versions": {
+      "get": {
+        "tags": [
+          "Offers"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/OfferVersionDto"
+                  }
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/OfferVersionDto"
+                  }
+                }
+              },
+              "text/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/OfferVersionDto"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/Offers/{id}/negotiation-history": {
       "get": {
         "tags": [
@@ -3073,7 +3731,135 @@
         }
       }
     },
+    "/api/Users/{id}/approval": {
+      "get": {
+        "tags": [
+          "Users"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserApprovalStatusDto"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserApprovalStatusDto"
+                }
+              },
+              "text/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserApprovalStatusDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/Users/{id}/approve": {
+      "post": {
+        "tags": [
+          "Users"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/Users/{id}/reject-approval": {
+      "post": {
+        "tags": [
+          "Users"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RejectInvestorApprovalRequest"
+              }
+            },
+            "text/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RejectInvestorApprovalRequest"
+              }
+            },
+            "application/*+json": {
+              "schema": {
+                "$ref": "#/components/schemas/RejectInvestorApprovalRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/Users/{id}/admin-invitation": {
+      "post": {
+        "tags": [
+          "Users"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/Users/{id}/verification": {
       "post": {
         "tags": [
           "Users"
@@ -3099,6 +3885,20 @@
   },
   "components": {
     "schemas": {
+      "ActivateAdminRequest": {
+        "type": "object",
+        "properties": {
+          "token": {
+            "type": "string",
+            "nullable": true
+          },
+          "password": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
       "AssessLandRequest": {
         "type": "object",
         "properties": {
@@ -3186,6 +3986,40 @@
           },
           "isApproved": {
             "type": "boolean"
+          },
+          "verification": {
+            "type": "string",
+            "nullable": true
+          },
+          "verificationMessage": {
+            "type": "string",
+            "nullable": true
+          },
+          "email": {
+            "type": "string",
+            "nullable": true
+          },
+          "emailVerified": {
+            "type": "boolean",
+            "nullable": true
+          },
+          "pendingEmail": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "ChangeEmailRequest": {
+        "type": "object",
+        "properties": {
+          "newEmail": {
+            "type": "string",
+            "nullable": true
+          },
+          "currentPassword": {
+            "type": "string",
+            "nullable": true
           }
         },
         "additionalProperties": false
@@ -3295,6 +4129,10 @@
             "format": "date-time",
             "nullable": true
           },
+          "noticePeriodDays": {
+            "type": "integer",
+            "format": "int32"
+          },
           "landlordSharePct": {
             "type": "number",
             "format": "double",
@@ -3382,6 +4220,10 @@
             "type": "string",
             "nullable": true
           },
+          "reviewerId": {
+            "type": "integer",
+            "format": "int32"
+          },
           "reviewerName": {
             "type": "string",
             "nullable": true
@@ -3389,6 +4231,384 @@
           "createdAt": {
             "type": "string",
             "format": "date-time",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "ContractRevisionAdminDecisionRequest": {
+        "required": [
+          "decision"
+        ],
+        "type": "object",
+        "properties": {
+          "expectedDraftVersionId": {
+            "maximum": 2147483647,
+            "minimum": 1,
+            "type": "integer",
+            "format": "int32"
+          },
+          "decision": {
+            "maxLength": 30,
+            "minLength": 1,
+            "type": "string"
+          },
+          "reason": {
+            "maxLength": 500,
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "ContractRevisionConsentDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "partyUserId": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "partyName": {
+            "type": "string",
+            "nullable": true
+          },
+          "partyRole": {
+            "type": "string",
+            "nullable": true
+          },
+          "decision": {
+            "type": "string",
+            "nullable": true
+          },
+          "reason": {
+            "type": "string",
+            "nullable": true
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ContractRevisionConsentRequest": {
+        "type": "object",
+        "properties": {
+          "expectedDraftVersionId": {
+            "maximum": 2147483647,
+            "minimum": 1,
+            "type": "integer",
+            "format": "int32"
+          },
+          "approved": {
+            "type": "boolean"
+          },
+          "reason": {
+            "maxLength": 500,
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "ContractRevisionDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "contractId": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "status": {
+            "type": "string",
+            "nullable": true
+          },
+          "baseDraftVersionId": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "baseDraftVersionNumber": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "proposedTerms": {
+            "$ref": "#/components/schemas/ContractVersionTermsDto"
+          },
+          "reason": {
+            "type": "string",
+            "nullable": true
+          },
+          "proposedById": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "proposedByName": {
+            "type": "string",
+            "nullable": true
+          },
+          "proposedByRole": {
+            "type": "string",
+            "nullable": true
+          },
+          "proposedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "adminReviewedById": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "adminReviewedByName": {
+            "type": "string",
+            "nullable": true
+          },
+          "adminReviewedByRole": {
+            "type": "string",
+            "nullable": true
+          },
+          "adminReviewedAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "adminDecision": {
+            "type": "string",
+            "nullable": true
+          },
+          "escalationReason": {
+            "type": "string",
+            "nullable": true
+          },
+          "superAdminDecidedById": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "superAdminDecidedByName": {
+            "type": "string",
+            "nullable": true
+          },
+          "superAdminDecidedByRole": {
+            "type": "string",
+            "nullable": true
+          },
+          "superAdminDecidedAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "superAdminDecision": {
+            "type": "string",
+            "nullable": true
+          },
+          "superAdminReason": {
+            "type": "string",
+            "nullable": true
+          },
+          "newOfferVersionId": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "newOfferVersionNumber": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "newDraftVersionId": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "newDraftVersionNumber": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "closedAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "consents": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ContractRevisionConsentDto"
+            },
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "ContractRevisionSuperAdminDecisionRequest": {
+        "required": [
+          "decision",
+          "reason"
+        ],
+        "type": "object",
+        "properties": {
+          "expectedDraftVersionId": {
+            "maximum": 2147483647,
+            "minimum": 1,
+            "type": "integer",
+            "format": "int32"
+          },
+          "decision": {
+            "maxLength": 30,
+            "minLength": 1,
+            "type": "string"
+          },
+          "reason": {
+            "maxLength": 500,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ContractVersionDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "contractId": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "versionNumber": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "versionKind": {
+            "type": "string",
+            "nullable": true
+          },
+          "eventType": {
+            "type": "string",
+            "nullable": true
+          },
+          "status": {
+            "type": "string",
+            "nullable": true
+          },
+          "previousVersionId": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "targetVersionId": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "offerId": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "offerVersionId": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "terms": {
+            "$ref": "#/components/schemas/ContractVersionTermsDto"
+          },
+          "reason": {
+            "type": "string",
+            "nullable": true
+          },
+          "createdById": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "createdByName": {
+            "type": "string",
+            "nullable": true
+          },
+          "createdByRole": {
+            "type": "string",
+            "nullable": true
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ContractVersionTermsDto": {
+        "type": "object",
+        "properties": {
+          "offerVersionId": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "landId": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "investorId": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "landlordId": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "noticePeriodDays": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "landlordSharePct": {
+            "type": "number",
+            "format": "double",
+            "nullable": true
+          },
+          "durationYears": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "startDate": {
+            "type": "string",
+            "format": "date",
+            "nullable": true
+          },
+          "installationCost": {
+            "type": "number",
+            "format": "double",
+            "nullable": true
+          },
+          "solarCellCapacityKw": {
+            "type": "number",
+            "format": "double",
+            "nullable": true
+          },
+          "expectedAnnualRevenue": {
+            "type": "number",
+            "format": "double",
+            "nullable": true
+          },
+          "effectiveCostPerKw": {
+            "type": "number",
+            "format": "double",
+            "nullable": true
+          },
+          "paybackPeriodMonths": {
+            "type": "number",
+            "format": "double",
             "nullable": true
           }
         },
@@ -3419,6 +4639,87 @@
             "minimum": 1,
             "type": "integer",
             "format": "int32"
+          }
+        },
+        "additionalProperties": false
+      },
+      "CreateContractRevisionRequest": {
+        "required": [
+          "landlordSharePct",
+          "reason"
+        ],
+        "type": "object",
+        "properties": {
+          "expectedDraftVersionId": {
+            "maximum": 2147483647,
+            "minimum": 1,
+            "type": "integer",
+            "format": "int32"
+          },
+          "reason": {
+            "maxLength": 500,
+            "minLength": 1,
+            "type": "string"
+          },
+          "landlordSharePct": {
+            "maximum": 100,
+            "minimum": 0.01,
+            "type": "number",
+            "format": "double"
+          },
+          "durationYears": {
+            "maximum": 100,
+            "minimum": 1,
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "startDate": {
+            "type": "string",
+            "format": "date",
+            "nullable": true
+          },
+          "installationCost": {
+            "maximum": 9999999999.99,
+            "minimum": 0,
+            "type": "number",
+            "format": "double",
+            "nullable": true
+          },
+          "solarCellCapacityKw": {
+            "maximum": 99999999.99,
+            "minimum": 0.01,
+            "type": "number",
+            "format": "double",
+            "nullable": true
+          },
+          "expectedAnnualRevenue": {
+            "maximum": 999999999999.999,
+            "minimum": 0,
+            "type": "number",
+            "format": "double",
+            "nullable": true
+          },
+          "effectiveCostPerKw": {
+            "maximum": 999999999.999,
+            "minimum": 0,
+            "type": "number",
+            "format": "double",
+            "nullable": true
+          },
+          "paybackPeriodMonths": {
+            "maximum": 12000,
+            "minimum": 0,
+            "type": "number",
+            "format": "double",
+            "nullable": true
+          },
+          "noticePeriodDays": {
+            "maximum": 3650,
+            "minimum": 0,
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
           }
         },
         "additionalProperties": false
@@ -3521,6 +4822,13 @@
         ],
         "type": "object",
         "properties": {
+          "expectedCurrentId": {
+            "maximum": 2147483647,
+            "minimum": 0,
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
           "minAreaDonum": {
             "maximum": 99999999.99,
             "minimum": 0,
@@ -3713,10 +5021,6 @@
             "type": "string",
             "nullable": true
           },
-          "password": {
-            "type": "string",
-            "nullable": true
-          },
           "roleId": {
             "type": "integer",
             "format": "int32"
@@ -3727,6 +5031,65 @@
           },
           "companyRegistrationNumber": {
             "type": "string",
+            "nullable": true
+          },
+          "password": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "CriterionFieldChangeDto": {
+        "type": "object",
+        "properties": {
+          "field": {
+            "type": "string",
+            "nullable": true
+          },
+          "oldValue": {
+            "type": "number",
+            "format": "double",
+            "nullable": true
+          },
+          "newValue": {
+            "type": "number",
+            "format": "double",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "CriterionValuesDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "minAreaDonum": {
+            "type": "number",
+            "format": "double",
+            "nullable": true
+          },
+          "maxSlopePct": {
+            "type": "number",
+            "format": "double",
+            "nullable": true
+          },
+          "maxGridDistanceKm": {
+            "type": "number",
+            "format": "double",
+            "nullable": true
+          },
+          "minSolarIrradiance": {
+            "type": "number",
+            "format": "double",
+            "nullable": true
+          },
+          "minElevationM": {
+            "type": "number",
+            "format": "double",
             "nullable": true
           }
         },
@@ -3916,6 +5279,19 @@
             "type": "number",
             "format": "double",
             "nullable": true
+          },
+          "criterionId": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "areaDonumSnapshot": {
+            "type": "number",
+            "format": "double",
+            "nullable": true
+          },
+          "criteriaSnapshot": {
+            "$ref": "#/components/schemas/CriterionValuesDto"
           }
         },
         "additionalProperties": false
@@ -4037,6 +5413,28 @@
           "reason": {
             "type": "string",
             "nullable": true
+          },
+          "previousCriterionId": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "updatedByRole": {
+            "type": "string",
+            "nullable": true
+          },
+          "actorSnapshotRecorded": {
+            "type": "boolean"
+          },
+          "previousSnapshot": {
+            "$ref": "#/components/schemas/CriterionValuesDto"
+          },
+          "changes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CriterionFieldChangeDto"
+            },
+            "nullable": true
           }
         },
         "additionalProperties": false
@@ -4114,6 +5512,26 @@
           "reviewNote": {
             "type": "string",
             "nullable": true
+          },
+          "originalFileName": {
+            "type": "string",
+            "nullable": true
+          },
+          "contentType": {
+            "type": "string",
+            "nullable": true
+          },
+          "fileSizeBytes": {
+            "type": "integer",
+            "format": "int64",
+            "nullable": true
+          },
+          "sha256": {
+            "type": "string",
+            "nullable": true
+          },
+          "hasFile": {
+            "type": "boolean"
           }
         },
         "additionalProperties": false
@@ -4124,6 +5542,11 @@
           "id": {
             "type": "integer",
             "format": "int32"
+          },
+          "registeredAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
           },
           "landlordId": {
             "type": "integer",
@@ -4315,6 +5738,10 @@
             "type": "string",
             "nullable": true
           },
+          "changedById": {
+            "type": "integer",
+            "format": "int32"
+          },
           "changeByName": {
             "type": "string",
             "nullable": true
@@ -4487,6 +5914,10 @@
             "type": "integer",
             "format": "int32"
           },
+          "createdById": {
+            "type": "integer",
+            "format": "int32"
+          },
           "offerId": {
             "type": "integer",
             "format": "int32"
@@ -4552,7 +5983,8 @@
           },
           "createdAt": {
             "type": "string",
-            "format": "date-time"
+            "format": "date-time",
+            "nullable": true
           }
         },
         "additionalProperties": false
@@ -4621,6 +6053,20 @@
         },
         "additionalProperties": false
       },
+      "RejectInvestorApprovalRequest": {
+        "required": [
+          "reason"
+        ],
+        "type": "object",
+        "properties": {
+          "reason": {
+            "maxLength": 500,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
       "RejectLandRequest": {
         "required": [
           "reason"
@@ -4654,6 +6100,16 @@
         "properties": {
           "reason": {
             "maxLength": 300,
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "ResendVerificationRequest": {
+        "type": "object",
+        "properties": {
+          "email": {
             "type": "string",
             "nullable": true
           }
@@ -4870,6 +6326,102 @@
         },
         "additionalProperties": false
       },
+      "UserApprovalHistoryEntryDto": {
+        "type": "object",
+        "properties": {
+          "eventId": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "actorId": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "actorName": {
+            "type": "string",
+            "nullable": true
+          },
+          "actorRole": {
+            "type": "string",
+            "nullable": true
+          },
+          "approvedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "details": {
+            "type": "string",
+            "nullable": true
+          },
+          "eventType": {
+            "type": "string",
+            "nullable": true
+          },
+          "actorSnapshotRecorded": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "UserApprovalStatusDto": {
+        "type": "object",
+        "properties": {
+          "userId": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "role": {
+            "type": "string",
+            "nullable": true
+          },
+          "isInvestor": {
+            "type": "boolean"
+          },
+          "emailVerified": {
+            "type": "boolean",
+            "nullable": true
+          },
+          "companyDetailsPresent": {
+            "type": "boolean"
+          },
+          "isApproved": {
+            "type": "boolean"
+          },
+          "eligibleForApproval": {
+            "type": "boolean"
+          },
+          "approvedById": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "approvedByName": {
+            "type": "string",
+            "nullable": true
+          },
+          "approvedByRole": {
+            "type": "string",
+            "nullable": true
+          },
+          "approvedAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "history": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/UserApprovalHistoryEntryDto"
+            },
+            "nullable": true
+          },
+          "approvedActorSnapshotRecorded": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
       "UserDto": {
         "type": "object",
         "properties": {
@@ -4907,6 +6459,40 @@
           "companyRegistrationNumber": {
             "type": "string",
             "nullable": true
+          },
+          "emailVerified": {
+            "type": "boolean",
+            "nullable": true
+          },
+          "emailVerifiedAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "pendingEmail": {
+            "type": "string",
+            "nullable": true
+          },
+          "approvedById": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "approvedByName": {
+            "type": "string",
+            "nullable": true
+          },
+          "approvedByRole": {
+            "type": "string",
+            "nullable": true
+          },
+          "approvedAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "approvedActorSnapshotRecorded": {
+            "type": "boolean"
           }
         },
         "additionalProperties": false
@@ -4936,6 +6522,16 @@
           "totalPages": {
             "type": "integer",
             "format": "int32"
+          }
+        },
+        "additionalProperties": false
+      },
+      "VerifyEmailRequest": {
+        "type": "object",
+        "properties": {
+          "token": {
+            "type": "string",
+            "nullable": true
           }
         },
         "additionalProperties": false

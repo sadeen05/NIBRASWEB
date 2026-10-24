@@ -3,7 +3,18 @@
 Scope: the Phase-1 "F1" email verification feature for newly created Landlord, Investor and
 Admin accounts. This document covers the **configuration** the feature needs, the requirements
 a production host has to meet, the concurrency and uniqueness guarantees, the admin activation
-and invitation-delivery flow, and the open items.
+and invitation-delivery flow, the authenticated address-change flow, and the open items.
+
+> **Current increment (22 Oct 2026).** The authenticated address-change flow, the durable
+> investor-approval history and the real private land-document store are implemented and verified
+> against the disposable target `SADEEN\SQLEXPRESS / NIBRAS_F1_Verify`. The document-storage
+> migration is applied (migration history 20); the focused suite passed 225/0 with 3 documented
+> SKIPs, SQL acceptance passed 44/0, and loopback fake-SMTP acceptance passed 10/0. The browser
+> account E2E also exercised `/activate-admin`, `/verify-email`, `/confirm-email-change`, the
+> address-change flow and the document upload/download panel on 22 Oct 2026. External SMTP
+> delivery and production document storage/deployment remain open; screenshots were not captured
+> because the browser tab was not visible. The exact gates are in §11. The security properties of
+> the document store are in [`DOCUMENT_STORAGE.md`](DOCUMENT_STORAGE.md).
 
 ## 1. Delivery modes (`Email:DeliveryMode`)
 
@@ -34,12 +45,14 @@ A production host must provide, through configuration or user-secrets (never in 
 | `Email:VerificationPath` | the frontend registration verification page (default `/verify-email`). The same **fixed local path** rules apply, and it is required whenever a delivery mode is configured. |
 | `Email:RegistrationTokenTtlHours` | lifetime of a registration token (default 24). |
 | `Email:EmailChangeTokenTtlHours` | lifetime of an address-change token (default 1). |
+| `Email:EmailChangePath` | frontend address-change confirmation page (default `/confirm-email-change`). The same **fixed local path** rules apply; the link carries the token in the URL fragment. |
 | `Email:AdminActivationTokenTtlHours` | lifetime of an admin activation token (default **24**, and the invitation states the expiry). |
-| `Email:ResendCooldownSeconds` | minimum gap between two resends for one account (default 60). It applies to an administrator invitation as well, so an invitation cannot be used to flood an address. |
-| `Email:ResendDailyCap` | maximum number of verification mails per account per day (default 10). It applies to administrator invitations as well. |
+| `Email:ResendCooldownSeconds` | minimum gap between two verification issuances for one account (default 60). It applies to registration verification, address changes and administrator invitations, so one account cannot be used to flood an address or to multiply its mail volume by switching purposes. |
+| `Email:ResendDailyCap` | maximum number of verification tokens issued for one account per UTC day (default 10). It applies to registration verification, address changes and administrator invitations. |
 | `RateLimit:ActivationPerMinute` | attempts per minute and address on the admin activation endpoint (default 5). It has its **own** budget, so a flood of activation attempts can never exhaust the sign-in and registration budget of the same address. |
-| `RateLimit:VerificationPerMinute` | attempts per minute and address on the address-confirmation endpoint (default 5). It has its **own** budget, so a flood of confirmation attempts can never exhaust the sign-in budget. |
+| `RateLimit:VerificationPerMinute` | attempts per minute and address on the address-confirmation endpoints (`verify-email` and `confirm-email-change`, default 5). It has its **own** budget, so a flood of confirmation attempts can never exhaust the sign-in budget. |
 | `RateLimit:VerificationResendPerMinute` | requests per minute and address on the request for a new verification mail (default 5). It is the only anonymous endpoint that can cause mail to be sent, so it has its own budget on top of the per-account cooldown and the per-account daily cap. |
+| `RateLimit:EmailChangePerMinute` | requests per minute and address on the **authenticated** `change-email` endpoint (default 5). The endpoint causes a mail to be sent and requires the current password, so it has its own budget on top of the account-wide cooldown and daily cap. |
 
 Secrets handling: the password is read from configuration into the options object and handed to
 the SMTP client only. It is never written to a log, never returned in a result, never included
@@ -67,7 +80,7 @@ recipient** and the outcome only.
 | Purpose | Lifetime | Notes |
 |---|---|---|
 | `Registration` | 24 h | A newly registered Landlord or Investor must prove the address before the account can be used. |
-| `EmailChange` | 1 h | The active address is only replaced by a successful verification of the new one. The new address must be free everywhere (also for a soft-deleted account and as another account's pending address). The token is **bound to the requested address**; the consumption refuses it when the account's pending address is no longer that address. Issuing one requires the **current password** of the account. |
+| `EmailChange` | 1 h | The active address is only replaced by a successful verification of the new one. The new address must be free everywhere (also for a soft-deleted account and as another account's pending address). The token is **bound to the requested address**; the consumption refuses it when the account's pending address is no longer that address. Issuing one requires the **current password** of the account. On confirmation the active address is replaced, `EMAIL_VERIFIED_AT` is advanced and every JWT issued before the change stops validating (see §8.2). |
 | `AdminActivation` | 24 h | Reserved for an Admin account created by a SuperAdmin. The token proves the address **and** lets the new Admin set their own password, so no password is ever chosen by somebody else. The purpose is refused for an account that does not hold the Admin role, and for an account that is **not explicitly unverified** — a legacy account (`EMAIL_VERIFIED IS NULL`) and an already activated account are both refused, so an invitation can never take over a legacy account nor reset the password of an account that is in use. |
 
 Token handling: 32 bytes from a cryptographically secure random source, base64url encoded. Only
@@ -222,11 +235,10 @@ signs in with their own password afterwards, so the JWT behaviour is unchanged.
 
 ## 8. Registration verification of new Landlord and Investor accounts
 
-The **delivery layer** and the **endpoints** of the registration verification exist (the
-bilingual mail, the token lifecycle, the audit trail, the confirmation endpoint, the anonymous
-resend and the administrative resend). What is **not** part of it yet is the sign-in gate and
-the flag flip: no new account is required to verify anything yet, because no new account is
-created unverified yet — see §11.1 for the remaining work and the order it has to follow.
+The delivery layer, the endpoints, the flag flip and the sign-in gate are in place: every new
+Landlord and Investor account starts unverified, receives the bilingual mail, and cannot sign in
+until the address is confirmed. The former "not part of it yet" note is obsolete. The runtime
+status of this increment is in §11.
 
 **Who may receive a verification.** A registration token is only issued for an account that is
 **explicitly unverified** (`EMAIL_VERIFIED = false`) and that holds the **Landlord** or the
@@ -488,6 +500,68 @@ POST /api/auth/login
 200  ->  a session, as before
 ```
 
+## 8.2 Authenticated address change (EmailChange)
+
+The address change is a two-step flow. It is deliberately separate from the anonymous
+registration verification: a registration token can never confirm an address change, and a
+change token can never confirm a registration.
+
+```
+POST /api/auth/change-email
+Authorization: authenticated (any active account)
+Rate limit:     the dedicated "email-change" policy (RateLimit:EmailChangePerMinute, default 5)
+Body:           { "newEmail": "<the requested address>", "currentPassword": "<the current password>" }
+
+202  ->  the confirmation message was handed to the mailer. The active address is unchanged;
+         the requested address is stored as PENDING_EMAIL.
+400  ->  the current password is wrong or the address is syntactically invalid
+409  ->  the requested address is the active address, or is already claimed by another account
+         (active or pending, soft-deleted accounts included)
+429  ->  the per-account cooldown or daily cap, or the endpoint rate limit
+503  ->  the mailer refused the message. The active address is unchanged; the pending address
+         remains unconfirmed and a new request retires the failed token.
+
+POST /api/auth/confirm-email-change
+Authorization: anonymous - the single-use token is the only credential
+Rate limit:     the "verification" policy (RateLimit:VerificationPerMinute, default 5)
+Body:           { "token": "<from the address-change link>" }
+
+204  ->  the active address is replaced, PENDING_EMAIL is cleared, EMAIL_VERIFIED_AT advances
+400  ->  unknown, expired, already used, superseded, wrong-purpose or no-longer-matching token
+409  ->  the address was claimed by another account between the request and the confirmation
+429  ->  rate limited
+```
+
+Security properties:
+
+- **Current password required.** A hijacked session alone cannot move the address.
+- **The token is bound to the requested address.** The consumption compares it with the current
+  `PENDING_EMAIL`; a newer request retires the earlier token, so only the newest link works.
+- **One hour TTL, single use, hashed at rest.** The plaintext token is delivered only in the
+  mail, carried in the URL fragment, and is never returned, logged or audited.
+- **Account-wide limits.** The cooldown and daily cap count every verification token of the
+  account, not only address-change tokens, so switching purposes cannot multiply mail volume.
+- **Delivery failure is fail-safe.** The active address is untouched; the pending address stays
+  unconfirmed; `VerificationEmailDeliveryFailed` is audited; a retry retires the failed token.
+- **Audit trail.** Successful requests append `EmailChangeRequested`; a completed change appends
+  `EmailChanged`. The requested address and the token are deliberately not part of either event.
+- **Every earlier JWT is invalidated.** The JWT carries `email` and the `email_verified_at` epoch
+  (UTC ticks). On every request the bearer validation re-reads the account and requires both to
+  match the current row, and refuses an explicitly unverified account. Confirming a change
+  advances `EMAIL_VERIFIED_AT`, so a token issued before the change fails with **401** even though
+  its signature and expiry are still valid. A token issued by an older build without the epoch
+  claim is refused in the same way. The user signs in again with the new address.
+- **Legacy accounts.** `EMAIL_VERIFIED IS NULL` counts as verified and keeps its access; the epoch
+  claim is the empty string for such an account until a change advances it.
+- **Frontend.** `/confirm-email-change` reads the token from the fragment, strips it before the
+  first paint and redeems it once; the account page requires the current password and tells the
+  user that the old session ends after confirmation.
+
+The focused suite `docs/tests/scripts/f1_email_change_approval_documents.ps1` covers the happy
+path, stale JWT, token reuse, wrong password, unchanged address, conflict, cooldown, daily cap,
+token-purpose separation, supersession, approval attribution/history, and real document upload
+and download. It passed 225/0 with 3 documented SKIPs against the disposable target (see §11).
+
 ## 9. The database-level guarantees (applied)
 
 ```sql
@@ -522,61 +596,71 @@ sets in `Enums\EmailVerificationPurposes` and `Enums\UserSecurityEventTypes`, ex
 event, the event type must come from the closed set in `Enums\UserSecurityEventTypes`, and the
 free-text context is stripped of control characters and truncated.
 
-## 11. Open items
+## 11. Open items and runtime status
 
-1. **RELEASE-BLOCKING — the onboarding is in place, the end-to-end verification is not.** Every
-   new Landlord and Investor account — self-registered or created by a SuperAdmin — is created
-   unverified, receives a verification mail, and cannot sign in until the address is confirmed
-   (§8.1). What is still missing:
-   (a) an **end-to-end verification** of the whole flow (register → the mail → the confirmation
-   → the sign-in) on a disposable target: no dynamic test has run for any of it, so the flows
-   rest on compilation, guard analysis and code review;
-   (b) the **account list** must show that an account is still awaiting verification, so an
-   administrator can see it (the `UserDto` does not carry the flag yet);
-   (c) the **test suites** that register an account and sign in with it need a genuine
-   verification through the development outbox — the sign-in of an unverified account is
-   refused with a 403, so every such suite has to read the token out of the outbox and confirm
-   the address before it continues;
-   (d) the **Swagger export** is still behind (item 3).
-   The existing 230 accounts keep `NULL` (= verified) and are not touched.
-2. **RELEASE-BLOCKING (until an end-to-end verification) — the frontend activation route is
-   implemented but untested.** The page `/activate-admin`
-   (`frontend/src/pages/auth/ActivateAdminPage.tsx`) reads the token from the URL fragment, removes
-   the fragment from the address bar and from the history **before the first paint** (keeping the
-   router's own history state), validates the password and its confirmation against the server's
-   policy, and redeems the token through `POST /api/auth/activate-admin`. The copy is bilingual
-   (EN/AR) and distinguishes the answers 204 / 400 / 409 / 429; the token is never written to a
-   URL, to storage or to a log. **No dynamic or end-to-end test has run against it** (no
-   data-creating tests are permitted at this stage) — the type check, the lint and the production
-   build are the only evidence — so the item stays release-blocking until an end-to-end
-   verification of the whole invitation flow has passed. The route path must also match the
-   configured `Email:ActivationPath` (the default is `/activate-admin`).
-3. **RELEASE-BLOCKING — the committed Swagger export is five operations behind**:
-   `POST /api/auth/activate-admin`, `POST /api/Users/{id}/admin-invitation`,
-   `POST /api/auth/verify-email`, `POST /api/auth/resend-verification` and
-   `POST /api/Users/{id}/verification` are declared by the controllers but not in
-   `docs/api/swagger.json`. The export can only be produced by a
-   running instance, so the refresh is a separately approved step: run
-   `docs/tests/verify-swagger-export.ps1` (it starts its own instance with both seeders forced to
-   a no-op and performs no database writes) — or, with a Development instance already running,
-   fetch `GET /swagger/v1/swagger.json` and write it to `docs/api/swagger.json` — then re-run
-   `docs/tests/scripts/static_contract_checks.ps1`. The live API surface is already correct; only
-   the published contract lags.
-4. An unverified registration still **reserves** its address (squattoing) until an
-   ownership-based release exists; the recovery policy is in §8. An admin-created
-   Landlord/Investor still counts as verified (item 1).
-5. The seeded `"N/A"` account still exists — it can never sign in (now a clean 401); removing
-   it is an operator decision.
-6. No dynamic test has been executed for any of this (no data-creating tests are permitted
-   yet), so the flows rest on compilation, guard analysis and code review. The activation
-   page (item 2) has the same status.
+**Implemented and verified against the disposable target in the 21-22 Oct 2026 increment:**
+
+- authenticated address change (`change-email` / `confirm-email-change`), with current-password
+  confirmation, account-bound single-use token, one-hour TTL, account-wide cooldown and daily
+  cap, audit events, bilingual mail, and JWT invalidation through the `email` +
+  `email_verified_at` claims;
+- durable investor-approval eligibility and attribution: unverified investors are refused, legacy
+  `NULL` is allowed, `AccountApproved` is append-only in `USER_SECURITY_EVENTS`, re-approval
+  appends another event, and `GET /api/users/{id}/approval` returns the full history and latest
+  actor;
+- real private land-document upload and authenticated download: multipart body, PDF/JPEG/PNG
+  magic-byte validation, 10 MiB file cap, SHA-256, random storage names, original-name
+  sanitisation, FK-547 handling, transaction/file cleanup, and no public or static file path;
+- frontend account page, confirmation page, admin approval history/eligibility, document
+  upload/download, and English/Arabic copy;
+- migration `20261021163426_AddLandDocumentStorageMetadata` applied to the disposable target;
+  migration history is 20.
+
+**Completed runtime gates:**
+
+1. **Migration applied** to `SADEEN\SQLEXPRESS / NIBRAS_F1_Verify`; schema and migration history
+   verified.
+2. **Focused suite run.** `docs/tests/scripts/f1_email_change_approval_documents.ps1` passed
+   225 checks with 0 failures and 3 documented SKIPs. The SQL acceptance mode passed 44/0.
+3. **Failure delivery exercised.** The `Disabled` mode passed; a loopback fake-SMTP suite passed
+   10/0, including STARTTLS refusal, bounded async deadline and caller cancellation.
+4. **Swagger export refreshed and verified.** The export has 89 operations and 73 schemas;
+   `verify-swagger-export.ps1` passed against the live API.
+5. **Browser account E2E (22 Oct 2026).** The real frontend against the disposable API exercised
+   `/activate-admin`, `/verify-email`, `/confirm-email-change`, the account change-email form and
+   the land-document upload/download panel, in English and Arabic, including the old-JWT 401 after
+   an address change. The historical F1 release evidence is retained outside the delivery
+   repository; see the cleanup record in `NIBRAS_FILE_GUIDE.md`. Screenshots were not
+   captured because the browser tab was not visible.
+
+**Runtime gates that remain:**
+
+1. **External SMTP delivery.** No real mailbox or production SMTP server has been exercised;
+   only the loopback fake server and the fail-closed `Disabled` mode were tested.
+2. **Production document storage and deployment.** `Documents:StorageRoot` must be an absolute,
+   writable, backed-up volume outside `wwwroot`; the host now validates the root at startup and
+   refuses an empty/relative/`wwwroot` root outside Development. No production deployment or root
+   has been configured or tested; deployment was not authorized.
+3. **Historical document rows.** IDs 100 and 102-104 have no physical bytes, and ID 101 is legacy
+   metadata-only. They were preserved; recovery is a separately authorized data decision. The
+   historical F1 release evidence is retained outside the delivery repository; see the cleanup
+   record in `NIBRAS_FILE_GUIDE.md`.
+4. **Address squatting.** An unverified registration still reserves its address until an
+   ownership-based release exists; the recovery policy is in §8. The release action does **not**
+   exist and is deliberately not automatic.
+5. **Seeded `"N/A"` account.** It still exists and can never sign in (clean 401); removal is an
+   operator decision.
+6. **Accepted evidence.** C4 and the earlier five-suite regression evidence remain under
+   `%TEMP%\nibras-regression-20261021-*`; the old `NEBRASDB_Step1` target remains forbidden.
 
 ## 12. What exists today
 
-- **Schema (applied):** `USERS.EMAIL_VERIFIED` / `EMAIL_VERIFIED_AT` / `PENDING_EMAIL`,
+- **Schema already applied:** `USERS.EMAIL_VERIFIED` / `EMAIL_VERIFIED_AT` / `PENDING_EMAIL`,
   `EMAIL_VERIFICATION_TOKENS`, `USER_SECURITY_EVENTS` (migration
   `20261019165813_EmailVerification`), plus the two uniqueness indexes (migration
-  `20261019174547_EmailVerificationUniqueness`).
+  `20261019174547_EmailVerificationUniqueness`). **Applied:**
+  `20261021163426_AddLandDocumentStorageMetadata` (the four `LAND_DOCUMENTS` storage columns);
+  migration history is 20 on the disposable target.
 - **Infrastructure:** the mailer abstraction with the SMTP, development-outbox and fail-closed
   senders, the configuration and its startup validation, and the append-only audit service.
 - **Token service:** issuance (registration, address change with current-password
@@ -607,3 +691,18 @@ free-text context is stripped of control characters and truncated.
   paint, mirrors the server's password policy, redeems the token and shows the 204 / 400 / 409 /
   429 answers in English and Arabic. It creates no session: the new administrator signs in with
   the password they just chose.
+- **Address-change UI (implemented, runtime-unverified):** `/account` requires the current
+  password, shows the pending address without pretending it is active, and warns that the old
+  session ends after confirmation. `/confirm-email-change` reads the token from the fragment,
+  strips it before the first paint and redeems it once. The backend rejects every JWT issued
+  before the confirmed change, so the UI sends the user back to sign-in.
+- **Investor approval (implemented, runtime-unverified):** `GET /api/users/{id}/approval` returns
+  eligibility, latest actor and the append-only `AccountApproved` history;
+  `POST /api/users/{id}/approve` refuses an unverified investor (409), accepts a legacy `NULL`
+  verification flag, stores the acting administrator on the account row and appends a new event
+  on every approval. The admin UI shows verification/approver columns and blocks ineligible
+  approvals with a reason.
+- **Real land-document storage (implemented, runtime-unverified):** the multipart upload is
+  private, non-static and authenticated; the details, the exceptions to the historical SEC-13
+  text-only rule and the SEC-14 request-size handling are in
+  [`DOCUMENT_STORAGE.md`](DOCUMENT_STORAGE.md).
